@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+build/
+dist/
+vendor/ffmpeg-bin/
+.venv/
+.DS_Store
