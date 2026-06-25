@@ -19,8 +19,8 @@ class StemSlicerApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title(APP_NAME)
-        self.geometry("1040x720")
-        self.minsize(900, 680)
+        self.geometry("1040x640")
+        self.minsize(900, 600)
         self.configure(bg=BG)
 
         self.source_folder = tk.StringVar()
@@ -60,7 +60,7 @@ class StemSlicerApp(tk.Tk):
         root.grid_rowconfigure(0, weight=1)
 
         content = tk.Frame(root, bg=BG)
-        content.grid(row=0, column=0, sticky="nsew", padx=54, pady=48)
+        content.grid(row=0, column=0, sticky="nsew", padx=54, pady=40)
         content.grid_columnconfigure(0, weight=1)
         content.grid_columnconfigure(1, weight=0)
 
@@ -73,7 +73,7 @@ class StemSlicerApp(tk.Tk):
             text=APP_NAME,
             bg=BG,
             fg=TEXT,
-            font=("Segoe UI", 34, "bold"),
+            font=("Segoe UI", 31, "bold"),
             anchor="w",
         ).grid(row=0, column=0, sticky="w")
         tk.Label(
@@ -81,7 +81,7 @@ class StemSlicerApp(tk.Tk):
             text="Made with <3 by ANTIWORLD",
             bg=BG,
             fg=ACCENT,
-            font=("Segoe UI", 20),
+            font=("Segoe UI", 18),
             anchor="e",
         ).grid(row=0, column=1, sticky="e", padx=(32, 0))
 
@@ -90,9 +90,9 @@ class StemSlicerApp(tk.Tk):
             text="Split MP3 loops into clean layers.",
             bg=BG,
             fg=MUTED,
-            font=("Segoe UI", 17, "bold"),
+            font=("Segoe UI", 15, "bold"),
             anchor="w",
-        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(24, 50))
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(20, 38))
 
         self._folder_row(
             content,
@@ -109,7 +109,7 @@ class StemSlicerApp(tk.Tk):
             command=self._choose_output,
         )
 
-        spacer = tk.Frame(content, bg=BG, height=44)
+        spacer = tk.Frame(content, bg=BG, height=28)
         spacer.grid(row=4, column=0, columnspan=2, sticky="ew")
 
         self.progress = ttk.Progressbar(
@@ -119,7 +119,7 @@ class StemSlicerApp(tk.Tk):
             maximum=100,
             variable=self.progress_value,
         )
-        self.progress.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(0, 24))
+        self.progress.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(0, 18))
 
         tk.Label(
             content,
@@ -130,7 +130,6 @@ class StemSlicerApp(tk.Tk):
             anchor="w",
         ).grid(row=6, column=0, columnspan=2, sticky="ew")
 
-        content.grid_rowconfigure(7, weight=1)
         self.start_button = tk.Button(
             content,
             text="Start processing",
@@ -145,11 +144,11 @@ class StemSlicerApp(tk.Tk):
             font=("Segoe UI", 15, "bold"),
             height=2,
         )
-        self.start_button.grid(row=8, column=0, columnspan=2, sticky="ew", pady=(34, 0))
+        self.start_button.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(28, 0))
 
     def _folder_row(self, parent, row, title, subtitle, command):
         label_box = tk.Frame(parent, bg=BG)
-        label_box.grid(row=row, column=0, sticky="ew", pady=(0, 50))
+        label_box.grid(row=row, column=0, sticky="ew", pady=(0, 36))
         label_box.grid_columnconfigure(0, weight=1)
 
         tk.Label(
@@ -157,7 +156,7 @@ class StemSlicerApp(tk.Tk):
             text=title,
             bg=BG,
             fg=TEXT,
-            font=("Segoe UI", 16, "bold"),
+            font=("Segoe UI", 15, "bold"),
             anchor="w",
         ).grid(row=0, column=0, sticky="w")
         tk.Label(
@@ -165,9 +164,9 @@ class StemSlicerApp(tk.Tk):
             text=subtitle,
             bg=BG,
             fg=MUTED,
-            font=("Segoe UI", 14, "bold"),
+            font=("Segoe UI", 13, "bold"),
             anchor="w",
-        ).grid(row=1, column=0, sticky="w", pady=(18, 0))
+        ).grid(row=1, column=0, sticky="w", pady=(14, 0))
 
         button = tk.Button(
             parent,
@@ -180,11 +179,11 @@ class StemSlicerApp(tk.Tk):
             relief="flat",
             bd=0,
             cursor="hand2",
-            font=("Segoe UI", 14, "bold"),
+            font=("Segoe UI", 13, "bold"),
             width=14,
             height=1,
         )
-        button.grid(row=row, column=1, sticky="e", pady=(0, 50), padx=(32, 0))
+        button.grid(row=row, column=1, sticky="e", pady=(0, 36), padx=(32, 0))
 
     def _choose_source(self):
         folder = filedialog.askdirectory(title="Choose source folder")
