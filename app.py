@@ -19,8 +19,8 @@ class StemSlicerApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title(APP_NAME)
-        self.geometry("1040x640")
-        self.minsize(900, 600)
+        self.geometry("1040x700")
+        self.minsize(900, 640)
         self.configure(bg=BG)
 
         self.source_folder = tk.StringVar()
