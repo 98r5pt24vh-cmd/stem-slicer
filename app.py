@@ -19,8 +19,8 @@ class StemSlicerApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title(APP_NAME)
-        self.geometry("1040x640")
-        self.minsize(860, 560)
+        self.geometry("1040x720")
+        self.minsize(900, 680)
         self.configure(bg=BG)
 
         self.source_folder = tk.StringVar()
@@ -60,7 +60,7 @@ class StemSlicerApp(tk.Tk):
         root.grid_rowconfigure(0, weight=1)
 
         content = tk.Frame(root, bg=BG)
-        content.grid(row=0, column=0, sticky="nsew", padx=54, pady=54)
+        content.grid(row=0, column=0, sticky="nsew", padx=54, pady=48)
         content.grid_columnconfigure(0, weight=1)
         content.grid_columnconfigure(1, weight=0)
 
@@ -92,7 +92,7 @@ class StemSlicerApp(tk.Tk):
             fg=MUTED,
             font=("Segoe UI", 17, "bold"),
             anchor="w",
-        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(24, 58))
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(24, 50))
 
         self._folder_row(
             content,
@@ -109,7 +109,7 @@ class StemSlicerApp(tk.Tk):
             command=self._choose_output,
         )
 
-        spacer = tk.Frame(content, bg=BG, height=58)
+        spacer = tk.Frame(content, bg=BG, height=44)
         spacer.grid(row=4, column=0, columnspan=2, sticky="ew")
 
         self.progress = ttk.Progressbar(
@@ -145,11 +145,11 @@ class StemSlicerApp(tk.Tk):
             font=("Segoe UI", 15, "bold"),
             height=2,
         )
-        self.start_button.grid(row=8, column=0, columnspan=2, sticky="ew", pady=(42, 0))
+        self.start_button.grid(row=8, column=0, columnspan=2, sticky="ew", pady=(34, 0))
 
     def _folder_row(self, parent, row, title, subtitle, command):
         label_box = tk.Frame(parent, bg=BG)
-        label_box.grid(row=row, column=0, sticky="ew", pady=(0, 58))
+        label_box.grid(row=row, column=0, sticky="ew", pady=(0, 50))
         label_box.grid_columnconfigure(0, weight=1)
 
         tk.Label(
@@ -184,7 +184,7 @@ class StemSlicerApp(tk.Tk):
             width=14,
             height=1,
         )
-        button.grid(row=row, column=1, sticky="e", pady=(0, 58), padx=(32, 0))
+        button.grid(row=row, column=1, sticky="e", pady=(0, 50), padx=(32, 0))
 
     def _choose_source(self):
         folder = filedialog.askdirectory(title="Choose source folder")
