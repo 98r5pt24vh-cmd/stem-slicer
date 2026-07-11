@@ -32,6 +32,7 @@ jobs:
           Push-Location openkeyscan-source
           python -m pip install -r requirements.txt
           python -m pip install pyinstaller
+          python ../scripts/patch_openkeyscan_spec.py openkeyscan_analyzer.spec
           python -m PyInstaller --noconfirm openkeyscan_analyzer.spec
           Pop-Location
           New-Item -ItemType Directory -Force vendor | Out-Null
