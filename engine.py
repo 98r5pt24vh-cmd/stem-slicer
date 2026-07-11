@@ -1843,8 +1843,6 @@ class AppDelegate(NSObject):
         self.start_button.setEnabled_(True)
         if failures:
             self.status.setStringValue_(f"Done. {len(failures)} loop(s) completed without a detected key.")
-        elif manifest:
-            self.status.setStringValue_(f"Done. Rename manifest: {os.path.basename(manifest)}")
         else:
             self.status.setStringValue_("Done. Processing completed successfully.")
         if os.environ.get("STEM_SLICER_AUTO_QUIT") == "1":
@@ -1866,7 +1864,7 @@ class AppDelegate(NSObject):
         if rename_in_place and os.environ.get("STEM_SLICER_SKIP_CONFIRMATION") != "1":
             alert = NSAlert.alloc().init()
             alert.setMessageText_("Rename original loops in place?")
-            alert.setInformativeText_("Stem Slicer will create a CSV manifest first, but the source filenames will change.")
+            alert.setInformativeText_("Stem Slicer checks filename collisions first, but the source filenames will change.")
             alert.addButtonWithTitle_("Rename originals")
             alert.addButtonWithTitle_("Cancel")
             if alert.runModal() != 1000:

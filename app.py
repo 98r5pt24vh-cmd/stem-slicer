@@ -436,7 +436,7 @@ class MainWindow(QMainWindow):
             answer = QMessageBox.warning(
                 self,
                 "Rename original loops?",
-                "Stem Slicer will rename every MP3 in the input folder. A CSV manifest will be created first. Continue?",
+                "Stem Slicer will rename every MP3 in the input folder after checking for filename collisions. Continue?",
                 QMessageBox.Yes | QMessageBox.Cancel,
                 QMessageBox.Cancel,
             )
@@ -491,8 +491,6 @@ class MainWindow(QMainWindow):
             details += f"\n\n{visible_failures}"
             if len(failures) > 6:
                 details += f"\n- ...and {len(failures) - 6} more"
-        if manifest:
-            details += f"\n\nRename manifest:\n{manifest}"
         QMessageBox.information(self, "Stem Slicer", details)
 
     @Slot(str)
