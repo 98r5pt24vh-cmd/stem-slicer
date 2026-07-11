@@ -1,28 +1,38 @@
-name: Build Windows EXE
+name: Build Stem Slicer Qt for Windows
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
 
 jobs:
-  build:
+  build-windows:
     runs-on: windows-latest
+    timeout-minutes: 90
 
     steps:
-      - name: Checkout
+      - name: Check out Stem Slicer
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
-      - name: Install Python dependencies
+      - name: Install application dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          python -m pip install -r requirements.txt
+
+      - name: Build OpenKeyScan analyzer
+        shell: pwsh
+        run: |
+          git clone --depth 1 https://github.com/rekordcloud/openkeyscan-analyzer.git openkeyscan-source
+          Push-Location openkeyscan-source
+          python -m pip install -r requirements.txt
+          python -m pip install pyinstaller
+          python -m PyInstaller --noconfirm openkeyscan_analyzer.spec
+          Pop-Location
+          New-Item -ItemType Directory -Force vendor | Out-Null
+          Copy-Item -Recurse -Force openkeyscan-source/dist/openkeyscan-analyzer vendor/openkeyscan-analyzer
 
       - name: Download FFmpeg and FFprobe
         shell: pwsh
@@ -31,11 +41,17 @@ jobs:
           Invoke-WebRequest -Uri "https://github.com/descriptinc/ffmpeg-ffprobe-static/releases/download/b6.1.2-rc.1/ffmpeg-win32-x64" -OutFile "vendor/ffmpeg-bin/ffmpeg.exe"
           Invoke-WebRequest -Uri "https://github.com/descriptinc/ffmpeg-ffprobe-static/releases/download/b6.1.2-rc.1/ffprobe-win32-x64" -OutFile "vendor/ffmpeg-bin/ffprobe.exe"
 
-      - name: Build executable
-        run: pyinstaller StemSlicerWindows.spec
+      - name: Run cross-platform tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m unittest discover -s tests -v
 
-      - name: Upload executable
+      - name: Build Windows application
+        run: python -m PyInstaller --clean --noconfirm StemSlicerWindows.spec
+
+      - name: Upload Windows build
         uses: actions/upload-artifact@v4
         with:
-          name: Stem-Slicer-1.0-Windows
-          path: dist/Stem Slicer 1.0.exe
+          name: Stem-Slicer-1.4-Qt-Prototype-Windows
+          path: dist/Stem Slicer 1.4 Qt Prototype
+          compression-level: 6
