@@ -2,6 +2,9 @@ name: Build Stem Slicer Qt for Windows
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
 
 jobs:
   build-windows:
@@ -48,6 +51,9 @@ jobs:
 
       - name: Build Windows application
         run: python -m PyInstaller --clean --noconfirm StemSlicerWindows.spec
+
+      - name: Smoke-test bundled FFmpeg and key analyzer
+        run: python scripts/smoke_windows_bundle.py "dist/Stem Slicer 1.4 Qt Prototype"
 
       - name: Upload Windows build
         uses: actions/upload-artifact@v4

@@ -484,6 +484,13 @@ class MainWindow(QMainWindow):
         details = "All files were processed successfully."
         if failures:
             details = f"Processing completed with {len(failures)} key-analysis warning(s)."
+            visible_failures = "\n".join(
+                f"- {filename}: {message}"
+                for filename, message in failures[:6]
+            )
+            details += f"\n\n{visible_failures}"
+            if len(failures) > 6:
+                details += f"\n- ...and {len(failures) - 6} more"
         if manifest:
             details += f"\n\nRename manifest:\n{manifest}"
         QMessageBox.information(self, "Stem Slicer", details)

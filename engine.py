@@ -89,21 +89,42 @@ DIAGNOSTICS_ROOT = os.environ.get(
 )
 
 
+def hidden_process_options():
+    if sys.platform != "win32":
+        return {}
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startupinfo.wShowWindow = subprocess.SW_HIDE
+    return {
+        "startupinfo": startupinfo,
+        "creationflags": subprocess.CREATE_NO_WINDOW,
+    }
+
+
+def run_subprocess(cmd, **kwargs):
+    for key, value in hidden_process_options().items():
+        kwargs.setdefault(key, value)
+    return subprocess.run(cmd, **kwargs)
+
+
 def find_ffmpeg():
     bundled_root = getattr(sys, "_MEIPASS", None)
     script_root = os.path.dirname(os.path.abspath(__file__))
     paths = []
+    executable = "ffmpeg.exe" if sys.platform == "win32" else "ffmpeg"
     if bundled_root:
-        paths.append(os.path.join(bundled_root, "ffmpeg"))
+        paths.append(os.path.join(bundled_root, executable))
+    executable_root = os.path.dirname(sys.executable)
     paths += [
-        os.path.join(script_root, "vendor", "ffmpeg-bin", "ffmpeg"),
-        os.path.join(os.path.dirname(sys.executable), "ffmpeg"),
+        os.path.join(executable_root, executable),
+        os.path.join(executable_root, "_internal", executable),
+        os.path.join(script_root, "vendor", "ffmpeg-bin", executable),
         "/opt/homebrew/bin/ffmpeg",
         "/usr/local/bin/ffmpeg",
-        "ffmpeg",
+        executable,
     ]
     for path in paths:
-        resolved = shutil.which(path) if path == "ffmpeg" else path
+        resolved = shutil.which(path) if path == executable else path
         if resolved and os.path.exists(resolved):
             return resolved
     return None
@@ -113,21 +134,24 @@ def find_ffprobe(ffmpeg):
     bundled_root = getattr(sys, "_MEIPASS", None)
     script_root = os.path.dirname(os.path.abspath(__file__))
     paths = []
+    executable = "ffprobe.exe" if sys.platform == "win32" else "ffprobe"
     if bundled_root:
-        paths.append(os.path.join(bundled_root, "ffprobe"))
+        paths.append(os.path.join(bundled_root, executable))
+    executable_root = os.path.dirname(sys.executable)
     paths += [
-        os.path.join(script_root, "vendor", "ffmpeg-bin", "ffprobe"),
-        os.path.join(os.path.dirname(sys.executable), "ffprobe"),
+        os.path.join(executable_root, executable),
+        os.path.join(executable_root, "_internal", executable),
+        os.path.join(script_root, "vendor", "ffmpeg-bin", executable),
         "/opt/homebrew/bin/ffprobe",
         "/usr/local/bin/ffprobe",
-        "ffprobe",
+        executable,
     ]
     for path in paths:
-        resolved = shutil.which(path) if path == "ffprobe" else path
+        resolved = shutil.which(path) if path == executable else path
         if resolved and os.path.exists(resolved):
             return resolved
     if ffmpeg:
-        sibling = os.path.join(os.path.dirname(ffmpeg), "ffprobe")
+        sibling = os.path.join(os.path.dirname(ffmpeg), executable)
         if os.path.exists(sibling):
             return sibling
     return None
@@ -135,20 +159,20 @@ def find_ffprobe(ffmpeg):
 
 def get_vrai_zero(filepath, ffmpeg):
     cmd = [ffmpeg, "-i", filepath, "-af", "silencedetect=noise=-45dB:d=0.001", "-f", "null", "-"]
-    out = subprocess.run(cmd, capture_output=True, text=True).stderr
+    out = run_subprocess(cmd, capture_output=True, text=True).stderr
     impact = re.search(r"silence_end: ([\d.]+)", out)
     return float(impact.group(1)) if impact else 0.0
 
 
 def get_all_starts(filepath, ffmpeg):
     cmd = [ffmpeg, "-i", filepath, "-af", "silencedetect=noise=-45dB:d=0.1", "-f", "null", "-"]
-    out = subprocess.run(cmd, capture_output=True, text=True).stderr
+    out = run_subprocess(cmd, capture_output=True, text=True).stderr
     return [float(item) for item in re.findall(r"silence_end: ([\d.]+)", out)]
 
 
 def get_duration_with_ffmpeg(filepath, ffmpeg):
     cmd = [ffmpeg, "-i", filepath, "-f", "null", "-"]
-    out = subprocess.run(cmd, capture_output=True, text=True).stderr
+    out = run_subprocess(cmd, capture_output=True, text=True).stderr
     match = re.search(r"Duration: (\d+):(\d+):(\d+(?:\.\d+)?)", out)
     if not match:
         return 0.0
@@ -168,7 +192,7 @@ def get_duration(filepath, ffmpeg, ffprobe=None):
             "default=noprint_wrappers=1:nokey=1",
             filepath,
         ]
-        proc = subprocess.run(cmd, capture_output=True, text=True)
+        proc = run_subprocess(cmd, capture_output=True, text=True)
         if proc.returncode == 0:
             try:
                 return float(proc.stdout.strip())
@@ -188,7 +212,7 @@ def decode_mono_pcm(filepath, ffmpeg, sample_rate=22050):
         "-f", "s16le",
         "-",
     ]
-    proc = subprocess.run(cmd, capture_output=True)
+    proc = run_subprocess(cmd, capture_output=True)
     return proc.stdout if proc.returncode == 0 else b""
 
 
@@ -1050,7 +1074,7 @@ def process_one_file(d_in, d_out, filename, ffmpeg, ffprobe, run_timestamp, outp
             "error",
         ]
         export_started = time.perf_counter()
-        subprocess.run(cmd_cut, check=False)
+        run_subprocess(cmd_cut, check=False)
         export_elapsed += time.perf_counter() - export_started
 
         output_exists = os.path.exists(output_path)

@@ -32,11 +32,28 @@ KEY_AFTER_BPM_RE = re.compile(
 BPM_RE = re.compile(r"\b(?:[6-9]\d|1\d{2}|2[0-4]\d)\b")
 
 
+def hidden_process_options():
+    if sys.platform != "win32":
+        return {}
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startupinfo.wShowWindow = subprocess.SW_HIDE
+    return {
+        "startupinfo": startupinfo,
+        "creationflags": subprocess.CREATE_NO_WINDOW,
+    }
+
+
 def analyzer_executable():
+    configured = os.environ.get("STEM_SLICER_ANALYZER")
+    if configured and os.path.isfile(configured):
+        return configured
     roots = []
     bundled_root = getattr(sys, "_MEIPASS", None)
     if bundled_root:
         roots.append(bundled_root)
+    executable_root = os.path.dirname(sys.executable)
+    roots.extend((executable_root, os.path.join(executable_root, "_internal")))
     roots.append(os.path.dirname(os.path.abspath(__file__)))
     executable = "openkeyscan-analyzer.exe" if sys.platform == "win32" else "openkeyscan-analyzer"
     for root in roots:
@@ -45,7 +62,8 @@ def analyzer_executable():
             os.path.join(root, "vendor", "openkeyscan-analyzer", executable),
         )
         for candidate in candidates:
-            if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            executable_file = sys.platform == "win32" or os.access(candidate, os.X_OK)
+            if os.path.isfile(candidate) and executable_file:
                 return candidate
     return None
 
@@ -105,6 +123,7 @@ class KeyAnalyzer:
             text=True,
             encoding="utf-8",
             bufsize=1,
+            **hidden_process_options(),
         )
         self.reader = threading.Thread(target=self._read_stdout, daemon=True)
         self.reader.start()
