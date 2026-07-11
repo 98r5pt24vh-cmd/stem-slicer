@@ -115,11 +115,12 @@ class KeyAnalyzer:
         path = analyzer_executable()
         if not path:
             raise RuntimeError("The embedded key analyzer was not found.")
+        debug_stderr = None if os.environ.get("STEM_SLICER_KEY_DEBUG") else subprocess.DEVNULL
         self.process = subprocess.Popen(
             [path, "--workers", str(self.workers)],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=debug_stderr,
             text=True,
             encoding="utf-8",
             bufsize=1,

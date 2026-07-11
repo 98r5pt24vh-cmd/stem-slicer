@@ -88,6 +88,32 @@ class EngineWorkflowTests(unittest.TestCase):
             self.assertEqual(FakeAnalyzer.calls, [filename])
             self.assertEqual(os.listdir(output), ["A#m CALLMEUR3 137 +NRGY.mp3"])
 
+    def test_in_place_rename_does_not_create_csv(self):
+        with tempfile.TemporaryDirectory() as source:
+            filename = "L CALLMEUR3 137 Am +NRGY.mp3"
+            with open(os.path.join(source, filename), "wb") as handle:
+                handle.write(b"audio")
+            FakeAnalyzer.calls = []
+            engine.KeyAnalyzer = FakeAnalyzer
+            errors = []
+            engine.process_audio(
+                source,
+                "",
+                lambda *args: None,
+                lambda *args: None,
+                errors.append,
+                {
+                    "enabled": True,
+                    "extract_enabled": False,
+                    "mode": "relative_minor",
+                    "accidentals": "sharps",
+                    "destination_mode": "rename_in_place",
+                    "token_order": list(TOKENS),
+                },
+            )
+            self.assertFalse(errors)
+            self.assertEqual(os.listdir(source), ["A#m CALLMEUR3 137 +NRGY.mp3"])
+
 
 if __name__ == "__main__":
     unittest.main()

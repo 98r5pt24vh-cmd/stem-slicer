@@ -1139,13 +1139,6 @@ def organize_complete_loops(d_in, d_out, files, output_stems, destination_mode, 
             on_progress(offset + index, total, f"Organized: {filename}")
         return None
 
-    safe_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    manifest_path = os.path.join(d_in, f"stem-slicer-rename-{safe_timestamp}.csv")
-    with open(manifest_path, "w", newline="", encoding="utf-8") as handle:
-        writer = csv.writer(handle)
-        writer.writerow(["original_path", "renamed_path"])
-        writer.writerows((source, target) for _, source, target in plan)
-
     staged = []
     for filename, source, target in plan:
         if source == target:
@@ -1156,7 +1149,7 @@ def organize_complete_loops(d_in, d_out, files, output_stems, destination_mode, 
     for index, (filename, temporary, target) in enumerate(staged, start=1):
         os.rename(temporary, target)
         on_progress(offset + index, total, f"Renamed: {filename}")
-    return manifest_path
+    return None
 
 
 def process_audio(d_in, d_out, on_progress, on_done, on_error, key_settings=None):
