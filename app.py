@@ -222,6 +222,24 @@ class FileDragHandle(QWidget):
         drag = QDrag(self); drag.setMimeData(mime); self.setCursor(Qt.ClosedHandCursor); drag.exec(Qt.CopyAction); self.setCursor(Qt.OpenHandCursor); self._press = None
 
 
+class LayerPlayButton(QPushButton):
+    """Keep the existing Play glyph, but paint Pause consistently on every OS."""
+
+    def __init__(self, parent=None):
+        super().__init__("▶", parent)
+        self.setProperty("state", "stopped")
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if self.property("state") != "playing":
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(QPen(QColor("#e1a83a"), 2.5, Qt.SolidLine, Qt.RoundCap))
+        painter.drawLine(10.5, 8.5, 10.5, 16.5)
+        painter.drawLine(14.5, 8.5, 14.5, 16.5)
+
+
 class LayerCard(QFrame):
     playRequested = Signal(str)
     seekRequested = Signal(str, float)
@@ -230,14 +248,14 @@ class LayerCard(QFrame):
         super().__init__(parent); self.layer = layer; self.setProperty("role", "layerCard"); self.setFixedHeight(78)
         layout = QVBoxLayout(self); layout.setContentsMargins(9, 5, 9, 5); layout.setSpacing(1)
         header = QHBoxLayout(); header.setSpacing(7)
-        self.play = QPushButton("▶"); self.play.setProperty("role", "layerPlay"); self.play.setFixedSize(25, 25); self.play.clicked.connect(lambda: self.playRequested.emit(layer["path"]))
+        self.play = LayerPlayButton(); self.play.setProperty("role", "layerPlay"); self.play.setFixedSize(25, 25); self.play.clicked.connect(lambda: self.playRequested.emit(layer["path"]))
         name = label(layer["name"], "layerName"); name.setToolTip(layer["name"])
         header.addWidget(self.play); header.addWidget(name); header.addStretch(); header.addWidget(FileDragHandle(layer["path"]))
         layout.addLayout(header); self.waveform = WaveformWidget(layer["peaks"]); self.waveform.seekRequested.connect(lambda ratio: self.seekRequested.emit(layer["path"], ratio)); layout.addWidget(self.waveform)
         metadata = QHBoxLayout(); metadata.addWidget(label(format_duration(layer["duration"]), "cardMeta")); metadata.addStretch(); metadata.addWidget(label(format_decimal_size(layer["bytes"]), "cardMeta")); layout.addLayout(metadata)
 
     def setPlaybackState(self, state):
-        self.play.setText({"playing": "❚❚", "paused": "▶", "stopped": "▶"}.get(state, "▶"))
+        self.play.setText("" if state == "playing" else "▶")
         self.play.setProperty("state", state); self.play.style().unpolish(self.play); self.play.style().polish(self.play)
 
     def setProgress(self, progress):
@@ -547,18 +565,42 @@ class DropZone(QFrame):
         self.pathChanged.emit(path)
         return True
 
+    def _drop_path(self, mime_data):
+        if not self.interactive or not mime_data.hasUrls():
+            return ""
+        urls = mime_data.urls()
+        if len(urls) != 1 or not urls[0].isLocalFile():
+            return ""
+        path = os.path.normpath(urls[0].toLocalFile())
+        if self.kind == "folder":
+            return path if os.path.isdir(path) else ""
+        if self.kind == "audio" and os.path.isfile(path):
+            return path if os.path.splitext(path)[1].lower() in self.allowed_extensions else ""
+        return ""
+
+    @staticmethod
+    def _accept_copy(event):
+        if event.possibleActions() & Qt.CopyAction:
+            event.setDropAction(Qt.CopyAction)
+        event.accept()
+
     def dragEnterEvent(self, event):
-        urls = event.mimeData().urls()
-        valid = False
-        if len(urls) == 1 and urls[0].isLocalFile():
-            path = urls[0].toLocalFile()
-            valid = (self.kind == "folder" and os.path.isdir(path)) or (
-                self.kind == "audio" and os.path.isfile(path) and os.path.splitext(path)[1].lower() in self.allowed_extensions
-            )
-        if self.interactive and valid:
+        if self._drop_path(event.mimeData()):
             self.highlighted = True
             self.update()
-            event.acceptProposedAction()
+            self._accept_copy(event)
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        if self._drop_path(event.mimeData()):
+            self.highlighted = True
+            self.update()
+            self._accept_copy(event)
+        else:
+            self.highlighted = False
+            self.update()
+            event.ignore()
 
     def dragLeaveEvent(self, event):
         self.highlighted = False
@@ -567,9 +609,11 @@ class DropZone(QFrame):
 
     def dropEvent(self, event):
         self.highlighted = False
-        urls = event.mimeData().urls()
-        if urls and self.set_path(urls[0].toLocalFile()):
-            event.acceptProposedAction()
+        path = self._drop_path(event.mimeData())
+        if path and self.set_path(path):
+            self._accept_copy(event)
+        else:
+            event.ignore()
         self.update()
 
     def paintEvent(self, event):

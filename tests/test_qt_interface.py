@@ -6,12 +6,13 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("STEM_SLICER_DISABLE_ENGINE_AUTOSTART", "1")
 
-from PySide6.QtCore import QPoint, QSize, Qt
+from PySide6.QtCore import QMimeData, QPoint, QPointF, QSize, Qt, QUrl
+from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel
 from PySide6.QtMultimedia import QMediaPlayer
 
-from app import DropZone, KeyEngineLoader, MainWindow, QuickExtractManagerDialog, QuickExtractWorker, WaveformWidget
+from app import DropZone, KeyEngineLoader, LayerCard, MainWindow, QuickExtractManagerDialog, QuickExtractWorker, WaveformWidget
 from filename_templates import TOKENS
 from widgets import TokenStrip
 from storage import StorageManager
@@ -141,6 +142,60 @@ class QtInterfaceTests(unittest.TestCase):
             self.assertTrue(drop.set_path(mp3))
             self.assertFalse(drop.set_path(wav))
             drop.close()
+
+    def test_drop_zone_accepts_native_drag_move_and_drop(self):
+        with tempfile.TemporaryDirectory() as root:
+            audio = os.path.join(root, "loop.mp3")
+            open(audio, "wb").close()
+            mime = QMimeData()
+            mime.setUrls([QUrl.fromLocalFile(audio)])
+            actions = Qt.CopyAction | Qt.MoveAction
+            drop = DropZone("audio", interactive=True)
+
+            enter = QDragEnterEvent(QPoint(10, 10), actions, mime, Qt.LeftButton, Qt.NoModifier)
+            drop.dragEnterEvent(enter)
+            self.assertTrue(enter.isAccepted())
+            self.assertEqual(enter.dropAction(), Qt.CopyAction)
+
+            move = QDragMoveEvent(QPoint(10, 10), actions, mime, Qt.LeftButton, Qt.NoModifier)
+            drop.dragMoveEvent(move)
+            self.assertTrue(move.isAccepted())
+            self.assertEqual(move.dropAction(), Qt.CopyAction)
+
+            dropped = QDropEvent(QPointF(10, 10), actions, mime, Qt.LeftButton, Qt.NoModifier)
+            drop.dropEvent(dropped)
+            self.assertTrue(dropped.isAccepted())
+            self.assertEqual(dropped.dropAction(), Qt.CopyAction)
+            self.assertEqual(drop.path, audio)
+            drop.close()
+
+    def test_folder_drop_accepts_native_drag_move_and_drop(self):
+        with tempfile.TemporaryDirectory() as root:
+            mime = QMimeData()
+            mime.setUrls([QUrl.fromLocalFile(root)])
+            actions = Qt.CopyAction | Qt.MoveAction
+            drop = DropZone("folder")
+
+            move = QDragMoveEvent(QPoint(10, 10), actions, mime, Qt.LeftButton, Qt.NoModifier)
+            drop.dragMoveEvent(move)
+            self.assertTrue(move.isAccepted())
+            self.assertEqual(move.dropAction(), Qt.CopyAction)
+
+            dropped = QDropEvent(QPointF(10, 10), actions, mime, Qt.LeftButton, Qt.NoModifier)
+            drop.dropEvent(dropped)
+            self.assertTrue(dropped.isAccepted())
+            self.assertEqual(drop.path, root)
+            drop.close()
+
+    def test_pause_mark_is_painted_instead_of_using_a_platform_glyph(self):
+        layer = {"path": "/tmp/layer.mp3", "name": "layer.mp3", "duration": 1, "bytes": 1, "peaks": [0.5] * 72}
+        card = LayerCard(layer)
+        card.setPlaybackState("playing")
+        self.assertEqual(card.play.text(), "")
+        self.assertEqual(card.play.property("state"), "playing")
+        card.setPlaybackState("paused")
+        self.assertEqual(card.play.text(), "▶")
+        card.close()
 
     def test_quick_extract_worker_returns_real_layer_metadata(self):
         with tempfile.TemporaryDirectory() as root:

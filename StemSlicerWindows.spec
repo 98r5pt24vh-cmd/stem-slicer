@@ -64,6 +64,10 @@ exe = EXE(
     strip=False,
     upx=False,
     console=False,
+    # Keep Windows Explorer and Stem Slicer at the same integrity level so
+    # native file/folder drops are not blocked by UIPI.
+    uac_admin=False,
+    uac_uiaccess=False,
     exclude_binaries=True,
 )
 

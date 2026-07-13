@@ -227,12 +227,39 @@ class FolderDrop(QFrame):
     def setRequired(self, required):
         self.setToolTip("Required" if required else "Not required when renaming original loops")
 
+    @staticmethod
+    def _drop_path(mime_data):
+        if not mime_data.hasUrls():
+            return ""
+        urls = mime_data.urls()
+        if len(urls) != 1 or not urls[0].isLocalFile():
+            return ""
+        path = os.path.normpath(urls[0].toLocalFile())
+        return path if os.path.isdir(path) else ""
+
+    @staticmethod
+    def _accept_copy(event):
+        if event.possibleActions() & Qt.CopyAction:
+            event.setDropAction(Qt.CopyAction)
+        event.accept()
+
     def dragEnterEvent(self, event):
-        urls = event.mimeData().urls()
-        if len(urls) == 1 and urls[0].isLocalFile() and os.path.isdir(urls[0].toLocalFile()):
-            event.acceptProposedAction()
+        if self._drop_path(event.mimeData()):
+            self._accept_copy(event)
             self.highlighted = True
             self.update()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        if self._drop_path(event.mimeData()):
+            self._accept_copy(event)
+            self.highlighted = True
+            self.update()
+        else:
+            self.highlighted = False
+            self.update()
+            event.ignore()
 
     def dragLeaveEvent(self, event):
         self.highlighted = False
@@ -241,10 +268,12 @@ class FolderDrop(QFrame):
 
     def dropEvent(self, event):
         self.highlighted = False
-        urls = event.mimeData().urls()
-        if urls:
-            self.setPath(urls[0].toLocalFile())
-            event.acceptProposedAction()
+        path = self._drop_path(event.mimeData())
+        if path:
+            self.setPath(path)
+            self._accept_copy(event)
+        else:
+            event.ignore()
         self.update()
 
     def paintEvent(self, event):
