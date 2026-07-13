@@ -6,7 +6,6 @@ datas = [
     ("assets/app-icon.png", "assets"),
     ("assets/key-engine-warmup.wav", "assets"),
     ("THIRD_PARTY_NOTICES.md", "."),
-    ("vendor-windows/openkeyscan-analyzer", "openkeyscan-analyzer"),
 ]
 
 binaries = [

@@ -13,10 +13,10 @@ jobs:
 
     steps:
       - name: Check out Stem Slicer
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -33,10 +33,12 @@ jobs:
           git remote add origin https://github.com/rekordcloud/openkeyscan-analyzer.git
           git fetch --depth 1 origin d5cac64bc7195826b6eb10c55b9b0c97fb3287c0
           git checkout --detach FETCH_HEAD
-          python -m pip install -r requirements.txt
-          python -m pip install pyinstaller
-          python ../scripts/patch_openkeyscan_spec.py openkeyscan_analyzer.spec
-          python -m PyInstaller --noconfirm openkeyscan_analyzer.spec
+          python -m venv .venv-build
+          ./.venv-build/Scripts/python.exe -m pip install --upgrade pip
+          ./.venv-build/Scripts/python.exe -m pip install -r requirements.txt
+          ./.venv-build/Scripts/python.exe -m pip install pyinstaller
+          ./.venv-build/Scripts/python.exe ../scripts/patch_openkeyscan_spec.py openkeyscan_analyzer.spec
+          ./.venv-build/Scripts/python.exe -m PyInstaller --noconfirm openkeyscan_analyzer.spec
           Pop-Location
           New-Item -ItemType Directory -Force vendor-windows | Out-Null
           Copy-Item -Recurse -Force openkeyscan-source/dist/openkeyscan-analyzer vendor-windows/openkeyscan-analyzer
@@ -55,7 +57,16 @@ jobs:
         run: python -m unittest discover -s tests -v
 
       - name: Build Windows application
-        run: python -m PyInstaller --clean --noconfirm StemSlicerWindows.spec
+        shell: pwsh
+        run: |
+          python -m PyInstaller --clean --noconfirm StemSlicerWindows.spec
+          # Keep the key engine as an opaque, self-contained child bundle.
+          # Adding it to Analysis.datas makes PyInstaller inspect its DLLs and
+          # copy torch_cpu.dll a second time into the parent application's
+          # _internal folder.
+          Copy-Item -Recurse -Force `
+            "vendor-windows/openkeyscan-analyzer" `
+            "dist/Stem Slicer 1.4.1 M/_internal/openkeyscan-analyzer"
 
       - name: Smoke-test GUI subsystem, FFmpeg and key analyzer
         shell: pwsh
@@ -70,23 +81,10 @@ jobs:
           }
 
       - name: Audit Windows bundle
-        shell: pwsh
-        run: |
-          $bundle = "dist/Stem Slicer 1.4.1 M"
-          $files = Get-ChildItem $bundle -Recurse -File
-          $bytes = ($files | Measure-Object Length -Sum).Sum
-          $models = @($files | Where-Object { $_.Extension -in ".pt", ".pth", ".ckpt", ".onnx" })
-          $torch = @($files | Where-Object { $_.Name -match "torch_cpu" })
-          "### Windows bundle audit" >> $env:GITHUB_STEP_SUMMARY
-          "- Files: $($files.Count)" >> $env:GITHUB_STEP_SUMMARY
-          "- Logical size: $([math]::Round($bytes / 1000000000, 3)) GB (decimal)" >> $env:GITHUB_STEP_SUMMARY
-          "- Model files: $($models.Count)" >> $env:GITHUB_STEP_SUMMARY
-          "- torch_cpu binaries: $($torch.Count)" >> $env:GITHUB_STEP_SUMMARY
-          if ($models.Count -ne 1) { throw "Expected exactly one OpenKeyScan model, found $($models.Count)." }
-          if ($torch.Count -ne 1) { throw "Expected exactly one torch_cpu binary, found $($torch.Count)." }
+        run: python scripts/audit_windows_bundle.py "dist/Stem Slicer 1.4.1 M"
 
       - name: Upload Windows build
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Stem-Slicer-1.4.1-M-Windows
           path: dist/Stem Slicer 1.4.1 M
