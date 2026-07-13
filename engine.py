@@ -79,7 +79,7 @@ except ImportError:
     NSColor = _UnusedNativeType
 
 APP_NAME = "Stem Slicer"
-APP_VERSION = "1.4 Qt Prototype"
+APP_VERSION = "1.4.1 M"
 MIN_LAYER_REMAINING_RATIO = 0.74
 PARALLEL_WORKERS = 2
 DIAGNOSTICS_ENABLED = False
@@ -90,6 +90,7 @@ DIAGNOSTICS_ROOT = os.environ.get(
 
 
 def hidden_process_options():
+    """Return Windows-only flags that prevent child console windows."""
     if sys.platform != "win32":
         return {}
     startupinfo = subprocess.STARTUPINFO()
@@ -118,6 +119,7 @@ def find_ffmpeg():
     paths += [
         os.path.join(executable_root, executable),
         os.path.join(executable_root, "_internal", executable),
+        os.path.join(script_root, "vendor-windows", "ffmpeg-bin", executable),
         os.path.join(script_root, "vendor", "ffmpeg-bin", executable),
         "/opt/homebrew/bin/ffmpeg",
         "/usr/local/bin/ffmpeg",
@@ -141,6 +143,7 @@ def find_ffprobe(ffmpeg):
     paths += [
         os.path.join(executable_root, executable),
         os.path.join(executable_root, "_internal", executable),
+        os.path.join(script_root, "vendor-windows", "ffmpeg-bin", executable),
         os.path.join(script_root, "vendor", "ffmpeg-bin", executable),
         "/opt/homebrew/bin/ffprobe",
         "/usr/local/bin/ffprobe",
@@ -1115,6 +1118,27 @@ def process_one_file(d_in, d_out, filename, ffmpeg, ffprobe, run_timestamp, outp
     return diagnostics
 
 
+def process_single_file(source_path, output_folder, output_stem=None):
+    """Extract one MP3 with the exact same pipeline used by batch mode."""
+    source_path = os.path.abspath(source_path)
+    if not os.path.isfile(source_path) or not source_path.lower().endswith(".mp3"):
+        raise ValueError("Quick Extract accepts one MP3 file.")
+    ffmpeg = find_ffmpeg()
+    if not ffmpeg:
+        raise RuntimeError("FFmpeg was not found.")
+    ffprobe = find_ffprobe(ffmpeg)
+    os.makedirs(output_folder, exist_ok=True)
+    return process_one_file(
+        os.path.dirname(source_path),
+        output_folder,
+        os.path.basename(source_path),
+        ffmpeg,
+        ffprobe,
+        datetime.now().isoformat(timespec="seconds"),
+        output_stem or os.path.splitext(os.path.basename(source_path))[0],
+    )
+
+
 def organize_complete_loops(d_in, d_out, files, output_stems, destination_mode, on_progress, offset, total):
     plan = []
     for filename in files:
@@ -1152,7 +1176,7 @@ def organize_complete_loops(d_in, d_out, files, output_stems, destination_mode, 
     return None
 
 
-def process_audio(d_in, d_out, on_progress, on_done, on_error, key_settings=None):
+def process_audio(d_in, d_out, on_progress, on_done, on_error, key_settings=None, analyzer=None):
     if not d_in or not os.path.isdir(d_in):
         on_error("Choose a valid source folder.")
         return
@@ -1198,18 +1222,24 @@ def process_audio(d_in, d_out, on_progress, on_done, on_error, key_settings=None
     key_failures = []
 
     if key_enabled:
-        on_progress(0, len(files) * 2, "Loading the musical key engine...")
+        def analyze_files(active_analyzer):
+            for index, filename in enumerate(files, start=1):
+                try:
+                    result = active_analyzer.analyze(os.path.join(d_in, filename))
+                    key = format_camelot(result["camelot"], key_mode, accidentals)
+                    detected_keys[filename] = key
+                    on_progress(index, len(files) * 2, f"Detected {key}: {filename}")
+                except Exception as exc:
+                    key_failures.append((filename, str(exc)))
+                    on_progress(index, len(files) * 2, f"Key unavailable, extracting unchanged: {filename}")
+
         try:
-            with KeyAnalyzer(workers=1) as analyzer:
-                for index, filename in enumerate(files, start=1):
-                    try:
-                        result = analyzer.analyze(os.path.join(d_in, filename))
-                        key = format_camelot(result["camelot"], key_mode, accidentals)
-                        detected_keys[filename] = key
-                        on_progress(index, len(files) * 2, f"Detected {key}: {filename}")
-                    except Exception as exc:
-                        key_failures.append((filename, str(exc)))
-                        on_progress(index, len(files) * 2, f"Key unavailable, extracting unchanged: {filename}")
+            if analyzer is not None:
+                analyze_files(analyzer)
+            else:
+                on_progress(0, len(files) * 2, "Loading the musical key engine...")
+                with KeyAnalyzer(workers=1) as temporary_analyzer:
+                    analyze_files(temporary_analyzer)
         except Exception as exc:
             on_error(f"The embedded key engine could not start: {exc}")
             return

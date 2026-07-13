@@ -44,14 +44,6 @@ class StudioRoot(QWidget):
 
     def paintEvent(self, event):
         super().paintEvent(event)
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing, False)
-        painter.setPen(QPen(QColor(255, 255, 255, 9), 1))
-        step = 48
-        for x in range(0, self.width(), step):
-            painter.drawLine(x, 0, x, self.height())
-        for y in range(0, self.height(), step):
-            painter.drawLine(0, y, self.width(), y)
 
 
 class SegmentedControl(QWidget):
@@ -269,41 +261,49 @@ class FolderDrop(QFrame):
 class TokenStrip(QWidget):
     orderChanged = Signal(list)
 
-    def __init__(self, tokens, parent=None):
+    def __init__(self, tokens, parent=None, compact=False):
         super().__init__(parent)
+        self.compact = compact
         self.tokens = list(tokens)
         self.drag_index = -1
         self.drag_offset = 0.0
         self.drag_x = 0.0
         self.press_x = 0.0
         self.drag_active = False
-        self.setMinimumHeight(66)
+        self.setMinimumHeight(27 if compact else 66)
+        if compact:
+            self.setFixedHeight(27)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setMouseTracking(True)
 
     def sizeHint(self):
         from PySide6.QtCore import QSize
-        return QSize(620, 66)
+        return QSize(620, 27 if self.compact else 66)
 
     def _font(self):
         font = QFont("SF Mono")
         font.setStyleHint(QFont.Monospace)
-        font.setPointSize(10)
+        font.setPointSize(8 if self.compact else 10)
         font.setWeight(QFont.Weight.Bold)
         return font
 
     def _width(self, token):
-        return max(100, QFontMetrics(self._font()).horizontalAdvance(token) + 42)
+        if self.compact:
+            minimum = 106 if token in ("LOOP NAME", "PROD NAME") else 82
+        else:
+            minimum = 100
+        padding = 34 if self.compact else 42
+        return max(minimum, QFontMetrics(self._font()).horizontalAdvance(token) + padding)
 
     def chipRects(self):
         widths = [self._width(token) for token in self.tokens]
-        gap = 10
+        gap = 7 if self.compact else 10
         total = sum(widths) + gap * max(0, len(widths) - 1)
-        start = max(12, (self.width() - total) / 2)
+        start = max(6 if self.compact else 12, (self.width() - total) / 2)
         rects = []
         x = start
         for width in widths:
-            rects.append(QRectF(x, 13, width, 40))
+            rects.append(QRectF(x, 2 if self.compact else 13, width, 23 if self.compact else 40))
             x += width + gap
         return rects
 
@@ -317,7 +317,7 @@ class TokenStrip(QWidget):
             fill, border, text = "#17191c", "#292c31", "#60656c"
         painter.setPen(QPen(QColor(border), 1))
         painter.setBrush(QColor(fill))
-        painter.drawRoundedRect(rect, 5, 5)
+        painter.drawRoundedRect(rect, 4 if self.compact else 5, 4 if self.compact else 5)
         painter.setPen(QColor(text))
         painter.setFont(self._font())
         painter.drawText(rect, Qt.AlignCenter, token)

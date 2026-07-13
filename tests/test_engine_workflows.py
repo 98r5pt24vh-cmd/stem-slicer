@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import engine
 from filename_templates import TOKENS
@@ -24,6 +25,38 @@ class FakeAnalyzer:
 
 
 class EngineWorkflowTests(unittest.TestCase):
+    def test_windows_subprocesses_are_hidden(self):
+        class StartupInfo:
+            def __init__(self):
+                self.dwFlags = 0
+                self.wShowWindow = None
+
+        with (
+            patch.object(engine.sys, "platform", "win32"),
+            patch.object(engine.subprocess, "STARTUPINFO", StartupInfo, create=True),
+            patch.object(engine.subprocess, "STARTF_USESHOWWINDOW", 1, create=True),
+            patch.object(engine.subprocess, "SW_HIDE", 0, create=True),
+            patch.object(engine.subprocess, "CREATE_NO_WINDOW", 0x08000000, create=True),
+        ):
+            options = engine.hidden_process_options()
+        self.assertEqual(options["creationflags"], 0x08000000)
+        self.assertEqual(options["startupinfo"].dwFlags, 1)
+        self.assertEqual(options["startupinfo"].wShowWindow, 0)
+
+    def test_windows_ffmpeg_uses_exe_suffix(self):
+        with tempfile.TemporaryDirectory() as root:
+            executable = os.path.join(root, "ffmpeg.exe")
+            open(executable, "wb").close()
+            with patch.object(engine.sys, "platform", "win32"), patch.object(engine.sys, "_MEIPASS", root, create=True):
+                self.assertEqual(engine.find_ffmpeg(), executable)
+
+    def test_quick_extract_rejects_non_mp3_input(self):
+        with tempfile.TemporaryDirectory() as root:
+            source = os.path.join(root, "loop.wav")
+            open(source, "wb").close()
+            with self.assertRaisesRegex(ValueError, "MP3"):
+                engine.process_single_file(source, os.path.join(root, "output"))
+
     def setUp(self):
         self.originals = {
             "KeyAnalyzer": engine.KeyAnalyzer,
@@ -113,6 +146,38 @@ class EngineWorkflowTests(unittest.TestCase):
             )
             self.assertFalse(errors)
             self.assertEqual(os.listdir(source), ["A#m CALLMEUR3 137 +NRGY.mp3"])
+
+    def test_shared_analyzer_prevents_second_engine_instance(self):
+        with tempfile.TemporaryDirectory() as source, tempfile.TemporaryDirectory() as output:
+            filename = "L CALLMEUR3 137 +NRGY.mp3"
+            open(os.path.join(source, filename), "wb").close()
+            shared = FakeAnalyzer()
+            shared.calls = []
+
+            class UnexpectedAnalyzer:
+                def __init__(self, *args, **kwargs):
+                    raise AssertionError("A second key engine was instantiated")
+
+            engine.KeyAnalyzer = UnexpectedAnalyzer
+            errors = []
+            engine.process_audio(
+                source,
+                output,
+                lambda *args: None,
+                lambda *args: None,
+                errors.append,
+                {
+                    "enabled": True,
+                    "extract_enabled": False,
+                    "mode": "detected",
+                    "accidentals": "sharps",
+                    "destination_mode": "copy_to_output",
+                    "token_order": list(TOKENS),
+                },
+                analyzer=shared,
+            )
+            self.assertFalse(errors)
+            self.assertEqual(shared.calls, [filename])
 
 
 if __name__ == "__main__":

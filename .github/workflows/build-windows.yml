@@ -28,46 +28,67 @@ jobs:
       - name: Build OpenKeyScan analyzer
         shell: pwsh
         run: |
-          git clone --depth 1 https://github.com/rekordcloud/openkeyscan-analyzer.git openkeyscan-source
+          git init openkeyscan-source
           Push-Location openkeyscan-source
+          git remote add origin https://github.com/rekordcloud/openkeyscan-analyzer.git
+          git fetch --depth 1 origin d5cac64bc7195826b6eb10c55b9b0c97fb3287c0
+          git checkout --detach FETCH_HEAD
           python -m pip install -r requirements.txt
           python -m pip install pyinstaller
           python ../scripts/patch_openkeyscan_spec.py openkeyscan_analyzer.spec
           python -m PyInstaller --noconfirm openkeyscan_analyzer.spec
           Pop-Location
-          New-Item -ItemType Directory -Force vendor | Out-Null
-          Copy-Item -Recurse -Force openkeyscan-source/dist/openkeyscan-analyzer vendor/openkeyscan-analyzer
+          New-Item -ItemType Directory -Force vendor-windows | Out-Null
+          Copy-Item -Recurse -Force openkeyscan-source/dist/openkeyscan-analyzer vendor-windows/openkeyscan-analyzer
 
       - name: Download FFmpeg and FFprobe
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force vendor/ffmpeg-bin | Out-Null
-          Invoke-WebRequest -Uri "https://github.com/descriptinc/ffmpeg-ffprobe-static/releases/download/b6.1.2-rc.1/ffmpeg-win32-x64" -OutFile "vendor/ffmpeg-bin/ffmpeg.exe"
-          Invoke-WebRequest -Uri "https://github.com/descriptinc/ffmpeg-ffprobe-static/releases/download/b6.1.2-rc.1/ffprobe-win32-x64" -OutFile "vendor/ffmpeg-bin/ffprobe.exe"
+          New-Item -ItemType Directory -Force vendor-windows/ffmpeg-bin | Out-Null
+          Invoke-WebRequest -Uri "https://github.com/descriptinc/ffmpeg-ffprobe-static/releases/download/b6.1.2-rc.1/ffmpeg-win32-x64" -OutFile "vendor-windows/ffmpeg-bin/ffmpeg.exe"
+          Invoke-WebRequest -Uri "https://github.com/descriptinc/ffmpeg-ffprobe-static/releases/download/b6.1.2-rc.1/ffprobe-win32-x64" -OutFile "vendor-windows/ffmpeg-bin/ffprobe.exe"
 
       - name: Run cross-platform tests
         env:
           QT_QPA_PLATFORM: offscreen
+          STEM_SLICER_DISABLE_ENGINE_AUTOSTART: "1"
         run: python -m unittest discover -s tests -v
 
       - name: Build Windows application
         run: python -m PyInstaller --clean --noconfirm StemSlicerWindows.spec
 
-      - name: Smoke-test bundled FFmpeg and key analyzer
+      - name: Smoke-test GUI subsystem, FFmpeg and key analyzer
         shell: pwsh
         env:
           STEM_SLICER_KEY_DEBUG: "1"
         run: |
-          python scripts/smoke_windows_bundle.py "dist/Stem Slicer 1.4 Qt Prototype" 2>&1 | Tee-Object -FilePath smoke-test.log
+          python scripts/smoke_windows_bundle.py "dist/Stem Slicer 1.4.1 M" 2>&1 | Tee-Object -FilePath smoke-test.log
           if ($LASTEXITCODE -ne 0) {
             $message = (Get-Content smoke-test.log -Raw).Replace("%", "%25").Replace("`r", "").Replace("`n", "%0A")
-            Write-Output "::error title=Windows key analyzer smoke test::$message"
+            Write-Output "::error title=Windows bundle smoke test::$message"
             exit 1
           }
+
+      - name: Audit Windows bundle
+        shell: pwsh
+        run: |
+          $bundle = "dist/Stem Slicer 1.4.1 M"
+          $files = Get-ChildItem $bundle -Recurse -File
+          $bytes = ($files | Measure-Object Length -Sum).Sum
+          $models = @($files | Where-Object { $_.Extension -in ".pt", ".pth", ".ckpt", ".onnx" })
+          $torch = @($files | Where-Object { $_.Name -match "torch_cpu" })
+          "### Windows bundle audit" >> $env:GITHUB_STEP_SUMMARY
+          "- Files: $($files.Count)" >> $env:GITHUB_STEP_SUMMARY
+          "- Logical size: $([math]::Round($bytes / 1000000000, 3)) GB (decimal)" >> $env:GITHUB_STEP_SUMMARY
+          "- Model files: $($models.Count)" >> $env:GITHUB_STEP_SUMMARY
+          "- torch_cpu binaries: $($torch.Count)" >> $env:GITHUB_STEP_SUMMARY
+          if ($models.Count -ne 1) { throw "Expected exactly one OpenKeyScan model, found $($models.Count)." }
+          if ($torch.Count -ne 1) { throw "Expected exactly one torch_cpu binary, found $($torch.Count)." }
 
       - name: Upload Windows build
         uses: actions/upload-artifact@v4
         with:
-          name: Stem-Slicer-1.4-Qt-Prototype-Windows
-          path: dist/Stem Slicer 1.4 Qt Prototype
+          name: Stem-Slicer-1.4.1-M-Windows
+          path: dist/Stem Slicer 1.4.1 M
           compression-level: 6
+          if-no-files-found: error

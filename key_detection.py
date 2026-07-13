@@ -33,6 +33,7 @@ BPM_RE = re.compile(r"\b(?:[6-9]\d|1\d{2}|2[0-4]\d)\b")
 
 
 def hidden_process_options():
+    """Return Windows-only flags that keep the analyzer console invisible."""
     if sys.platform != "win32":
         return {}
     startupinfo = subprocess.STARTUPINFO()
@@ -52,6 +53,9 @@ def analyzer_executable():
     bundled_root = getattr(sys, "_MEIPASS", None)
     if bundled_root:
         roots.append(bundled_root)
+        # The optimized macOS bundle keeps the analyzer as an opaque payload
+        # in Resources so PyInstaller does not collect its dylibs a second time.
+        roots.append(os.path.abspath(os.path.join(bundled_root, "..", "Resources")))
     executable_root = os.path.dirname(sys.executable)
     roots.extend((executable_root, os.path.join(executable_root, "_internal")))
     roots.append(os.path.dirname(os.path.abspath(__file__)))
@@ -59,6 +63,7 @@ def analyzer_executable():
     for root in roots:
         candidates = (
             os.path.join(root, "openkeyscan-analyzer", executable),
+            os.path.join(root, "vendor-windows", "openkeyscan-analyzer", executable),
             os.path.join(root, "vendor", "openkeyscan-analyzer", executable),
         )
         for candidate in candidates:

@@ -1,0 +1,9 @@
+.DS_Store
+.venv/
+build/
+dist/
+vendor/
+vendor-windows/
+__pycache__/
+tests/__pycache__/
+*.pyc
