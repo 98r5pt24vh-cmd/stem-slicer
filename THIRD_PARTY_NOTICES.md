@@ -34,3 +34,30 @@ GNU Lesser General Public License version 3, the GNU General Public License
 version 3, and commercial Qt licenses.
 
 Source and license information: https://doc.qt.io/qtforpython-6/licenses.html
+
+## Spotify Basic Pitch
+
+Stem Slicer uses Spotify Basic Pitch for local audio-to-MIDI transcription.
+Basic Pitch is distributed under the Apache License 2.0.
+
+Source: https://github.com/spotify/basic-pitch
+
+Copyright 2022 Spotify AB
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not use
+this file except in compliance with the License. You may obtain a copy of the
+License at https://www.apache.org/licenses/LICENSE-2.0
+
+The complete Basic Pitch `LICENSE` and `NOTICE` files are included in the
+application under `licenses/basic-pitch`.
+
+## FFmpeg
+
+Stem Slicer includes a separate FFmpeg executable for local audio processing.
+The pinned Windows binary reports a GPL version 3-or-later configuration; its
+exact configuration is available by running `ffmpeg -version` and `ffmpeg -L`.
+
+Source and license information: https://ffmpeg.org/
+
+Windows binary distribution source:
+https://github.com/descriptinc/ffmpeg-ffprobe-static/releases/tag/b6.1.2-rc.1

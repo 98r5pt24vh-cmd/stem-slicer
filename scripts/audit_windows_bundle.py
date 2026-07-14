@@ -13,8 +13,16 @@ def audit_bundle(bundle):
 
     files = [path for path in bundle.rglob("*") if path.is_file()]
     models = [path for path in files if path.suffix.lower() in MODEL_SUFFIXES]
+    expected_analyzer = bundle / "_internal" / "openkeyscan-analyzer" / "openkeyscan-analyzer.exe"
+    expected_openkey_model = bundle / "_internal" / "openkeyscan-analyzer" / "_internal" / "checkpoints" / "openkeyscan3.pt"
+    expected_basic_pitch_model = bundle / "_internal" / "basic_pitch" / "saved_models" / "icassp_2022" / "nmp.onnx"
+    expected_models = {expected_openkey_model, expected_basic_pitch_model}
+    openkey_models = [path for path in models if path == expected_openkey_model]
+    basic_pitch_models = [path for path in models if path == expected_basic_pitch_model]
+    unexpected_models = [path for path in models if path not in expected_models]
     torch_cpu = [path for path in files if "torch_cpu" in path.name.lower()]
     analyzers = [path for path in files if path.name.lower() == "openkeyscan-analyzer.exe"]
+    foreign_openkey_ffmpeg = bundle / "_internal" / "openkeyscan-analyzer" / "_internal" / "ffmpeg"
     logical_bytes = sum(path.stat().st_size for path in files)
     relative_models = [path.relative_to(bundle) for path in models]
     relative_torch = [path.relative_to(bundle) for path in torch_cpu]
@@ -28,17 +36,22 @@ def audit_bundle(bundle):
         print(f"  {path}")
 
     errors = []
-    if len(analyzers) != 1:
+    if analyzers != [expected_analyzer]:
         errors.append(f"Expected exactly one OpenKeyScan executable, found {len(analyzers)}.")
-    if len(models) != 1:
-        errors.append(f"Expected exactly one OpenKeyScan model, found {len(models)}.")
+    if len(openkey_models) != 1:
+        errors.append(f"Expected exactly one OpenKeyScan model, found {len(openkey_models)}.")
+    if len(basic_pitch_models) != 1:
+        errors.append(f"Expected exactly one Basic Pitch model, found {len(basic_pitch_models)}.")
+    if unexpected_models:
+        errors.append(f"Found unexpected model files: {', '.join(str(path.relative_to(bundle)) for path in unexpected_models)}.")
     if len(torch_cpu) != 1:
         errors.append(f"Expected exactly one torch_cpu binary, found {len(torch_cpu)}.")
+    if foreign_openkey_ffmpeg.is_file():
+        errors.append("Found a non-Windows extensionless FFmpeg inside the OpenKeyScan payload.")
     expected_component = "openkeyscan-analyzer"
-    for label, paths in (("model", relative_models), ("torch_cpu binary", relative_torch)):
-        for path in paths:
-            if expected_component not in {part.lower() for part in path.parts}:
-                errors.append(f"Unexpected {label} outside the isolated key engine: {path}")
+    for path in relative_torch:
+        if expected_component not in {part.lower() for part in path.parts}:
+            errors.append(f"Unexpected torch_cpu binary outside the isolated key engine: {path}")
     if errors:
         raise RuntimeError("\n".join(errors))
 
@@ -49,12 +62,16 @@ def audit_bundle(bundle):
             summary.write(f"- Files: {len(files)}\n")
             summary.write(f"- Logical size: {logical_bytes / 1_000_000_000:.3f} GB (decimal)\n")
             summary.write(f"- Model files: {len(models)}\n")
+            summary.write(f"- OpenKeyScan models: {len(openkey_models)}\n")
+            summary.write(f"- Basic Pitch models: {len(basic_pitch_models)}\n")
             summary.write(f"- torch_cpu binaries: {len(torch_cpu)}\n")
 
     return {
         "file_count": len(files),
         "logical_bytes": logical_bytes,
         "models": relative_models,
+        "openkey_models": [path.relative_to(bundle) for path in openkey_models],
+        "basic_pitch_models": [path.relative_to(bundle) for path in basic_pitch_models],
         "torch_cpu": relative_torch,
     }
 

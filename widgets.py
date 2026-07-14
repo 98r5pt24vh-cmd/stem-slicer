@@ -1,6 +1,6 @@
 import os
 
-from PySide6.QtCore import QPoint, QRectF, Qt, Signal
+from PySide6.QtCore import QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QCursor, QFont, QFontMetrics, QPainter, QPen
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -312,13 +312,15 @@ class TokenStrip(QWidget):
     def _font(self):
         font = QFont("SF Mono")
         font.setStyleHint(QFont.Monospace)
-        font.setPointSize(8 if self.compact else 10)
+        # The compact workflow chips need to stay dense, but their labels
+        # should remain immediately readable at the fixed 1440 x 864 layout.
+        font.setPointSizeF(9.5 if self.compact else 10.0)
         font.setWeight(QFont.Weight.Bold)
         return font
 
     def _width(self, token):
         if self.compact:
-            minimum = 106 if token in ("LOOP NAME", "PROD NAME") else 82
+            minimum = 114 if token in ("LOOP NAME", "PROD NAME") else 82
         else:
             minimum = 100
         padding = 34 if self.compact else 42
@@ -351,10 +353,12 @@ class TokenStrip(QWidget):
         painter.setFont(self._font())
         painter.drawText(rect, Qt.AlignCenter, token)
         if enabled and not active:
-            grip_x = rect.left() + 12
-            painter.setPen(QPen(QColor("#6b7078"), 1))
-            for offset in (-3, 1, 5):
-                painter.drawLine(QPoint(int(grip_x), int(rect.center().y() + offset)), QPoint(int(grip_x + 8), int(rect.center().y() + offset)))
+            # Match the six-dot file drag handle used by Quick Tools layers.
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor("#777e85"))
+            for x in (rect.left() + 11, rect.left() + 17):
+                for y in (rect.center().y() - 5, rect.center().y(), rect.center().y() + 5):
+                    painter.drawEllipse(QRectF(x - 1.5, y - 1.5, 3, 3))
 
     def paintEvent(self, event):
         painter = QPainter(self)

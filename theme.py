@@ -8,10 +8,15 @@ def application_stylesheet():
     QDialog[role="managerDialog"] { background: #101417; }
     QFrame[role="panel"] { background: #14181b; border: 1px solid #333a40; border-radius: 7px; }
     QFrame[role="header"] { background: transparent; border: none; }
-    QFrame[role="result"] { background: #101417; border: 1px solid #30373d; border-radius: 6px; }
-    QFrame[role="modeChip"] { background: #171d21; border: 1px solid #303940; border-radius: 4px; }
+    QFrame[role="result"] { background: #0e1215; border: 1px solid #30373d; border-radius: 6px; }
+    QFrame[role="modeChip"] { background: #0e1215; border: 1px solid #30373d; border-radius: 4px; }
     QFrame[role="sourcePanel"] { background: #181d21; border: 1px solid #343c43; border-radius: 6px; }
     QFrame[role="resultPanel"] { background: #0d1215; border: 1px solid #2b3339; border-radius: 6px; }
+    QFrame[role="workflowPanel"] { background: #14181b; border: 1px solid #333a40; border-radius: 7px; }
+    QFrame[role="operationCard"] { background: #101417; border: 1px solid #30373d; border-radius: 6px; }
+    QFrame[role="operationCard"][operation="extract"][active="true"] { background: #181516; border-color: #74352e; }
+    QFrame[role="operationCard"][operation="key"][active="true"] { background: #111820; border-color: #2d6485; }
+    QFrame[role="keyDestinationPanel"] { background: #0d1215; border: 1px solid #294353; border-radius: 6px; }
     QFrame[role="disabledPanel"] { background: #111518; border: 1px solid #293036; border-radius: 7px; }
     QFrame[role="disabledInner"] { background: #0e1215; border: 1px solid #252b30; border-radius: 6px; }
     QFrame[role="activePanel"] { background: #14181b; border: 1px solid #333a40; border-radius: 7px; }
@@ -19,8 +24,19 @@ def application_stylesheet():
     QFrame[role="separator"] { background: #252c31; border: none; }
     QFrame[role="subtleSeparator"] { background: rgba(122, 132, 141, 0.16); border: none; }
     QLabel[role="pageTitle"] { font-size: 17px; font-weight: 800; letter-spacing: 1px; }
+    QFrame[role="panel"][sectionAccent="blue"] QLabel[role="pageTitle"],
+    QFrame[role="panel"][sectionAccent="blue"] QLabel[role="resultTitle"] { color: #3ca7e8; }
+    QFrame[role="panel"][sectionAccent="red"] QLabel[role="pageTitle"] { color: #ff2b1c; }
+    QLabel[role="disabledPageTitle"] { color: #4b5157; font-size: 17px; font-weight: 800; letter-spacing: 1px; }
+    QLabel[role="workflowTitle"] { color: #eef0f2; font-size: 14px; font-weight: 800; letter-spacing: 1px; }
+    QLabel[role="stepBadge"] { color: #aeb4ba; background: #101417; border: 1px solid #555e66; border-radius: 14px; font-size: 13px; font-weight: 800; }
+    QLabel[role="extractOperationTitle"] { color: #8d4640; font-size: 13px; font-weight: 800; letter-spacing: 1px; }
+    QLabel[role="extractOperationTitle"][active="true"] { color: #ff2b1c; }
+    QLabel[role="keyOperationTitle"] { color: #365d75; font-size: 13px; font-weight: 800; letter-spacing: 1px; }
+    QLabel[role="keyOperationTitle"][active="true"] { color: #3ca7e8; }
     QLabel[role="boxTitle"] { color: #f3f4f5; font-size: 14px; font-weight: 700; letter-spacing: 1px; }
     QLabel[role="redSmall"] { color: #ff2b1c; font-size: 11px; font-weight: 800; }
+    QLabel[role="keySmall"] { color: #3ca7e8; font-size: 11px; font-weight: 800; }
     QLabel[role="redBrand"] { color: #ff2b1c; font-size: 16px; font-weight: 900; }
     QLabel[role="muted"] { color: #999ea5; font-size: 11px; }
     QLabel[role="tabSubtitle"] { color: #a5abb1; font-size: 12px; }
@@ -30,9 +46,11 @@ def application_stylesheet():
     QLabel[role="tabTitle"][active="true"] { color: #ff2b1c; }
     QFrame[role="tabLine"] { background: transparent; border: none; }
     QFrame[role="tabLine"][active="true"] { background: #ff2b1c; }
-    QFrame[role="dropZone"] { background: #11161a; border: none; border-radius: 7px; }
+    QFrame[role="dropZone"] { background: #0e1215; border: none; border-radius: 7px; }
     QLabel[role="dropTitle"] { font-size: 13px; font-weight: 600; }
     QLabel[role="dropSubtitle"] { color: #a9afb5; font-size: 13px; font-weight: 500; }
+    QLabel[role="audioDropTitle"] { font-size: 12px; font-weight: 600; }
+    QLabel[role="audioDropSubtitle"] { color: #a9afb5; font-size: 12px; font-weight: 500; }
     QLabel[role="info"] { color: #a4a9af; font-size: 10px; }
     QFrame[role="resultLine"] { background: transparent; border: none; }
     QLabel[role="scannedFile"] { color: #e2e5e7; font-size: 14px; font-weight: 650; }
@@ -56,9 +74,12 @@ def application_stylesheet():
     QLabel[role="disabledField"] { color: #4a5056; background: #111518; border: 1px solid #242a2f; border-radius: 4px; padding: 6px; font-family: "SF Mono"; }
     QLabel[role="activeField"] { color: #b7bdc3; background: #0d1114; border: 1px solid #2c3339; border-radius: 4px; padding: 6px; font-family: "SF Mono"; }
     QLabel[role="chipText"], QLabel[role="buttonText"] { color: #b7bdc3; font-size: 10px; font-weight: 700; }
+    QLabel[role="keySelectedButtonText"] { color: #eff9ff; font-size: 10px; font-weight: 700; }
+    QLabel[role="disabledButtonText"] { color: #454b51; font-size: 10px; font-weight: 700; }
     QLabel[role="cardWave"] { color: #747c83; font-family: Menlo; font-size: 10px; }
     QLabel[role="cardMeta"] { color: #9aa1a8; font-family: "SF Mono", Menlo; font-size: 9px; }
     QLabel[role="layerName"] { color: #b9bec3; font-size: 11px; font-weight: 700; min-width: 75px; }
+    QLabel[role="quickEmptyText"] { color: #999fa6; font-size: 14px; font-weight: 600; }
     QPushButton {
         background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #1a1f23, stop:0.52 #161b1f, stop:1 #12171a);
         border: 1px solid #424a52;
@@ -76,10 +97,26 @@ def application_stylesheet():
         border-color: #3d454d;
     }
     QPushButton[role="icon"] { font-size: 18px; padding: 3px 8px; }
+    QPushButton[role="audioDropBrowse"] { padding: 4px 12px; border-radius: 4px; font-size: 9px; font-weight: 750; }
+    QPushButton[role="audioDropBrowse"][accent="blue"] {
+        color: #eaf7ff;
+        border-color: #3ca7e8;
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #258fcf, stop:0.52 #1577b2, stop:1 #0c5d8f);
+    }
+    QPushButton[role="audioDropBrowse"][accent="red"] {
+        color: #ffffff;
+        border-color: #e64032;
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #c92b20, stop:0.52 #b82117, stop:1 #9f190f);
+    }
     QPushButton[role="selected"] {
         color: #ffffff;
         border-color: #e64032;
         background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #c92b20, stop:0.52 #b82117, stop:1 #9f190f);
+    }
+    QPushButton[keyControl="true"][role="selected"] {
+        color: #ffffff;
+        border-color: #3ca7e8;
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #258fcf, stop:0.52 #1577b2, stop:1 #0c5d8f);
     }
     QPushButton[role="primary"] {
         background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #d72f23, stop:0.52 #c32318, stop:1 #a91a10);
@@ -87,6 +124,19 @@ def application_stylesheet():
         color: white;
     }
     QPushButton[role="primary"] { font-size: 16px; font-weight: 800; }
+    QPushButton[role="primary"][keyTextAccent="true"] { color: #b9e7ff; }
+    QPushButton[role="keyPrimary"] {
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #319fdf, stop:0.52 #187fbd, stop:1 #0d6399);
+        border-color: #53b8ef;
+        color: white;
+        font-size: 16px;
+        font-weight: 800;
+    }
+    QPushButton[keyDestination="true"][role="selected"] {
+        color: #ffffff;
+        border-color: #3ca7e8;
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #258fcf, stop:0.52 #1577b2, stop:1 #0c5d8f);
+    }
     QPushButton[role="disabled"] { color: #454b51; background: #13171a; border-color: #262c31; }
     QPushButton[role="chip"] {
         background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #282e35, stop:1 #1d2329);
@@ -102,11 +152,22 @@ def application_stylesheet():
     QPushButton[role="layerPlay"][state="paused"] { color: #57d84e; }
     QPushButton[role="compact"], QPushButton[role="compactSelected"] { padding: 0; border-radius: 4px; font-size: 8px; font-weight: 800; }
     QPushButton[role="compactSelected"] { color: white; border-color: #d63a2e; background: #a92017; }
+    QFrame[role="panel"][sectionAccent="blue"] QPushButton[role="compact"] { color: #9dcbe6; border-color: #2d6485; background: #111a20; }
+    QFrame[role="panel"][sectionAccent="blue"] QPushButton[role="compact"]:hover { color: #eaf7ff; border-color: #3ca7e8; background: #162631; }
+    QFrame[role="panel"][sectionAccent="blue"] QPushButton[role="compactSelected"] { color: white; border-color: #3ca7e8; background: #1577b2; }
+    QPushButton[sectionAction="extract"]:enabled {
+        color: white;
+        border-color: #e64032;
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #c92b20, stop:0.52 #b82117, stop:1 #9f190f);
+    }
     QFrame[role="switch"] { background: #15191d; border: 1px solid #414951; border-radius: 14px; }
     QFrame[role="switch"][active="true"] { background: #391513; border-color: #ff2b1c; }
     QLabel[role="switchDot"] { color: #818990; font-size: 22px; }
     QLabel[role="switchText"] { color: #656b72; font-size: 12px; font-weight: 700; }
     QLabel[role="switchDot"][active="true"], QLabel[role="switchText"][active="true"] { color: #ff2b1c; }
+    QFrame[role="switch"][accent="blue"][active="true"] { background: #102936; border-color: #3ca7e8; }
+    QFrame[role="switch"][accent="blue"] QLabel[role="switchDot"][active="true"],
+    QFrame[role="switch"][accent="blue"] QLabel[role="switchText"][active="true"] { color: #3ca7e8; }
     QProgressBar { background: #0c0f11; border: 1px solid #333a40; border-radius: 4px; height: 9px; color: transparent; }
     QProgressBar::chunk { background: #ff2b1c; }
     QScrollArea[role="layers"], QScrollArea[role="layers"] > QWidget > QWidget { background: #0e1215; border: 1px solid #30373d; border-radius: 6px; }

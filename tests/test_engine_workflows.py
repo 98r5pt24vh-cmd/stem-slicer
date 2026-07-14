@@ -25,6 +25,17 @@ class FakeAnalyzer:
 
 
 class EngineWorkflowTests(unittest.TestCase):
+    def test_duration_probe_falls_back_to_ffmpeg(self):
+        class Result:
+            returncode = 0
+            stderr = "Duration: 00:01:23.45, start: 0.000000, bitrate: 320 kb/s"
+
+        with patch.object(engine, "run_subprocess", return_value=Result()) as runner:
+            duration = engine.get_duration("loop.mp3", "/bundled/ffmpeg", ffprobe=None)
+
+        self.assertAlmostEqual(duration, 83.45)
+        self.assertEqual(runner.call_args.args[0][0], "/bundled/ffmpeg")
+
     def test_windows_subprocesses_are_hidden(self):
         class StartupInfo:
             def __init__(self):
@@ -49,6 +60,18 @@ class EngineWorkflowTests(unittest.TestCase):
             open(executable, "wb").close()
             with patch.object(engine.sys, "platform", "win32"), patch.object(engine.sys, "_MEIPASS", root, create=True):
                 self.assertEqual(engine.find_ffmpeg(), executable)
+
+    def test_frozen_bundle_does_not_fall_back_to_external_ffprobe(self):
+        with tempfile.TemporaryDirectory() as root:
+            ffmpeg = os.path.join(root, "ffmpeg.exe")
+            open(ffmpeg, "wb").close()
+            with (
+                patch.object(engine.sys, "platform", "win32"),
+                patch.object(engine.sys, "_MEIPASS", root, create=True),
+                patch.object(engine.shutil, "which") as which,
+            ):
+                self.assertIsNone(engine.find_ffprobe(ffmpeg))
+            which.assert_not_called()
 
     def test_quick_extract_rejects_non_mp3_input(self):
         with tempfile.TemporaryDirectory() as root:

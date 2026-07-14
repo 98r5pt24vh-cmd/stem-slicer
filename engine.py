@@ -79,7 +79,7 @@ except ImportError:
     NSColor = _UnusedNativeType
 
 APP_NAME = "Stem Slicer"
-APP_VERSION = "1.4.1 M"
+APP_VERSION = "1.5S Beta"
 MIN_LAYER_REMAINING_RATIO = 0.74
 PARALLEL_WORKERS = 2
 DIAGNOSTICS_ENABLED = False
@@ -135,10 +135,20 @@ def find_ffmpeg():
 def find_ffprobe(ffmpeg):
     bundled_root = getattr(sys, "_MEIPASS", None)
     script_root = os.path.dirname(os.path.abspath(__file__))
-    paths = []
     executable = "ffprobe.exe" if sys.platform == "win32" else "ffprobe"
     if bundled_root:
-        paths.append(os.path.join(bundled_root, executable))
+        # A frozen build must remain self-contained. Falling through to PATH
+        # could make CI use a machine-wide FFprobe that users do not have and
+        # would silently bypass the bundled FFmpeg duration fallback.
+        paths = [os.path.join(bundled_root, executable)]
+        if ffmpeg:
+            paths.append(os.path.join(os.path.dirname(ffmpeg), executable))
+        for path in paths:
+            if os.path.exists(path):
+                return path
+        return None
+
+    paths = []
     executable_root = os.path.dirname(sys.executable)
     paths += [
         os.path.join(executable_root, executable),

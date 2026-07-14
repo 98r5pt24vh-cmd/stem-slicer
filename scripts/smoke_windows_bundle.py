@@ -49,7 +49,7 @@ def main():
     if not os.path.isdir(internal):
         raise RuntimeError(f"PyInstaller internal folder was not found: {internal}")
 
-    application = os.path.join(bundle, "Stem Slicer 1.4.1 M.exe")
+    application = os.path.join(bundle, "Stem Slicer 1.5S Beta.exe")
     if not os.path.isfile(application):
         raise RuntimeError(f"Application executable was not found: {application}")
     # IMAGE_SUBSYSTEM_WINDOWS_GUI == 2. A console build would be 3 and could
@@ -60,31 +60,30 @@ def main():
     print(f"Windows GUI subsystem verified: {application}", flush=True)
 
     ffmpeg = os.path.join(internal, "ffmpeg.exe")
-    ffprobe = os.path.join(internal, "ffprobe.exe")
     analyzer = os.path.join(internal, "openkeyscan-analyzer", "openkeyscan-analyzer.exe")
     warmup = os.path.join(internal, "assets", "key-engine-warmup.wav")
+    basic_pitch_model = os.path.join(internal, "basic_pitch", "saved_models", "icassp_2022", "nmp.onnx")
     qt_multimedia = find_named(internal, "Qt6Multimedia.dll")
     qt_multimedia_plugin = find_multimedia_plugin(internal)
-    for required in (ffmpeg, ffprobe, analyzer, warmup, qt_multimedia, qt_multimedia_plugin):
+    for required in (ffmpeg, analyzer, warmup, basic_pitch_model, qt_multimedia, qt_multimedia_plugin):
         if not os.path.isfile(required):
             raise RuntimeError(f"Required bundled file was not found at its application path: {required}")
     print(f"Bundled FFmpeg: {ffmpeg} ({os.path.getsize(ffmpeg)} bytes)", flush=True)
-    print(f"Bundled FFprobe: {ffprobe} ({os.path.getsize(ffprobe)} bytes)", flush=True)
     print(f"Bundled analyzer: {analyzer} ({os.path.getsize(analyzer)} bytes)", flush=True)
     print(f"Bundled warm-up audio: {warmup}", flush=True)
+    print(f"Bundled Basic Pitch model: {basic_pitch_model}", flush=True)
     print(f"Bundled Qt Multimedia: {qt_multimedia}", flush=True)
     print(f"Bundled Qt Multimedia backend: {qt_multimedia_plugin}", flush=True)
     sys._MEIPASS = internal
 
-    from engine import find_ffmpeg, find_ffprobe, run_subprocess
+    from engine import find_ffmpeg, find_ffprobe, get_duration, run_subprocess
     from key_detection import KeyAnalyzer, analyzer_executable
 
     resolved_ffmpeg = os.path.normcase(os.path.abspath(find_ffmpeg() or ""))
-    resolved_ffprobe = os.path.normcase(os.path.abspath(find_ffprobe(resolved_ffmpeg) or ""))
     if resolved_ffmpeg != os.path.normcase(os.path.abspath(ffmpeg)):
         raise RuntimeError(f"Application FFmpeg lookup resolved {resolved_ffmpeg!r}, expected {ffmpeg!r}.")
-    if resolved_ffprobe != os.path.normcase(os.path.abspath(ffprobe)):
-        raise RuntimeError(f"Application FFprobe lookup resolved {resolved_ffprobe!r}, expected {ffprobe!r}.")
+    if find_ffprobe(ffmpeg) is not None:
+        raise RuntimeError("The frozen bundle unexpectedly resolved FFprobe instead of using FFmpeg fallback.")
     resolved_analyzer = os.path.normcase(os.path.abspath(analyzer_executable() or ""))
     if resolved_analyzer != os.path.normcase(os.path.abspath(analyzer)):
         raise RuntimeError(f"Application analyzer lookup resolved {resolved_analyzer!r}, expected {analyzer!r}.")
@@ -94,10 +93,6 @@ def main():
         completed = run_subprocess([ffmpeg, "-version"], capture_output=True, text=True, timeout=30)
         if completed.returncode != 0:
             raise RuntimeError(f"Bundled FFmpeg failed to start: {completed.stderr}")
-        completed = run_subprocess([ffprobe, "-version"], capture_output=True, text=True, timeout=30)
-        if completed.returncode != 0:
-            raise RuntimeError(f"Bundled FFprobe failed to start: {completed.stderr}")
-
         sample_rate = 22050
         duration = 24
         frequencies = (220.0, 261.6256, 329.6276)
@@ -110,11 +105,53 @@ def main():
                 value = sum(math.sin(2 * math.pi * frequency * index / sample_rate) for frequency in frequencies)
                 frames.extend(struct.pack("<h", int(8500 * value / len(frequencies))))
             output.writeframes(frames)
+        measured_duration = get_duration(sample, ffmpeg, None)
+        if not math.isclose(measured_duration, duration, abs_tol=0.1):
+            raise RuntimeError(f"Bundled FFmpeg duration fallback returned {measured_duration}, expected {duration}.")
+        print(f"Bundled FFmpeg duration fallback ready: {measured_duration:.2f}s", flush=True)
         with KeyAnalyzer(workers=1, startup_timeout=90, request_timeout=180) as key_analyzer:
             result = key_analyzer.analyze(sample)
         if not result.get("camelot"):
             raise RuntimeError(f"Bundled key analyzer returned no key: {result}")
         print(f"Bundled Windows key analyzer ready: {result['camelot']}")
+
+        midi_smoke_result = os.path.join(temporary, "midi-smoke-result.txt")
+        smoke_environment = os.environ.copy()
+        smoke_environment["STEM_SLICER_SMOKE_RESULT"] = midi_smoke_result
+        smoke_environment["STEM_SLICER_SMOKE_AUDIO"] = sample
+        midi_output = os.path.join(temporary, "basic-pitch-smoke.mid")
+        smoke_environment["STEM_SLICER_SMOKE_MIDI"] = midi_output
+        completed = run_subprocess(
+            [application, "--smoke-midi-engine"],
+            env=smoke_environment,
+            timeout=180,
+            check=False,
+        )
+        message = "No result file was produced."
+        if os.path.isfile(midi_smoke_result):
+            with open(midi_smoke_result, "r", encoding="utf-8") as result_file:
+                message = result_file.read().strip()
+        if completed.returncode != 0 or message != "ok" or not os.path.isfile(midi_output) or os.path.getsize(midi_output) == 0:
+            raise RuntimeError(f"Bundled Basic Pitch engine failed its packaged smoke test: {message}")
+        print("Bundled Windows Basic Pitch engine ready.", flush=True)
+
+        ui_smoke_result = os.path.join(temporary, "ui-smoke-result.txt")
+        ui_environment = os.environ.copy()
+        ui_environment["STEM_SLICER_SMOKE_RESULT"] = ui_smoke_result
+        ui_environment["STEM_SLICER_DISABLE_ENGINE_AUTOSTART"] = "1"
+        completed = run_subprocess(
+            [application, "--smoke-ui"],
+            env=ui_environment,
+            timeout=60,
+            check=False,
+        )
+        ui_message = "No result file was produced."
+        if os.path.isfile(ui_smoke_result):
+            with open(ui_smoke_result, "r", encoding="utf-8") as result_file:
+                ui_message = result_file.read().strip()
+        if completed.returncode != 0 or ui_message != "ok":
+            raise RuntimeError(f"Bundled Qt interface failed its packaged smoke test: {ui_message}")
+        print("Bundled Windows Qt interface ready.", flush=True)
 
 
 if __name__ == "__main__":
