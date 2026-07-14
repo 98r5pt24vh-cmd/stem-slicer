@@ -8,7 +8,7 @@ import time
 from array import array
 
 from PySide6.QtCore import QEvent, QMimeData, QObject, QRectF, QStandardPaths, QThread, QTimer, Qt, QUrl, Signal, Slot
-from PySide6.QtGui import QColor, QDrag, QIcon, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtGui import QColor, QDrag, QFontMetrics, QIcon, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
     QApplication, QDialog, QFileDialog, QFrame, QGraphicsOpacityEffect, QGridLayout, QHBoxLayout, QLabel, QMainWindow,
@@ -483,6 +483,24 @@ def icon_button(kind, text, role="secondary", icon_size=17):
     row.addWidget(item.icon_widget)
     row.addWidget(item.text_label)
     row.addStretch()
+    return item
+
+
+def fit_icon_button_width(item, minimum_width):
+    """Keep icon-button labels intact across native platform font metrics."""
+    item.ensurePolished()
+    item.text_label.ensurePolished()
+    margins = item.layout().contentsMargins()
+    text_width = QFontMetrics(item.text_label.font()).horizontalAdvance(item.text_label.text())
+    content_width = (
+        margins.left()
+        + item.icon_widget.width()
+        + item.layout().spacing()
+        + text_width
+        + margins.right()
+        + 4
+    )
+    item.setFixedWidth(max(minimum_width, content_width))
     return item
 
 
@@ -1245,7 +1263,7 @@ class MainWindow(QMainWindow):
         rl.setColumnStretch(0, 1)
         self.change_root_button = button("CHANGE")
         self.open_folder_button = icon_button("folder", "OPEN FOLDER", icon_size=16)
-        self.open_folder_button.setFixedWidth(150)
+        fit_icon_button_width(self.open_folder_button, 150)
         self.reset_destination_button = button("RESET")
         self.reset_destination_button.setVisible(False)
         for item in (self.change_root_button, self.open_folder_button, self.reset_destination_button):
@@ -2201,8 +2219,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(extract, 50)
         footer = panel(); fl = QHBoxLayout(footer); fl.setContentsMargins(18, 8, 18, 8)
         fl.addWidget(LineIcon("drive", "#9da5ac", 24)); self.quick_storage_label = label("0 extracts · 0 o", "storage"); fl.addWidget(self.quick_storage_label); fl.addStretch()
-        open_folder = icon_button("folder", "OPEN FOLDER", icon_size=18); open_folder.setFixedWidth(170); open_folder.clicked.connect(self._open_quick_root)
-        manage = icon_button("gear", "MANAGE", icon_size=18); manage.setFixedWidth(145); manage.clicked.connect(self._manage_quick_storage)
+        open_folder = icon_button("folder", "OPEN FOLDER", icon_size=18); fit_icon_button_width(open_folder, 170); open_folder.clicked.connect(self._open_quick_root)
+        manage = icon_button("gear", "MANAGE", icon_size=18); fit_icon_button_width(manage, 145); manage.clicked.connect(self._manage_quick_storage)
         fl.addWidget(open_folder); fl.addWidget(manage); layout.addWidget(footer, 10)
         self._refresh_quick_storage()
         return page

@@ -323,7 +323,9 @@ class TokenStrip(QWidget):
             minimum = 114 if token in ("LOOP NAME", "PROD NAME") else 82
         else:
             minimum = 100
-        padding = 34 if self.compact else 42
+        # Centered labels need enough breathing room to clear the six-dot
+        # handle even with Windows' wider fallback monospace metrics.
+        padding = 44 if self.compact else 42
         return max(minimum, QFontMetrics(self._font()).horizontalAdvance(token) + padding)
 
     def chipRects(self):
