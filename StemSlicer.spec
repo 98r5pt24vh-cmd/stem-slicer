@@ -9,13 +9,21 @@ datas = [
     ("assets/app-icon.png", "assets"),
     ("assets/midi-logo-mask.png", "assets"),
     ("assets/key-engine-warmup.wav", "assets"),
+    ("assets/key-and-bpm-engine-warmup.wav", "assets"),
+    # Keep the validated OpenKeyScan/DeepRhythm runtime as one opaque payload.
+    # Without this entry a clean build only works accidentally when an older
+    # analyzer directory is still present in dist/.
+    ("vendor/openkeyscan-analyzer", "openkeyscan-analyzer"),
     ("basic_pitch/saved_models/icassp_2022/nmp.onnx", "basic_pitch/saved_models/icassp_2022"),
     ("licenses/basic-pitch", "licenses/basic-pitch"),
+    ("licenses/DeepRhythm-LICENSE.txt", "licenses"),
+    ("licenses/Bungee-MPL-2.0.txt", "licenses"),
     ("THIRD_PARTY_NOTICES.md", "."),
 ]
 
 binaries = [
     ("vendor/ffmpeg-bin/ffmpeg", "."),
+    ("bin/bungee", "bin"),
 ]
 
 a = Analysis(
@@ -114,7 +122,7 @@ exe = EXE(
     pyz,
     a.scripts,
     [],
-    name="StemSlicer15SBeta",
+    name="StemSlicer16B",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -133,7 +141,7 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=False,
-    name="StemSlicer15SBeta",
+    name="StemSlicer16B",
 )
 
 # BUNDLE normally copies the whole COLLECT tree a second time. Prefer APFS
@@ -159,14 +167,14 @@ shutil.copyfile = _clonefile_or_copy
 try:
     app = BUNDLE(
         coll,
-        name="Stem Slicer 1.5S Beta.app",
+        name="Stem Slicer 1.6B.app",
         icon="assets/StemSlicer.icns",
-        bundle_identifier="com.antiworld.stemslicer.15sbeta",
+        bundle_identifier="com.antiworld.stemslicer.16b",
         info_plist={
-            "CFBundleDisplayName": "Stem Slicer 1.5S Beta",
-            "CFBundleName": "Stem Slicer 1.5S Beta",
-            "CFBundleShortVersionString": "1.5.1",
-            "CFBundleVersion": "1.5.1",
+            "CFBundleDisplayName": "Stem Slicer 1.6B",
+            "CFBundleName": "Stem Slicer 1.6B",
+            "CFBundleShortVersionString": "1.6.0",
+            "CFBundleVersion": "1.6.0",
             "NSHighResolutionCapable": True,
         },
     )

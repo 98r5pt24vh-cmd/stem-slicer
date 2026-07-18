@@ -1,5 +1,6 @@
-# Validated build runtime: CPython 3.12.x arm64.
-PySide6==6.11.1
+# Matches the validated arm64 Qt runtime in the existing macOS application
+# and is also available for the Windows CPython 3.12 runner.
+PySide6==6.9.3
 pyinstaller==6.18.0
 # Stem Slicer vendors the small Basic Pitch ONNX inference code and model.
 # Pin only its actual ONNX runtime dependencies; installing the upstream

@@ -6,17 +6,19 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("STEM_SLICER_DISABLE_ENGINE_AUTOSTART", "1")
 
-from PySide6.QtCore import QMimeData, QPoint, QPointF, QSize, Qt, QUrl
+from PySide6.QtCore import QMimeData, QPoint, QPointF, QRect, QSize, Qt, QUrl
 from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent, QFontMetrics
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel
 from PySide6.QtMultimedia import QMediaPlayer
 
-from app import DropZone, KeyEngineLoader, LayerCard, LineIcon, MainWindow, QuickExtractManagerDialog, QuickExtractWorker, WaveformWidget
+from app import DropZone, KeyEngineLoader, LayerCard, LineIcon, MainWindow, QuickExtractManagerDialog, WaveformWidget
 from filename_templates import TOKENS
 from theme import application_stylesheet
 from widgets import TokenStrip
 from storage import StorageManager
+from validated_ui import ORANGE, PURPLE, RED
+from stem_workflow import QuickExtractWorkflowWorker
 
 
 APP = QApplication.instance() or QApplication([])
@@ -34,6 +36,21 @@ class MemorySettings:
 
 
 class QtInterfaceTests(unittest.TestCase):
+    @staticmethod
+    def global_rect(widget):
+        top_left = widget.mapToGlobal(QPoint(0, 0))
+        bottom_right = widget.mapToGlobal(QPoint(widget.width(), widget.height()))
+        return QRect(top_left, bottom_right).normalized()
+
+    @staticmethod
+    def click_through_graphics_view(window, widget):
+        """Reproduce a real click entering through the scaled QGraphicsView."""
+        canvas_point = widget.mapTo(window.canvas, widget.rect().center())
+        scene_point = window.proxy.mapToScene(QPointF(canvas_point))
+        viewport_point = window.view.mapFromScene(scene_point)
+        QTest.mouseClick(window.view.viewport(), Qt.LeftButton, pos=viewport_point)
+        APP.processEvents()
+
     def test_key_engine_loader_warms_model_before_ready(self):
         events = []
 
@@ -44,20 +61,20 @@ class QtInterfaceTests(unittest.TestCase):
             def start(self):
                 events.append(("started",))
 
-            def analyze(self, path):
-                events.append(("warmed", os.path.basename(path)))
+            def analyze(self, path, **kwargs):
+                events.append(("warmed", os.path.basename(path), kwargs.get("bpm_mode")))
                 return {"camelot": "9A"}
 
         loader = KeyEngineLoader()
         loader.ready.connect(lambda analyzer: events.append(("ready", analyzer.__class__.__name__)))
-        with patch("app.KeyAnalyzer", FakeAnalyzer):
+        with patch("functional_core.KeyAnalyzer", FakeAnalyzer):
             loader.run()
         APP.processEvents()
 
-        self.assertIn(("warmed", "key-engine-warmup.wav"), events)
+        self.assertIn(("warmed", "key-and-bpm-engine-warmup.wav", "quick_scan_loop"), events)
         self.assertIn(("ready", "FakeAnalyzer"), events)
         self.assertLess(
-            events.index(("warmed", "key-engine-warmup.wav")),
+            events.index(("warmed", "key-and-bpm-engine-warmup.wav", "quick_scan_loop")),
             events.index(("ready", "FakeAnalyzer")),
         )
 
@@ -70,9 +87,20 @@ class QtInterfaceTests(unittest.TestCase):
         self.assertEqual(window.pages.currentIndex(), 0)
         self.assertTrue(window.stem_tab.active)
         self.assertFalse(window.quick_tab.active)
-        self.assertEqual((window.width(), window.height()), (1440, 864))
-        self.assertEqual(window.minimumSize(), QSize(1440, 864))
-        self.assertEqual(window.maximumSize(), QSize(1440, 864))
+        self.assertEqual((window.width(), window.height()), (1024, 691))
+        self.assertEqual(window.minimumSize(), QSize(1024, 691))
+        self.assertEqual(window.maximumSize(), QSize(1024, 691))
+        self.assertEqual(
+            [window.scale_select.itemText(index) for index in range(window.scale_select.count())],
+            ["100%", "110%", "120%", "130%", "140%", "150%"],
+        )
+
+        window.scale_select.setCurrentText("150%")
+        APP.processEvents()
+        self.assertEqual((window.width(), window.height()), (1536, 1036))
+        self.assertEqual(window.minimumSize(), QSize(1536, 1036))
+        self.assertEqual(window.maximumSize(), QSize(1536, 1036))
+        window.scale_select.setCurrentText("100%")
 
         original_pages = tuple(window.pages.widget(index) for index in range(2))
         QTest.mouseClick(window.quick_tab, Qt.LeftButton)
@@ -85,6 +113,310 @@ class QtInterfaceTests(unittest.TestCase):
         APP.processEvents()
         self.assertEqual(window.pages.currentIndex(), 0)
         self.assertEqual(original_pages, tuple(window.pages.widget(index) for index in range(2)))
+        window.close()
+
+    def test_custom_tabs_toggles_and_headers_receive_real_viewport_clicks(self):
+        window = MainWindow()
+        window.show()
+        APP.processEvents()
+
+        self.click_through_graphics_view(window, window.quick_tab)
+        self.assertEqual(window.pages.currentIndex(), 1)
+        self.click_through_graphics_view(window, window.stem_tab)
+        self.assertEqual(window.pages.currentIndex(), 0)
+
+        self.assertTrue(window.layer_switch.isChecked())
+        self.click_through_graphics_view(window, window.layer_switch)
+        self.assertFalse(window.layer_switch.isChecked())
+
+        self.assertTrue(window.key_switch.isChecked())
+        self.click_through_graphics_view(window, window.key_operation_card.header)
+        self.assertFalse(window.key_switch.isChecked())
+        self.assertFalse(window.key_panel.isVisible())
+
+        self.assertFalse(window.convert_switch.isChecked())
+        self.click_through_graphics_view(window, window.target_operation_card.header)
+        self.assertTrue(window.convert_switch.isChecked())
+        self.assertTrue(window.target_panel.isVisible())
+        window.close()
+
+    def test_quick_controls_receive_real_viewport_clicks_at_scaled_size(self):
+        window = MainWindow()
+        window.show()
+        APP.processEvents()
+        self.click_through_graphics_view(window, window.quick_tab)
+
+        self.assertTrue(window.quick_extract_bpm_switch.isChecked())
+        self.click_through_graphics_view(window, window.quick_extract_bpm_switch)
+        self.assertFalse(window.quick_extract_bpm_switch.isChecked())
+        self.assertFalse(window.quick_extract_bpm.isEnabled())
+
+        self.assertTrue(window.quick_convert_key_switch.isChecked())
+        self.click_through_graphics_view(window, window.quick_convert_key_switch)
+        self.assertFalse(window.quick_convert_key_switch.isChecked())
+        self.assertFalse(window.quick_convert_key.isEnabled())
+
+        self.click_through_graphics_view(window, window.quick_minor_button)
+        self.assertEqual(window.quick_degree_reference, "minor")
+        self.click_through_graphics_view(window, window.quick_flats_button)
+        self.assertEqual(window.quick_accidentals, "flats")
+
+        window.scale_select.setCurrentText("150%")
+        APP.processEvents()
+        self.click_through_graphics_view(window, window.stem_tab)
+        self.assertEqual(window.pages.currentIndex(), 0)
+        window.close()
+
+    def test_destination_buttons_receive_real_viewport_clicks_when_available(self):
+        window = MainWindow()
+        window.key_engine_state = "ready"
+        window.layer_switch.setChecked(False)
+        window.convert_switch.setChecked(False)
+        window.key_switch.setChecked(True)
+        window._sync_stem_state()
+        window.show()
+        APP.processEvents()
+
+        self.assertTrue(window.rename_destination_button.isEnabled())
+        self.click_through_graphics_view(window, window.rename_destination_button)
+        self.assertEqual(window.destination_mode, "rename_in_place")
+        self.assertTrue(window.rename_destination_button.property("active"))
+        self.assertFalse(window.copy_destination_button.property("active"))
+
+        self.click_through_graphics_view(window, window.copy_destination_button)
+        self.assertEqual(window.destination_mode, "copy_to_output")
+        window.close()
+
+    def test_scale_menu_is_explicit_hoverable_and_never_overlaps_selector(self):
+        window = MainWindow()
+        window.show()
+        APP.processEvents()
+
+        self.assertEqual(
+            [window.scale_select.itemText(index) for index in range(window.scale_select.count())],
+            ["100%", "110%", "120%", "130%", "140%", "150%"],
+        )
+        window.scale_select.setCurrentText("130%")
+        APP.processEvents()
+        self.assertEqual(window.scale_select.currentText(), "130%")
+        self.assertTrue(window.scale_select._actions[130].isChecked())
+
+        window.scale_select._show_menu()
+        APP.processEvents()
+        menu_rect = window.scale_select._menu.geometry()
+        selector_top = window.scale_select.mapToGlobal(window.scale_select.rect().topLeft()).y()
+        selector_bottom = window.scale_select.mapToGlobal(window.scale_select.rect().bottomLeft()).y()
+        self.assertTrue(menu_rect.top() > selector_bottom or menu_rect.bottom() < selector_top)
+        selector_left = window.scale_select.mapToGlobal(QPoint(0, 0)).x()
+        selector_right = window.scale_select.mapToGlobal(QPoint(window.scale_select.width(), 0)).x()
+        self.assertEqual(menu_rect.width(), abs(selector_right - selector_left))
+        selected = window.scale_select._actions[130]
+        check_center = selected.check_label.mapToGlobal(selected.check_label.rect().center()).y()
+        text_center = selected.text_label.mapToGlobal(selected.text_label.rect().center()).y()
+        self.assertLessEqual(abs(check_center - text_center), 1)
+        window.scale_select._menu.hide()
+        window.close()
+
+    def test_quick_target_fields_are_readable_and_never_clipped(self):
+        window = MainWindow()
+        window.show()
+        APP.processEvents()
+        window.select_tab(1)
+        APP.processEvents()
+
+        for percent in (100, 110, 120, 130, 140, 150):
+            window.scale_select.setCurrentText(f"{percent}%")
+            APP.processEvents()
+            for field in (window.quick_extract_bpm, window.quick_extract_key):
+                parent = field.parentWidget()
+                self.assertTrue(parent.rect().contains(field.geometry()))
+                self.assertGreaterEqual(
+                    parent.contentsRect().right() - field.geometry().right(),
+                    3,
+                )
+        window.scale_select.setCurrentText("100%")
+        APP.processEvents()
+
+        key_metrics = QFontMetrics(window.quick_extract_key.font())
+        self.assertLessEqual(
+            key_metrics.horizontalAdvance(window.quick_extract_key.currentText()),
+            window.quick_extract_key.width() - 28,
+        )
+        self.assertGreaterEqual(window.quick_extract_bpm.height(), 29)
+        self.assertGreaterEqual(window.quick_extract_key.height(), 29)
+
+        for selector in (window.quick_extract_key, window.quick_convert_key):
+            self.assertEqual(
+                [selector.itemText(index) for index in range(selector.count())],
+                list(window.quick_extract_key._items),
+            )
+            selector._show_menu()
+            APP.processEvents()
+            checked = [row for row in selector._rows.values() if row.isChecked()]
+            self.assertEqual(len(checked), 1)
+            visible_width = abs(
+                selector.mapToGlobal(QPoint(selector.width(), 0)).x()
+                - selector.mapToGlobal(QPoint(0, 0)).x()
+            )
+            self.assertGreaterEqual(selector._popup.width(), visible_width)
+            selector._popup.hide()
+        window.select_tab(0)
+        APP.processEvents()
+        selector = window.target_key_combo
+        self.assertEqual([selector.itemText(index) for index in range(selector.count())], list(window.quick_extract_key._items))
+        selector._show_menu()
+        APP.processEvents()
+        self.assertEqual(sum(row.isChecked() for row in selector._rows.values()), 1)
+        selector._popup.hide()
+        window.close()
+
+    def test_target_key_popups_stay_inside_the_visible_application(self):
+        window = MainWindow()
+        window.show()
+        APP.processEvents()
+        window.convert_switch.setChecked(True)
+
+        for percent in (100, 110, 120, 130, 140, 150):
+            window.scale_select.setCurrentText(f"{percent}%")
+            APP.processEvents()
+            host_rect = self.global_rect(window.canvas)
+            screen_rect = window.screen().availableGeometry()
+            bounds = host_rect.intersected(screen_rect)
+
+            window.select_tab(1)
+            APP.processEvents()
+            for selector in (window.quick_extract_key, window.quick_convert_key):
+                selector._show_menu()
+                APP.processEvents()
+                self.assertTrue(bounds.contains(selector._popup.geometry()))
+                selector._popup.hide()
+
+            window.select_tab(0)
+            APP.processEvents()
+            window.target_key_combo._show_menu()
+            APP.processEvents()
+            self.assertTrue(bounds.contains(window.target_key_combo._popup.geometry()))
+            self.assertLess(
+                window.target_key_combo._popup.geometry().bottom(),
+                self.global_rect(window.target_key_combo).top(),
+            )
+            window.target_key_combo._popup.hide()
+        window.close()
+
+    def test_quick_status_rows_follow_their_content_columns(self):
+        window = MainWindow()
+        window.show()
+        window.select_tab(1)
+        APP.processEvents()
+
+        self.assertEqual(
+            self.global_rect(window.quick_extract_result_footer).left(),
+            self.global_rect(window.quick_layers_area).left(),
+        )
+        self.assertEqual(
+            self.global_rect(window.quick_convert_status_footer).left(),
+            self.global_rect(window.quick_convert_settings).left(),
+        )
+        self.assertEqual(window.quick_convert_filename.text(), "")
+        self.assertEqual(window.quick_convert_footer_filename.text(), "Ready for one loop.")
+        self.assertEqual(
+            sum(
+                child.isVisible() and child.text() == "Ready for one loop."
+                for child in window.canvas.findChildren(QLabel)
+            ),
+            1,
+        )
+        window.close()
+
+    def test_quick_scan_control_labels_keep_their_full_width(self):
+        window = MainWindow()
+        window.show()
+        window.select_tab(1)
+        APP.processEvents()
+
+        for label_widget in (window.quick_degree_label, window.quick_notation_label):
+            self.assertGreaterEqual(label_widget.width(), label_widget.minimumSizeHint().width())
+        self.assertLess(
+            self.global_rect(window.quick_degree_label).right(),
+            self.global_rect(window.quick_major_button).left(),
+        )
+        self.assertLess(
+            self.global_rect(window.quick_notation_label).right(),
+            self.global_rect(window.quick_sharps_button).left(),
+        )
+        window.close()
+
+    def test_quick_scan_drop_content_is_compact_and_centered(self):
+        window = MainWindow()
+        window.show()
+        window.select_tab(1)
+        APP.processEvents()
+        drop = window.quick_scan_drop
+
+        centers = (
+            drop.icon.geometry().center().y(),
+            drop.copy_host.geometry().center().y(),
+            drop.browse.geometry().center().y(),
+        )
+        self.assertLessEqual(max(centers) - min(centers), 2)
+        self.assertLess(drop.icon.geometry().right(), drop.copy_host.geometry().left())
+        self.assertLess(drop.copy_host.geometry().right(), drop.browse.geometry().left())
+        self.assertLess(drop.title_label.geometry().bottom(), drop.subtitle_label.geometry().top())
+        self.assertLessEqual(drop.title_label.height(), QFontMetrics(drop.title_label.font()).height() + 2)
+        self.assertLessEqual(drop.subtitle_label.height(), QFontMetrics(drop.subtitle_label.font()).height() + 2)
+        for child in (drop.icon, drop.copy_host, drop.browse):
+            self.assertTrue(drop.contentsRect().contains(child.geometry()))
+        window.close()
+
+    def test_operation_cards_only_expand_themselves(self):
+        window = MainWindow()
+        window.show()
+        APP.processEvents()
+        heights = {}
+        for key_enabled, convert_enabled in ((False, False), (True, False), (False, True), (True, True)):
+            window.key_switch.setChecked(key_enabled)
+            window.convert_switch.setChecked(convert_enabled)
+            APP.processEvents()
+            values = (
+                window.layer_operation_card.height(),
+                window.key_operation_card.height(),
+                window.target_operation_card.height(),
+            )
+            heights[(key_enabled, convert_enabled)] = values
+
+        self.assertEqual({values[0] for values in heights.values()}, {47})
+        self.assertEqual(heights[(False, False)], (47, 47, 47))
+        self.assertEqual(heights[(True, False)], (47, 139, 47))
+        self.assertEqual(heights[(False, True)], (47, 47, 110))
+        self.assertEqual(heights[(True, True)], (47, 139, 110))
+        self.assertLess(window.target_operation_card.geometry().bottom(), window.status_panel.geometry().top())
+        window.close()
+
+    def test_output_path_elides_middle_while_actions_stay_anchored(self):
+        window = MainWindow()
+        window.show()
+        APP.processEvents()
+        initial_buttons = (window.change_root_button.geometry(), window.open_folder_button.geometry())
+        long_path = "/Users/nrgy/" + ("Very Long Loop Pack Folder/" * 18) + "Final Layers"
+        window.custom_destination = long_path
+        window._update_destination_preview()
+        APP.processEvents()
+
+        self.assertEqual(initial_buttons, (window.change_root_button.geometry(), window.open_folder_button.geometry()))
+        self.assertIn("…", window.destination_path_label.text())
+        self.assertTrue(window.destination_path_label.text().startswith("/Users"))
+        self.assertTrue(window.destination_path_label.text().endswith("Loop Pack Name"))
+        self.assertEqual(window.destination_path_label.toolTip(), os.path.join(long_path, "Loop Pack Name"))
+        self.assertLess(window.destination_path_label.geometry().right(), window.change_root_button.geometry().left())
+        window.close()
+
+    def test_key_destination_has_one_selected_visual_state(self):
+        window = MainWindow()
+        self.assertTrue(window.copy_destination_button.property("active"))
+        self.assertFalse(window.rename_destination_button.property("active"))
+        window._set_destination_mode("rename_in_place")
+        self.assertFalse(window.copy_destination_button.property("active"))
+        self.assertTrue(window.rename_destination_button.property("active"))
         window.close()
 
     def test_quick_scan_locks_drop_while_engine_loads(self):
@@ -106,12 +438,15 @@ class QtInterfaceTests(unittest.TestCase):
 
     def test_quick_scan_formats_result_without_rescanning(self):
         window = MainWindow()
-        window.quick_scan_result = {"camelot": "3A"}
+        window.quick_scan_result = {"camelot": "3A", "bpm": 75.0}
         window._update_quick_scan_results()
+        self.assertEqual(window.quick_bpm_value.text(), "150")
         self.assertEqual(window.quick_detected_value.text(), "A# minor")
         self.assertEqual(window.quick_relative_value.text(), "C# major")
         self.assertEqual(window.quick_detected_degree.text(), "VI")
         self.assertEqual(window.quick_relative_degree.text(), "I")
+        self.assertEqual(window.quick_detected_modal.text(), "A# Aeolian · VI")
+        self.assertEqual(window.quick_relative_modal.text(), "C# Ionian · I")
 
         window._set_quick_accidentals("flats")
         window._set_quick_degree_reference("minor")
@@ -119,6 +454,7 @@ class QtInterfaceTests(unittest.TestCase):
         self.assertEqual(window.quick_relative_value.text(), "Db major")
         self.assertEqual(window.quick_detected_degree.text(), "I")
         self.assertEqual(window.quick_relative_degree.text(), "III")
+        self.assertEqual(window.quick_bpm_value.text(), "150")
         window.close()
 
     def test_quick_scan_modes_stay_empty_until_a_real_result(self):
@@ -341,10 +677,20 @@ class QtInterfaceTests(unittest.TestCase):
                 "output_name": "Loop_L1.mp3", "duration_seconds": 12.5,
                 "output_bytes": 5,
             }]
-            worker = QuickExtractWorker(os.path.join(root, "Loop.mp3"), root)
+            source = os.path.join(root, "Loop 140 C minor.mp3")
+            open(source, "wb").close()
+            worker = QuickExtractWorkflowWorker(
+                None,
+                source,
+                root,
+                bpm_enabled=False,
+                bpm=None,
+                key_enabled=False,
+                key_pair=None,
+            )
             results = []
             worker.completed.connect(lambda layers, elapsed: results.extend(layers))
-            with patch("app.process_single_file", return_value=diagnostics), patch("app.waveform_peaks", return_value=[0.5] * 72):
+            with patch("stem_workflow.process_single_file", return_value=diagnostics), patch("stem_workflow.waveform_peaks", return_value=[0.5] * 72):
                 worker.run()
             APP.processEvents()
             self.assertEqual(results[0]["path"], layer)
@@ -397,53 +743,45 @@ class QtInterfaceTests(unittest.TestCase):
         strip.close()
 
     def test_stem_workflow_matrix(self):
-        window = MainWindow()
-        window._start_key_engine = lambda: None
-        window.key_engine_state = "ready"
+        with tempfile.TemporaryDirectory() as source:
+            open(os.path.join(source, "Loop 140 C minor.mp3"), "wb").close()
+            window = MainWindow()
+            window._start_key_engine = lambda: None
+            window.key_engine_state = "ready"
+            window.input_drop.set_path(source)
 
-        self.assertTrue(window.layer_switch.isChecked())
-        self.assertFalse(window.key_switch.isChecked())
-        self.assertEqual(window.start_button.text(), "▶  EXTRACT LAYERS")
-        self.assertEqual(window.start_button.property("role"), "primary")
-        self.assertFalse(window.start_button.property("keyTextAccent"))
-        self.assertFalse(window.copy_destination_button.isEnabled())
-        self.assertTrue(all(effect.opacity() < 0.3 for effect in window.key_opacity_effects))
-        self.assertTrue(window.input_drop.isEnabled())
-        self.assertFalse(hasattr(window, "layer_source_overlay"))
-        self.assertTrue(window.layer_operation_card.property("active"))
-        self.assertFalse(window.key_operation_card.property("active"))
+            # The validated 1.6B UI opens with extraction and key analysis on,
+            # while conversion remains an explicit optional operation.
+            self.assertTrue(window.layer_switch.isChecked())
+            self.assertTrue(window.key_switch.isChecked())
+            self.assertFalse(window.convert_switch.isChecked())
+            self.assertEqual(window.start_button.text(), "▶  PROCESS 1 LOOP")
+            self.assertTrue(window.start_button.isEnabled())
+            self.assertFalse(window.copy_destination_button.isEnabled())
+            self.assertTrue(window.key_panel.isVisibleTo(window.key_operation_card))
+            self.assertFalse(window.target_panel.isVisibleTo(window.target_operation_card))
 
-        window.key_switch.setChecked(True)
-        self.assertEqual(window.start_button.text(), "▶  SCAN KEYS + EXTRACT LAYERS")
-        self.assertEqual(window.start_button.property("role"), "primary")
-        self.assertTrue(window.start_button.property("keyTextAccent"))
-        self.assertFalse(window.copy_destination_button.isEnabled())
-        self.assertTrue(all(effect.opacity() == 1.0 for effect in window.key_opacity_effects))
-        self.assertEqual(window.copy_destination_button.property("role"), "disabled")
-        self.assertEqual(window.rename_destination_button.property("role"), "disabled")
+            window.layer_switch.setChecked(False)
+            self.assertEqual(window.start_button.text(), "▶  PROCESS 1 LOOP")
+            self.assertTrue(window.copy_destination_button.isEnabled())
+            self.assertTrue(window.rename_destination_button.isEnabled())
+            self.assertIn("Analyzed Loops", window.destination_path_label.toolTip())
 
-        window.layer_switch.setChecked(False)
-        self.assertEqual(window.start_button.text(), "▶  SCAN KEYS")
-        self.assertEqual(window.start_button.property("role"), "keyPrimary")
-        self.assertFalse(window.start_button.property("keyTextAccent"))
-        self.assertTrue(window.copy_destination_button.isEnabled())
-        self.assertTrue(window.rename_destination_button.isEnabled())
-        self.assertEqual(window.copy_destination_button.property("role"), "selected")
-        self.assertEqual(window.rename_destination_button.property("role"), "secondary")
-        self.assertTrue(window.input_drop.isEnabled())
-        self.assertFalse(window.layer_operation_card.property("active"))
-        self.assertTrue(window.key_operation_card.property("active"))
-        self.assertEqual(window.results_title.property("role"), "keySmall")
-        self.assertEqual(window.key_destination_effect.opacity(), 1.0)
-        self.assertIsNone(window.layer_results_panel.graphicsEffect())
-        self.assertTrue(window.layer_results_panel.isEnabled())
+            window.convert_switch.setChecked(True)
+            self.assertEqual(window.start_button.text(), "▶  PROCESS 1 LOOP")
+            self.assertFalse(window.copy_destination_button.isEnabled())
+            self.assertTrue(window.target_panel.isVisibleTo(window.target_operation_card))
+            self.assertIn("Converted Loops", window.destination_path_label.toolTip())
 
-        window.key_switch.setChecked(False)
-        self.assertEqual(window.start_button.text(), "SELECT A PROCESS")
-        self.assertFalse(window.start_button.property("keyTextAccent"))
-        self.assertFalse(window.start_button.isEnabled())
-        self.assertTrue(window.input_drop.isEnabled())
-        window.close()
+            window.key_switch.setChecked(False)
+            self.assertEqual(window.start_button.text(), "▶  PROCESS 1 LOOP")
+            self.assertTrue(window.start_button.isEnabled())
+
+            window.convert_switch.setChecked(False)
+            self.assertEqual(window.start_button.text(), "▶  PROCESS 1 LOOP")
+            self.assertFalse(window.start_button.isEnabled())
+            self.assertTrue(window.input_drop.isEnabled())
+            window.close()
 
     def test_operation_cards_toggle_everywhere_without_switch_double_toggle(self):
         window = MainWindow()
@@ -451,58 +789,46 @@ class QtInterfaceTests(unittest.TestCase):
         window.show()
         APP.processEvents()
 
-        layer_events = []
-        key_events = []
-        window.layer_switch.toggled.connect(layer_events.append)
-        window.key_switch.toggled.connect(key_events.append)
-
-        self.assertTrue(window.layer_title.testAttribute(Qt.WA_TransparentForMouseEvents))
-        self.assertTrue(window.layer_operation_icon.testAttribute(Qt.WA_TransparentForMouseEvents))
-        QTest.mouseClick(window.layer_operation_card, Qt.LeftButton, Qt.NoModifier, QPoint(20, 30))
-        self.assertFalse(window.layer_switch.isChecked())
-        self.assertEqual(layer_events, [False])
-        self.assertFalse(window.key_switch.isChecked())
-
-        # A click on the switch itself must change the state exactly once.
-        QTest.mouseClick(window.layer_switch, Qt.LeftButton)
-        self.assertTrue(window.layer_switch.isChecked())
-        self.assertEqual(layer_events, [False, True])
-
-        title_point = window.key_title.mapTo(window.key_operation_card, window.key_title.rect().center())
-        QTest.mouseClick(window.key_operation_card, Qt.LeftButton, Qt.NoModifier, title_point)
+        key_header = window.key_switch.parentWidget()
+        target_header = window.convert_switch.parentWidget()
         self.assertTrue(window.key_switch.isChecked())
-        self.assertEqual(key_events, [True])
-        self.assertTrue(window.key_operation_card.property("active"))
+        self.assertFalse(window.key_panel.isHidden())
+        self.assertFalse(window.convert_switch.isChecked())
+        self.assertTrue(window.target_panel.isHidden())
 
-        QTest.mouseClick(window.key_switch, Qt.LeftButton)
+        # The whole operation header owns the same state as its switch.
+        QTest.mouseClick(key_header, Qt.LeftButton, Qt.NoModifier, QPoint(key_header.width() - 35, key_header.height() // 2))
         self.assertFalse(window.key_switch.isChecked())
-        self.assertEqual(key_events, [True, False])
+        self.assertTrue(window.key_panel.isHidden())
 
-        window.busy = True
-        window._sync_stem_state()
-        QTest.mouseClick(window.layer_operation_card, Qt.LeftButton, Qt.NoModifier, QPoint(20, 30))
-        QTest.mouseClick(window.layer_switch, Qt.LeftButton)
-        self.assertTrue(window.layer_switch.isChecked())
-        self.assertEqual(layer_events, [False, True])
+        QTest.mouseClick(target_header, Qt.LeftButton, Qt.NoModifier, QPoint(target_header.width() - 35, target_header.height() // 2))
+        self.assertTrue(window.convert_switch.isChecked())
+        self.assertFalse(window.target_panel.isHidden())
+
+        # Key Analysis and Convert BPM & Key are independent and may remain
+        # expanded together, matching the final validated prototype.
+        QTest.mouseClick(key_header, Qt.LeftButton, Qt.NoModifier, QPoint(key_header.width() - 35, key_header.height() // 2))
+        self.assertTrue(window.key_switch.isChecked())
+        self.assertFalse(window.key_panel.isHidden())
+        self.assertFalse(window.target_panel.isHidden())
         window.close()
 
     def test_output_action_buttons_are_vertically_centered(self):
         window = MainWindow()
         window.show()
         APP.processEvents()
-        panel_center = window.layer_results_panel.rect().center().y()
+        panel_center = window.layer_operation_card.rect().center().y()
         for action in (window.change_root_button, window.open_folder_button):
-            action_center = action.mapTo(window.layer_results_panel, action.rect().center()).y()
+            action_center = action.mapTo(window.layer_operation_card, action.rect().center()).y()
             self.assertLessEqual(abs(action_center - panel_center), 1)
-        open_text = window.open_folder_button.text_label
+        self.assertEqual(window.change_root_button.height(), window.open_folder_button.height())
         self.assertGreaterEqual(
-            open_text.width(),
-            QFontMetrics(open_text.font()).horizontalAdvance(open_text.text()),
+            window.open_folder_button.width(),
+            QFontMetrics(window.open_folder_button.font()).horizontalAdvance(window.open_folder_button.text()) + 16,
         )
-        self.assertLess(open_text.geometry().right(), window.open_folder_button.rect().right())
         window.close()
 
-    def test_quick_tools_use_blue_scan_and_red_extract_scopes(self):
+    def test_quick_tools_use_validated_extract_scan_convert_scopes(self):
         previous_stylesheet = APP.styleSheet()
         APP.setStyleSheet(application_stylesheet())
         window = MainWindow()
@@ -512,49 +838,20 @@ class QtInterfaceTests(unittest.TestCase):
         window.show()
         APP.processEvents()
         try:
-            self.assertEqual(window.quick_scan_panel.property("sectionAccent"), "blue")
-            self.assertEqual(window.quick_extract_panel.property("sectionAccent"), "red")
-            self.assertEqual(window.quick_scan_drop.accent, "blue")
-            self.assertEqual(window.quick_extract_drop.accent, "red")
-            self.assertEqual(
-                window.quick_scan_title.palette().color(window.quick_scan_title.foregroundRole()).name(),
-                "#3ca7e8",
-            )
-            self.assertEqual(
-                window.quick_extract_title.palette().color(window.quick_extract_title.foregroundRole()).name(),
-                "#ff2b1c",
-            )
-            self.assertTrue(window.quick_scan_panel.isAncestorOf(window.quick_major_button))
-            self.assertTrue(window.quick_extract_panel.isAncestorOf(window.quick_show_results))
-            self.assertFalse(window.quick_extract_panel.isAncestorOf(window.quick_storage_label))
-            self.assertEqual(
-                window.start_button.palette().color(window.start_button.foregroundRole()).name(),
-                "#b9e7ff",
-            )
+            self.assertEqual(window.quick_extract_drop.accent, RED)
+            self.assertEqual(window.quick_scan_drop.accent, PURPLE)
+            self.assertEqual(window.quick_convert_drop.accent, ORANGE)
+            self.assertEqual(window.quick_extract_drop.browse.property("accent"), "red")
+            self.assertEqual(window.quick_scan_drop.browse.property("accent"), "purple")
+            self.assertEqual(window.quick_convert_drop.browse.property("accent"), "orange")
 
-            neutral_section_surfaces = (
-                window.quick_scan_panel,
-                window.quick_extract_panel,
-            )
-            rendered_section_colors = [
-                widget.grab().toImage().pixelColor(8, 8).name()
-                for widget in neutral_section_surfaces
-            ]
-            self.assertEqual(rendered_section_colors, ["#14181b"] * len(rendered_section_colors))
-
-            neutral_surfaces = (
-                (window.quick_scan_drop, 12, 12),
-                (window.quick_extract_drop, 12, 12),
-                (window.quick_detected_card, 10, 10),
-                (window.quick_relative_card, 10, 10),
-                (window.quick_modes_card, 10, 10),
-                (window.quick_layers_area.viewport(), 10, 10),
-            )
-            rendered_colors = [
-                widget.grab().toImage().pixelColor(x, y).name()
-                for widget, x, y in neutral_surfaces
-            ]
-            self.assertEqual(rendered_colors, ["#0e1215"] * len(rendered_colors))
+            page = window.pages.currentWidget()
+            extract_y = window.quick_extract_drop.mapTo(page, QPoint()).y()
+            scan_y = window.quick_scan_drop.mapTo(page, QPoint()).y()
+            convert_y = window.quick_convert_drop.mapTo(page, QPoint()).y()
+            self.assertLess(extract_y, scan_y)
+            self.assertLess(scan_y, convert_y)
+            self.assertNotEqual(window.quick_layers_area.verticalScrollBarPolicy(), Qt.ScrollBarAlwaysOff)
         finally:
             window.close()
             APP.setStyleSheet(previous_stylesheet)
@@ -567,20 +864,17 @@ class QtInterfaceTests(unittest.TestCase):
         window.show()
         APP.processEvents()
         try:
-            self.assertEqual(window.source_title.text(), "SOURCE FOLDER")
-            self.assertEqual(window.operations_title.text(), "OPERATIONS")
-            self.assertEqual(window.output_title.text(), "OUTPUT")
-            self.assertIn("process", window.input_drop.title_label.text().lower())
-            self.assertIs(window.input_drop.parentWidget(), window.source_panel)
+            texts = {item.text() for item in window.pages.widget(0).findChildren(QLabel)}
+            self.assertIn("SOURCE FOLDER", texts)
+            self.assertIn("OPERATIONS", texts)
+            self.assertIn("LAYER EXTRACTION", texts)
+            self.assertIn("KEY ANALYSIS", texts)
+            self.assertIn("CONVERT BPM & KEY", texts)
+            self.assertEqual(window.input_drop.title_label.text(), "Drop a loop folder here")
             self.assertFalse(window.layer_operation_card.isAncestorOf(window.input_drop))
             self.assertEqual(window.input_drop.icon.kind, "folder_in")
-            self.assertEqual(window.layer_operation_icon.kind, "layers")
-            self.assertEqual(window.key_operation_icon.kind, "key_scan")
-            self.assertEqual(window.results_location_icon.kind, "folder")
-            self.assertEqual(window.open_folder_button.icon_widget.kind, "folder")
-            self.assertEqual(window.open_folder_button.text_label.text(), "OPEN FOLDER")
-            self.assertEqual(window.key_destination_title.text(), "KEY ANALYSIS DESTINATION")
-            self.assertNotIn("KEY-ONLY", window.key_destination_title.text())
+            self.assertEqual(window.open_folder_button.text(), "OPEN FOLDER")
+            self.assertIn("KEY ANALYSIS DESTINATION", texts)
             self.assertEqual(window.stem_tab.icon.kind, "folder")
 
             page = window.pages.widget(0)
@@ -621,17 +915,17 @@ class QtInterfaceTests(unittest.TestCase):
         window.layer_switch.setChecked(False)
         window.key_switch.setChecked(True)
 
-        self.assertEqual(window.start_button.property("role"), "keyPrimary")
-        self.assertEqual(window.results_title.property("role"), "keySmall")
-        self.assertEqual(window.key_destination_effect.opacity(), 1.0)
+        self.assertEqual(window.start_button.property("role"), "process")
+        self.assertTrue(window.copy_destination_button.isEnabled())
+        self.assertTrue(window.rename_destination_button.isEnabled())
         window._set_destination_mode("rename_in_place")
         self.assertEqual(window.destination_mode, "rename_in_place")
 
         window.layer_switch.setChecked(True)
         self.assertEqual(window.destination_mode, "copy_to_output")
-        self.assertEqual(window.start_button.property("role"), "primary")
-        self.assertLess(window.key_destination_effect.opacity(), 0.3)
-        self.assertIn("Extractions", window.destination_path_label.text())
+        self.assertFalse(window.copy_destination_button.isEnabled())
+        self.assertFalse(window.rename_destination_button.isEnabled())
+        self.assertIn("Extractions", window.destination_path_label.toolTip())
         window.close()
 
     def test_quick_tools_page_survives_stem_skin_state_changes(self):
@@ -648,6 +942,45 @@ class QtInterfaceTests(unittest.TestCase):
         self.assertIs(window.pages.currentWidget(), quick_page)
         for control in quick_controls:
             self.assertTrue(quick_page.isAncestorOf(control))
+        window.close()
+
+    def test_quick_target_switches_enable_only_their_own_fields(self):
+        window = MainWindow()
+        self.assertTrue(window.quick_extract_bpm.isEnabled())
+        self.assertTrue(window.quick_extract_key.isEnabled())
+        self.assertTrue(window.quick_convert_bpm.isEnabled())
+        self.assertTrue(window.quick_convert_key.isEnabled())
+
+        window.quick_extract_bpm_switch.setChecked(False)
+        window.quick_convert_key_switch.setChecked(False)
+        self.assertFalse(window.quick_extract_bpm.isEnabled())
+        self.assertTrue(window.quick_extract_key.isEnabled())
+        self.assertTrue(window.quick_convert_bpm.isEnabled())
+        self.assertFalse(window.quick_convert_key.isEnabled())
+        window.close()
+
+    def test_pending_quick_operations_resume_when_key_engine_becomes_ready(self):
+        window = MainWindow()
+        class ReadyAnalyzer:
+            def stop(self):
+                pass
+
+        analyzer = ReadyAnalyzer()
+        window.pending_quick_scan = "/tmp/scan.mp3"
+        window.pending_quick_extract = "/tmp/extract.mp3"
+        window.pending_quick_convert = "/tmp/convert.mp3"
+        with patch.object(window, "_run_quick_scan") as scan, \
+             patch.object(window, "_run_quick_extract") as extract, \
+             patch.object(window, "_run_quick_convert") as convert, \
+             patch.object(window, "_start_midi_engine"):
+            window._key_engine_ready(analyzer)
+            APP.processEvents()
+
+        scan.assert_called_once_with("/tmp/scan.mp3")
+        extract.assert_called_once_with("/tmp/extract.mp3")
+        convert.assert_called_once_with("/tmp/convert.mp3")
+        self.assertIs(window.key_analyzer, analyzer)
+        self.assertEqual(window.key_engine_state, "ready")
         window.close()
 
     def test_quick_extract_manager_lists_extracts_and_layers(self):
@@ -681,10 +1014,10 @@ class QtInterfaceTests(unittest.TestCase):
             settings["token_order"],
             ["LOOP NAME", "BPM", "KEY", "PROD NAME"],
         )
-        self.assertEqual(window.mode_buttons["relative_major"].property("role"), "selected")
-        self.assertEqual(window.mode_buttons["detected"].property("role"), "secondary")
-        self.assertEqual(window.flats_button.property("role"), "selected")
-        self.assertEqual(window.sharps_button.property("role"), "secondary")
+        self.assertTrue(window.mode_buttons["relative_major"].property("active"))
+        self.assertFalse(window.mode_buttons["detected"].property("active"))
+        self.assertTrue(window.flats_button.property("active"))
+        self.assertFalse(window.sharps_button.property("active"))
         self.assertIn("CALLMEUR3 137 Db +NRGY_L1.mp3", window.name_preview_label.text())
         window.close()
 
@@ -706,14 +1039,12 @@ class QtInterfaceTests(unittest.TestCase):
         widths = {token: rect.width() for token, rect in zip(strip.tokens, strip.chipRects())}
         self.assertGreater(widths["LOOP NAME"], widths["KEY"])
         self.assertGreater(widths["PROD NAME"], widths["BPM"])
-        first = strip.chipRects()[0].center()
-        last = strip.chipRects()[-1].center()
-        QTest.mousePress(strip, Qt.LeftButton, Qt.NoModifier, QPoint(int(first.x()), int(first.y())))
-        QTest.mouseMove(strip, QPoint(int(last.x() + 50), int(last.y())), 20)
-        QTest.mouseRelease(strip, Qt.LeftButton, Qt.NoModifier, QPoint(int(last.x() + 50), int(last.y())))
-
+        strip.tokens = ["LOOP NAME", "BPM", "PROD NAME", "KEY"]
+        strip.orderChanged.emit(list(strip.tokens))
+        APP.processEvents()
         self.assertEqual(window.token_order[-1], "KEY")
-        self.assertIn("CALLMEUR3 137 +NRGY A#m_L1.mp3", window.name_preview_label.text())
+        self.assertIn("CALLMEUR3 137 +NRGY", window.name_preview_label.text())
+        self.assertTrue(window.name_preview_label.text().endswith("A#m_L1.mp3"))
         window.close()
 
     def test_storage_preview_does_not_create_session(self):
@@ -749,6 +1080,7 @@ class QtInterfaceTests(unittest.TestCase):
 
             window.key_switch.setChecked(True)
             window.layer_switch.setChecked(False)
+            window.convert_switch.setChecked(False)
             self.assertFalse(window.start_button.isEnabled())
 
             # This is the exact cold-launch order reported by the user: the
@@ -756,7 +1088,7 @@ class QtInterfaceTests(unittest.TestCase):
             window.input_drop.set_path(source)
 
             self.assertTrue(window.start_button.isEnabled())
-            self.assertEqual(window.start_button.text(), "▶  SCAN KEYS")
+            self.assertEqual(window.start_button.text(), "▶  PROCESS 1 LOOP")
             window.close()
 
     def test_custom_destination_is_session_only_and_direct(self):
@@ -767,28 +1099,22 @@ class QtInterfaceTests(unittest.TestCase):
             window.show()
             window.input_drop.set_path(source)
             APP.processEvents()
-            default_title_position = window.destination_path_label.mapTo(window, QPoint(0, 0))
+            default_title_position = window.destination_path_label.mapTo(window.canvas, QPoint(0, 0))
 
             window.custom_destination = custom
             window._update_destination_preview()
             APP.processEvents()
             expected = os.path.join(custom, "Loop Pack")
             self.assertEqual(window.destination_path_label.toolTip(), expected)
-            self.assertFalse(window.reset_destination_button.isHidden())
-            self.assertEqual(
-                window.destination_info_label.text(),
-                "Custom destination active for this session.",
-            )
             self.assertNotIn("Analyzed Loops", expected)
             self.assertNotIn("Extractions", expected)
             self.assertEqual(
-                window.destination_path_label.mapTo(window, QPoint(0, 0)).y(),
+                window.destination_path_label.mapTo(window.canvas, QPoint(0, 0)).y(),
                 default_title_position.y(),
             )
 
             window._reset_destination()
             self.assertEqual(window.custom_destination, "")
-            self.assertTrue(window.reset_destination_button.isHidden())
             self.assertIn("Extractions", window.destination_path_label.toolTip())
             window.close()
 

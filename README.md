@@ -1,116 +1,62 @@
-# Stem Slicer 1.5S Beta
+# Stem Slicer 1.6B
 
-Cross-platform PySide6 interface built around the validated Stem Slicer 1.0b
-extraction engine and the embedded OpenKeyScan musical-key analyzer.
+Stem Slicer 1.6B is the PySide6 implementation of the validated 1.6B interface.
+It extracts loop layers, analyzes musical key and Loop-mode BPM, converts BPM
+and key with Bungee, and provides the Quick Extract, Quick Scan and Quick
+Convert workflows from the same fixed-layout desktop application.
 
-Current validated scope includes the batch Stem Slicer workflows, automatic
-OpenKeyScan warm-up, Quick Scan, Quick Extract, real waveforms, Qt Multimedia
-preview, external file drag, managed persistent storage, and an in-app Quick
-Extract history manager. The handoff copy also contains
-`01_Documentation/PROJECT_STATUS_2026-07-13.md` as the authoritative status.
+## Runtime layout
 
-Version 1.5S Beta is an alternative interface skin built from the complete 1.5
-Beta application. The real header, brand assets, tabs and Quick Tools page are
-unchanged. Only the batch Stem Slicer page is reorganized as a guided workflow:
-Source Folder, Operations, Output, then Process Status. The shared source stays
-available for extraction-only, extraction plus analysis, and key-analysis-only
-workflows. MIDI behavior remains identical to 1.5 Beta.
+The main application remains deliberately lightweight:
 
-## Default workflow
+- FFmpeg decodes, measures and encodes audio;
+- the open-source Bungee command-line engine performs pitch/time conversion;
+- OpenKeyScan and DeepRhythm run in one isolated analyzer child bundle;
+- Basic Pitch uses the single ONNX model bundled by the parent application;
+- PySide6 provides the fixed-size, percentage-scaled interface and multimedia
+  preview.
 
-- Stem Slicer is enabled.
-- Key Analysis is disabled.
-- Original loop filenames are preserved exactly.
-- Extracted files receive only their `_L1`, `_L2`, ... suffix.
-
-## Key workflow
-
-Enabling Key Analysis automatically enables structured output naming. The
-default order is:
-
-`[KEY] [LOOP NAME] [BPM] [PROD NAME]`
-
-The chips remain visible while analysis is disabled, but become draggable only
-when analysis is active. Existing key text is replaced by a fresh audio
-analysis.
-
-Supported process combinations:
-
-- extraction only;
-- key analysis and extraction;
-- key analysis only, either copied to an output folder or renamed in place.
+The key/BPM analyzer stays an opaque child bundle so its Torch runtime is not
+collected a second time by the parent PyInstaller build.
 
 ## Development
 
-The validated macOS build environment is CPython 3.12.x on Apple Silicon.
-Keep the build pinned to Python 3.12 until a later runtime has passed the full
-audio, extraction, key-analysis and MIDI test suite.
+Use CPython 3.12 for the currently pinned dependencies:
 
 ```bash
 python3.12 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python app.py
+QT_QPA_PLATFORM=offscreen STEM_SLICER_DISABLE_ENGINE_AUTOSTART=1 \
+  .venv/bin/python -m unittest discover -s tests -v
 ```
 
-Run tests:
-
-```bash
-QT_QPA_PLATFORM=offscreen STEM_SLICER_DISABLE_ENGINE_AUTOSTART=1 .venv/bin/python -m unittest discover -s tests -v
-```
-
-Build macOS:
-
-```bash
-.venv/bin/python -m PyInstaller --noconfirm StemSlicer.spec
-cp -cR vendor/openkeyscan-analyzer \
-  "dist/Stem Slicer 1.5S Beta.app/Contents/Resources/openkeyscan-analyzer"
-codesign --force --deep --sign - "dist/Stem Slicer 1.5S Beta.app"
-codesign --verify --deep --strict "dist/Stem Slicer 1.5S Beta.app"
-```
-
-Sur APFS, `cp -cR` crée une copie clone autonome sans doubler temporairement
-l’espace physique. Utiliser `ditto` à sa place sur un autre système de fichiers.
-Avant de relancer PyInstaller, déplacer tout ancien `build` ou `dist` vers la
-Corbeille : PyInstaller remplace sinon ses dossiers de sortie.
-
-`StemSlicer.spec` collecte l’application Qt 6.11.1, FFmpeg et le modèle ONNX de
-Basic Pitch. FFprobe n’est plus embarqué : la durée audio passe par le fallback
-FFmpeg, validé sur une extraction canonique identique. OpenKeyScan reste un
-payload opaque afin de ne pas collecter Torch une deuxième fois ; il est ajouté
-après PyInstaller, puis le bundle complet est resigné en profondeur.
-
-Le bundle Mac 1.5 Beta de référence mesure 0,953 Go logiques et 0,959 Go alloués sur
-le volume de test, en unités décimales macOS. L’audit ne trouve qu’un modèle
-OpenKeyScan, qu’un modèle Basic Pitch et 0,051 Go de bibliothèques strictement
-identiques entre leurs deux runtimes isolés. Ces copies ne sont pas mutualisées
-car cela fragiliserait les chemins dynamiques et la signature du bundle.
-
-Qt Multimedia 6.11.1 est requis pour le correctif CoreAudio. Le test matériel
-validé lit un MP3 à 44,1 kHz tout en maintenant la sortie Mac à 48 000 Hz et
-512 frames avant, pendant et après la lecture.
+The repository intentionally does not contain generated application bundles,
+Windows vendor folders, Bungee binaries or analyzer build directories.
 
 ## Windows build
 
-The GitHub Actions workflow builds the same fixed-size 1440 × 864 Qt interface,
-builds the Windows OpenKeyScan analyzer, bundles FFmpeg and Qt
-Multimedia, runs the tests, and publishes `Stem-Slicer-1.5S-Beta-Windows`.
+`.github/workflows/build-windows.yml` performs a clean Windows x64 build on
+GitHub Actions. It:
 
-Windows subprocesses use both `CREATE_NO_WINDOW` and `SW_HIDE`. The workflow
-also rejects any main executable that is not compiled with the Windows GUI PE
-subsystem, runs real bundled FFmpeg/OpenKeyScan/Basic Pitch smoke tests, and
-checks that each model and the isolated `torch_cpu` binary appear exactly once.
+1. validates the committed model and warm-up assets by SHA-256;
+2. builds the custom OpenKeyScan + DeepRhythm analyzer with pinned CPU-only
+   Torch 2.2.2 wheels;
+3. builds Bungee from commit
+   `746833f68a574d997ec50443e7cfd2d37b026302` using its MinGW preset and a
+   static library;
+4. downloads the pinned FFmpeg executable and verifies its SHA-256;
+5. runs the complete local unit-test suite;
+6. builds the portable PyInstaller `onedir` application;
+7. smoke-tests the GUI PE subsystem, FFmpeg, Bungee, the robust Loop-mode BPM
+   analyzer, Basic Pitch and the Qt interface;
+8. audits the finished payload for duplicate engines, models and Torch DLLs;
+9. publishes the `Stem-Slicer-1.6B-Windows` Actions artifact.
 
-Le format Windows actuellement validé est un bundle portable `onedir`. Il faut
-extraire le ZIP complet, puis conserver `Stem Slicer 1.5S Beta.exe` à côté du
-dossier `_internal`; aucune installation n'est nécessaire. Le build DropFix a
-été validé sur une machine Windows réelle pour le symbole Pause, le drag entrant
-de dossiers et fichiers audio, le drag sortant et Qt Multimedia. L'application
-doit être lancée par double-clic normal, sans élévation administrateur.
+The Windows application executable is built with `console=False`. Every
+FFmpeg, Bungee and analyzer subprocess is also started with
+`CREATE_NO_WINDOW`, `STARTF_USESHOWWINDOW` and `SW_HIDE`. The analyzer itself
+retains its standard-input/output channel because that channel carries its
+NDJSON protocol; its parent process is responsible for keeping it invisible.
 
-Un futur build PyInstaller `onefile` en EXE unique est possible, mais il
-extrairait automatiquement Qt, PyTorch, FFmpeg, OpenKeyScan et les autres
-dépendances natives dans `%TEMP%\_MEI…` à chaque démarrage. Cette variante doit
-rester séparée du `onedir` validé jusqu'à comparaison réelle du temps de
-démarrage, de l'espace temporaire, du nettoyage et du comportement antivirus.
-Le statut, le lien de build et les empreintes sont documentés dans
-`../../06_Windows_Build/WINDOWS_BUILD.md`.
+The workflow is prepared locally but must pass its first GitHub Actions run
+before the Windows bundle can be called validated on real Windows.

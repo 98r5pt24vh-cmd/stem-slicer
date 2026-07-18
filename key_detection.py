@@ -48,7 +48,7 @@ def hidden_process_options():
 def analyzer_executable():
     configured = os.environ.get("STEM_SLICER_ANALYZER")
     if configured and os.path.isfile(configured):
-        return configured
+        return os.path.abspath(configured)
     roots = []
     bundled_root = getattr(sys, "_MEIPASS", None)
     if bundled_root:
@@ -108,13 +108,18 @@ def insert_key_after_bpm(filename, key):
 
 
 class KeyAnalyzer:
-    def __init__(self, workers=1, startup_timeout=45, request_timeout=120):
+    def __init__(self, workers=1, startup_timeout=90, request_timeout=120):
         self.workers = workers
         self.startup_timeout = startup_timeout
         self.request_timeout = request_timeout
         self.process = None
         self.messages = queue.Queue()
         self.reader = None
+        # One analyzer process serves Quick Scan, Quick Extract and Convert.
+        # NDJSON replies are request-scoped but the client queue is shared, so
+        # serialize complete request/reply cycles instead of allowing one UI
+        # worker to consume another worker's response.
+        self.request_lock = threading.Lock()
 
     def start(self):
         path = analyzer_executable()
@@ -129,6 +134,8 @@ class KeyAnalyzer:
             text=True,
             encoding="utf-8",
             bufsize=1,
+            cwd=os.path.join(os.path.dirname(path), "_internal")
+            if os.path.isdir(os.path.join(os.path.dirname(path), "_internal")) else None,
             **hidden_process_options(),
         )
         self.reader = threading.Thread(target=self._read_stdout, daemon=True)
@@ -154,24 +161,29 @@ class KeyAnalyzer:
         except queue.Empty as exc:
             raise TimeoutError("Key analysis timed out.") from exc
 
-    def analyze(self, audio_path):
-        if not self.process or self.process.poll() is not None:
-            raise RuntimeError("The key analyzer is not running.")
-        request_id = str(uuid.uuid4())
-        request = {"id": request_id, "path": os.path.abspath(audio_path)}
-        self.process.stdin.write(json.dumps(request, ensure_ascii=False) + "\n")
-        self.process.stdin.flush()
-        while True:
-            message = self._next_message(self.request_timeout)
-            if message.get("type") in {"heartbeat", "ready"}:
-                continue
-            if message.get("type") == "closed":
-                raise RuntimeError("The key analyzer stopped unexpectedly.")
-            if message.get("id") != request_id:
-                continue
-            if message.get("status") != "success":
-                raise RuntimeError(message.get("error", "Key analysis failed."))
-            return message
+    def analyze(self, audio_path, *, bpm_mode=None, structure_ffmpeg_path=None):
+        with self.request_lock:
+            if not self.process or self.process.poll() is not None:
+                raise RuntimeError("The key analyzer is not running.")
+            request_id = str(uuid.uuid4())
+            request = {"id": request_id, "path": os.path.abspath(audio_path)}
+            if bpm_mode is not None:
+                request["bpm_mode"] = bpm_mode
+            if structure_ffmpeg_path is not None:
+                request["structure_ffmpeg_path"] = os.path.abspath(structure_ffmpeg_path)
+            self.process.stdin.write(json.dumps(request, ensure_ascii=False) + "\n")
+            self.process.stdin.flush()
+            while True:
+                message = self._next_message(self.request_timeout)
+                if message.get("type") in {"heartbeat", "ready"}:
+                    continue
+                if message.get("type") == "closed":
+                    raise RuntimeError("The key analyzer stopped unexpectedly.")
+                if message.get("id") != request_id:
+                    continue
+                if message.get("status") != "success":
+                    raise RuntimeError(message.get("error", "Key analysis failed."))
+                return message
 
     def stop(self):
         process, self.process = self.process, None
@@ -182,6 +194,15 @@ class KeyAnalyzer:
                 process.stdin.close()
         except OSError:
             pass
+        finally:
+            if self.reader is not None:
+                self.reader.join(timeout=1)
+            for stream in (process.stdout, process.stderr):
+                if stream is not None:
+                    try:
+                        stream.close()
+                    except OSError:
+                        pass
         try:
             # The analyzer exits cleanly when its NDJSON input reaches EOF.
             # Its PyInstaller bootloader manages a child process, so a normal

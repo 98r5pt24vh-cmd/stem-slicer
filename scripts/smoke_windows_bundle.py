@@ -49,7 +49,7 @@ def main():
     if not os.path.isdir(internal):
         raise RuntimeError(f"PyInstaller internal folder was not found: {internal}")
 
-    application = os.path.join(bundle, "Stem Slicer 1.5S Beta.exe")
+    application = os.path.join(bundle, "Stem Slicer 1.6B.exe")
     if not os.path.isfile(application):
         raise RuntimeError(f"Application executable was not found: {application}")
     # IMAGE_SUBSYSTEM_WINDOWS_GUI == 2. A console build would be 3 and could
@@ -61,21 +61,35 @@ def main():
 
     ffmpeg = os.path.join(internal, "ffmpeg.exe")
     analyzer = os.path.join(internal, "openkeyscan-analyzer", "openkeyscan-analyzer.exe")
-    warmup = os.path.join(internal, "assets", "key-engine-warmup.wav")
+    bungee = os.path.join(internal, "bin", "bungee.exe")
+    key_warmup = os.path.join(internal, "assets", "key-engine-warmup.wav")
+    key_bpm_warmup = os.path.join(internal, "assets", "key-and-bpm-engine-warmup.wav")
     basic_pitch_model = os.path.join(internal, "basic_pitch", "saved_models", "icassp_2022", "nmp.onnx")
     qt_multimedia = find_named(internal, "Qt6Multimedia.dll")
     qt_multimedia_plugin = find_multimedia_plugin(internal)
-    for required in (ffmpeg, analyzer, warmup, basic_pitch_model, qt_multimedia, qt_multimedia_plugin):
+    for required in (
+        ffmpeg,
+        bungee,
+        analyzer,
+        key_warmup,
+        key_bpm_warmup,
+        basic_pitch_model,
+        qt_multimedia,
+        qt_multimedia_plugin,
+    ):
         if not os.path.isfile(required):
             raise RuntimeError(f"Required bundled file was not found at its application path: {required}")
     print(f"Bundled FFmpeg: {ffmpeg} ({os.path.getsize(ffmpeg)} bytes)", flush=True)
+    print(f"Bundled Bungee: {bungee} ({os.path.getsize(bungee)} bytes)", flush=True)
     print(f"Bundled analyzer: {analyzer} ({os.path.getsize(analyzer)} bytes)", flush=True)
-    print(f"Bundled warm-up audio: {warmup}", flush=True)
+    print(f"Bundled key warm-up audio: {key_warmup}", flush=True)
+    print(f"Bundled key/BPM warm-up audio: {key_bpm_warmup}", flush=True)
     print(f"Bundled Basic Pitch model: {basic_pitch_model}", flush=True)
     print(f"Bundled Qt Multimedia: {qt_multimedia}", flush=True)
     print(f"Bundled Qt Multimedia backend: {qt_multimedia_plugin}", flush=True)
     sys._MEIPASS = internal
 
+    from audio_convert import _find_bungee
     from engine import find_ffmpeg, find_ffprobe, get_duration, run_subprocess
     from key_detection import KeyAnalyzer, analyzer_executable
 
@@ -87,6 +101,9 @@ def main():
     resolved_analyzer = os.path.normcase(os.path.abspath(analyzer_executable() or ""))
     if resolved_analyzer != os.path.normcase(os.path.abspath(analyzer)):
         raise RuntimeError(f"Application analyzer lookup resolved {resolved_analyzer!r}, expected {analyzer!r}.")
+    resolved_bungee = os.path.normcase(os.path.abspath(_find_bungee() or ""))
+    if resolved_bungee != os.path.normcase(os.path.abspath(bungee)):
+        raise RuntimeError(f"Application Bungee lookup resolved {resolved_bungee!r}, expected {bungee!r}.")
 
     with tempfile.TemporaryDirectory() as temporary:
         sample = os.path.join(temporary, "A-minor-smoke.wav")
@@ -109,11 +126,35 @@ def main():
         if not math.isclose(measured_duration, duration, abs_tol=0.1):
             raise RuntimeError(f"Bundled FFmpeg duration fallback returned {measured_duration}, expected {duration}.")
         print(f"Bundled FFmpeg duration fallback ready: {measured_duration:.2f}s", flush=True)
+
+        bungee_output = os.path.join(temporary, "bungee-identity.wav")
+        completed = run_subprocess(
+            [bungee, "--speed", "1", "--pitch", "0", sample, bungee_output],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if completed.returncode != 0 or not os.path.isfile(bungee_output) or os.path.getsize(bungee_output) == 0:
+            raise RuntimeError(
+                "Bundled Bungee failed its identity conversion: "
+                f"returncode={completed.returncode}, stderr={completed.stderr}"
+            )
+        print("Bundled Windows Bungee engine ready.", flush=True)
+
         with KeyAnalyzer(workers=1, startup_timeout=90, request_timeout=180) as key_analyzer:
-            result = key_analyzer.analyze(sample)
+            result = key_analyzer.analyze(
+                sample,
+                bpm_mode="quick_scan_loop",
+                structure_ffmpeg_path=ffmpeg,
+            )
         if not result.get("camelot"):
             raise RuntimeError(f"Bundled key analyzer returned no key: {result}")
-        print(f"Bundled Windows key analyzer ready: {result['camelot']}")
+        if result.get("bpm_mode") != "quick_scan_loop" or not isinstance(result.get("bpm"), (int, float)):
+            raise RuntimeError(f"Bundled analyzer does not contain the validated Loop BPM engine: {result}")
+        print(
+            f"Bundled Windows key/BPM analyzer ready: {result['camelot']}, {result['bpm']} BPM",
+            flush=True,
+        )
 
         midi_smoke_result = os.path.join(temporary, "midi-smoke-result.txt")
         smoke_environment = os.environ.copy()

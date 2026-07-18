@@ -11,6 +11,8 @@ APP_FOLDER = "Stem Slicer"
 EXTRACTIONS_FOLDER = "Extractions"
 ANALYZED_FOLDER = "Analyzed Loops"
 QUICK_EXTRACT_FOLDER = "Quick Extract"
+QUICK_CONVERT_FOLDER = "Quick Convert"
+CONVERTED_LOOPS_FOLDER = "Converted Loops"
 
 
 def safe_name(value):
@@ -23,6 +25,8 @@ class StorageManager:
         "extractions": EXTRACTIONS_FOLDER,
         "analyzed": ANALYZED_FOLDER,
         "quick": QUICK_EXTRACT_FOLDER,
+        "convert": QUICK_CONVERT_FOLDER,
+        "converted": CONVERTED_LOOPS_FOLDER,
     }
 
     def __init__(self, settings=None, now=None):
@@ -102,7 +106,13 @@ class StorageManager:
         return candidate
 
     def list_quick_extracts(self):
-        root = self.category_path("quick")
+        return self.list_sessions("quick", "layers")
+
+    def list_quick_conversions(self):
+        return self.list_sessions("convert", "files")
+
+    def list_sessions(self, category, count_key):
+        root = self.category_path(category)
         if not os.path.isdir(root):
             return []
         extracts = []
@@ -124,11 +134,17 @@ class StorageManager:
                 modified = entry.stat(follow_symlinks=False).st_mtime
             except OSError:
                 modified = 0
-            extracts.append({"name": entry.name, "path": entry.path, "size": size, "layers": layers, "modified": modified})
+            extracts.append({"name": entry.name, "path": entry.path, "size": size, count_key: layers, "layers": layers, "modified": modified})
         return sorted(extracts, key=lambda item: item["modified"], reverse=True)
 
     def move_quick_extract_to_trash(self, path):
-        root = os.path.realpath(self.category_path("quick"))
+        return self.move_session_to_trash("quick", path)
+
+    def move_quick_conversion_to_trash(self, path):
+        return self.move_session_to_trash("convert", path)
+
+    def move_session_to_trash(self, category, path):
+        root = os.path.realpath(self.category_path(category))
         target = os.path.realpath(path)
         try:
             inside_root = os.path.commonpath((root, target)) == root

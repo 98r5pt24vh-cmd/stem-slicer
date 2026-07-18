@@ -1,4 +1,4 @@
-name: Build Stem Slicer Qt for Windows
+name: Build Stem Slicer 1.6B for Windows
 
 on:
   workflow_dispatch:
@@ -6,10 +6,17 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
 jobs:
   build-windows:
     runs-on: windows-2025
-    timeout-minutes: 90
+    timeout-minutes: 120
+
+    env:
+      PYTHONUTF8: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
 
     steps:
       - name: Check out Stem Slicer
@@ -21,32 +28,96 @@ jobs:
           python-version: "3.12"
           architecture: "x64"
 
+      - name: Set up MinGW for the pinned Bungee build
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            git
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-ninja
+
+      - name: Validate committed engine assets
+        shell: pwsh
+        run: |
+          $expected = @{
+            "analyzer/checkpoints/openkeyscan3.pt" = "5610691be2b3aa21764c5978ca0c2524fcdbf600f09dcbda6c2da937745db600"
+            "analyzer/checkpoints/deeprhythm-0.7.pth" = "c7cc8cc0425929cd2bf695474d7ec1fd63ed0d0a4a68f361d4e4b57bd9b3d9c4"
+            "assets/key-and-bpm-engine-warmup.wav" = "1a6136de94c4b9d616aba503bb8273c45c0062e50ae2f2e7982da57fc722615f"
+            "basic_pitch/saved_models/icassp_2022/nmp.onnx" = "2c3c1d144bfa61ad236e92e169c13535c880469a12a047d4e73451f2c059a0ec"
+          }
+          foreach ($entry in $expected.GetEnumerator()) {
+            $actual = (Get-FileHash $entry.Key -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -ne $entry.Value) {
+              throw "Unexpected SHA-256 for $($entry.Key): $actual"
+            }
+          }
+
       - name: Install application dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
           python -m pip check
 
-      - name: Build OpenKeyScan analyzer
+      - name: Build the validated custom key and BPM analyzer
         shell: pwsh
         run: |
-          git init openkeyscan-source
-          Push-Location openkeyscan-source
-          git remote add origin https://github.com/rekordcloud/openkeyscan-analyzer.git
-          git fetch --depth 1 origin d5cac64bc7195826b6eb10c55b9b0c97fb3287c0
-          git checkout --detach FETCH_HEAD
-          python -m venv .venv-build
-          ./.venv-build/Scripts/python.exe -m pip install --upgrade pip
-          ./.venv-build/Scripts/python.exe -m pip install -r requirements.txt
-          ./.venv-build/Scripts/python.exe -m pip install pyinstaller==6.21.0
-          ./.venv-build/Scripts/python.exe -m pip check
-          ./.venv-build/Scripts/python.exe ../scripts/patch_openkeyscan_spec.py openkeyscan_analyzer.spec
-          ./.venv-build/Scripts/python.exe -m PyInstaller --noconfirm openkeyscan_analyzer.spec
+          python -m venv analyzer/.venv-build
+          & "analyzer/.venv-build/Scripts/python.exe" -m pip install --upgrade pip
+          & "analyzer/.venv-build/Scripts/python.exe" -m pip install `
+            --index-url https://download.pytorch.org/whl/cpu `
+            torch==2.2.2+cpu torchaudio==2.2.2+cpu
+          & "analyzer/.venv-build/Scripts/python.exe" -m pip install -r analyzer/requirements-windows.txt
+          & "analyzer/.venv-build/Scripts/python.exe" -m pip install pyinstaller==6.21.0
+          & "analyzer/.venv-build/Scripts/python.exe" -m pip check
+          & "analyzer/.venv-build/Scripts/python.exe" scripts/patch_openkeyscan_spec.py analyzer/openkeyscan_analyzer.spec
+          Push-Location analyzer
+          & ".venv-build/Scripts/python.exe" -m PyInstaller --clean --noconfirm openkeyscan_analyzer.spec
           Pop-Location
           New-Item -ItemType Directory -Force vendor-windows | Out-Null
-          Copy-Item -Recurse -Force openkeyscan-source/dist/openkeyscan-analyzer vendor-windows/openkeyscan-analyzer
+          Copy-Item -Recurse -Force `
+            "analyzer/dist/openkeyscan-analyzer" `
+            "vendor-windows/openkeyscan-analyzer"
 
-      - name: Download FFmpeg
+      - name: Fetch the pinned Bungee source
+        shell: pwsh
+        run: |
+          git init bungee-source
+          Push-Location bungee-source
+          git remote add origin https://github.com/bungee-audio-stretch/bungee.git
+          git fetch --depth 1 origin 746833f68a574d997ec50443e7cfd2d37b026302
+          git checkout --detach FETCH_HEAD
+          git submodule update --init --recursive
+          if ((git rev-parse HEAD).Trim() -ne "746833f68a574d997ec50443e7cfd2d37b026302") {
+            throw "Bungee source is not at the pinned commit."
+          }
+          Pop-Location
+
+      - name: Build a static Windows Bungee executable
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          cd bungee-source
+          cmake --preset windows-x86_64 \
+            -B ../bungee-build \
+            -DBUNGEE_BUILD_SHARED_LIBRARY=OFF \
+            -DBUNGEE_VERSION=2.4.24
+          cmake --build ../bungee-build --target bungee_executable --parallel 2
+          cd ..
+          mkdir -p bin
+          cp bungee-build/bungee.exe bin/bungee.exe
+          ./bin/bungee.exe --help
+          dependencies="$(ldd bin/bungee.exe 2>&1 || true)"
+          printf '%s\n' "$dependencies"
+          if printf '%s\n' "$dependencies" | grep -Eiq 'libgcc|libstdc\+\+|libwinpthread|msys-2\.0|/mingw64/|/usr/bin/|not found'; then
+            echo "Bungee unexpectedly depends on a non-system MinGW runtime DLL." >&2
+            exit 1
+          fi
+          test -s bin/bungee.exe
+
+      - name: Download pinned FFmpeg
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force vendor-windows/ffmpeg-bin | Out-Null
@@ -65,20 +136,18 @@ jobs:
         shell: pwsh
         run: |
           python -m PyInstaller --clean --noconfirm StemSlicerWindows.spec
-          # Keep the key engine as an opaque, self-contained child bundle.
-          # Adding it to Analysis.datas makes PyInstaller inspect its DLLs and
-          # copy torch_cpu.dll a second time into the parent application's
-          # _internal folder.
+          # The analyzer is an opaque child bundle. Copying it after the parent
+          # build prevents PyInstaller from collecting its Torch DLLs twice.
           Copy-Item -Recurse -Force `
             "vendor-windows/openkeyscan-analyzer" `
-            "dist/Stem Slicer 1.5S Beta/_internal/openkeyscan-analyzer"
+            "dist/Stem Slicer 1.6B/_internal/openkeyscan-analyzer"
 
-      - name: Smoke-test GUI subsystem, FFmpeg and key analyzer
+      - name: Smoke-test the packaged Windows application
         shell: pwsh
         env:
           STEM_SLICER_KEY_DEBUG: "1"
         run: |
-          python scripts/smoke_windows_bundle.py "dist/Stem Slicer 1.5S Beta" 2>&1 | Tee-Object -FilePath smoke-test.log
+          python scripts/smoke_windows_bundle.py "dist/Stem Slicer 1.6B" 2>&1 | Tee-Object -FilePath smoke-test.log
           if ($LASTEXITCODE -ne 0) {
             $message = (Get-Content smoke-test.log -Raw).Replace("%", "%25").Replace("`r", "").Replace("`n", "%0A")
             Write-Output "::error title=Windows bundle smoke test::$message"
@@ -86,12 +155,12 @@ jobs:
           }
 
       - name: Audit Windows bundle
-        run: python scripts/audit_windows_bundle.py "dist/Stem Slicer 1.5S Beta"
+        run: python scripts/audit_windows_bundle.py "dist/Stem Slicer 1.6B"
 
       - name: Upload Windows build
         uses: actions/upload-artifact@v7
         with:
-          name: Stem-Slicer-1.5S-Beta-Windows
-          path: dist/Stem Slicer 1.5S Beta
+          name: Stem-Slicer-1.6B-Windows
+          path: dist/Stem Slicer 1.6B
           compression-level: 6
           if-no-files-found: error

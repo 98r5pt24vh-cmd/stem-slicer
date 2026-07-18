@@ -15,13 +15,20 @@ def audit_bundle(bundle):
     models = [path for path in files if path.suffix.lower() in MODEL_SUFFIXES]
     expected_analyzer = bundle / "_internal" / "openkeyscan-analyzer" / "openkeyscan-analyzer.exe"
     expected_openkey_model = bundle / "_internal" / "openkeyscan-analyzer" / "_internal" / "checkpoints" / "openkeyscan3.pt"
+    expected_deeprhythm_model = bundle / "_internal" / "openkeyscan-analyzer" / "_internal" / "checkpoints" / "deeprhythm-0.7.pth"
     expected_basic_pitch_model = bundle / "_internal" / "basic_pitch" / "saved_models" / "icassp_2022" / "nmp.onnx"
-    expected_models = {expected_openkey_model, expected_basic_pitch_model}
+    expected_models = {expected_openkey_model, expected_deeprhythm_model, expected_basic_pitch_model}
     openkey_models = [path for path in models if path == expected_openkey_model]
+    deeprhythm_models = [path for path in models if path == expected_deeprhythm_model]
     basic_pitch_models = [path for path in models if path == expected_basic_pitch_model]
     unexpected_models = [path for path in models if path not in expected_models]
     torch_cpu = [path for path in files if "torch_cpu" in path.name.lower()]
     analyzers = [path for path in files if path.name.lower() == "openkeyscan-analyzer.exe"]
+    expected_bungee = bundle / "_internal" / "bin" / "bungee.exe"
+    bungees = [path for path in files if path.name.lower() == "bungee.exe"]
+    expected_ffmpeg = bundle / "_internal" / "ffmpeg.exe"
+    ffmpegs = [path for path in files if path.name.lower() == "ffmpeg.exe"]
+    expected_bpm_warmup = bundle / "_internal" / "assets" / "key-and-bpm-engine-warmup.wav"
     foreign_openkey_ffmpeg = bundle / "_internal" / "openkeyscan-analyzer" / "_internal" / "ffmpeg"
     logical_bytes = sum(path.stat().st_size for path in files)
     relative_models = [path.relative_to(bundle) for path in models]
@@ -40,8 +47,16 @@ def audit_bundle(bundle):
         errors.append(f"Expected exactly one OpenKeyScan executable, found {len(analyzers)}.")
     if len(openkey_models) != 1:
         errors.append(f"Expected exactly one OpenKeyScan model, found {len(openkey_models)}.")
+    if len(deeprhythm_models) != 1:
+        errors.append(f"Expected exactly one DeepRhythm model, found {len(deeprhythm_models)}.")
     if len(basic_pitch_models) != 1:
         errors.append(f"Expected exactly one Basic Pitch model, found {len(basic_pitch_models)}.")
+    if bungees != [expected_bungee]:
+        errors.append(f"Expected exactly one Bungee executable at {expected_bungee.relative_to(bundle)}, found {len(bungees)}.")
+    if ffmpegs != [expected_ffmpeg]:
+        errors.append(f"Expected exactly one FFmpeg executable at {expected_ffmpeg.relative_to(bundle)}, found {len(ffmpegs)}.")
+    if not expected_bpm_warmup.is_file():
+        errors.append("The key/BPM engine warm-up audio is missing from the Windows bundle.")
     if unexpected_models:
         errors.append(f"Found unexpected model files: {', '.join(str(path.relative_to(bundle)) for path in unexpected_models)}.")
     if len(torch_cpu) != 1:
@@ -63,7 +78,10 @@ def audit_bundle(bundle):
             summary.write(f"- Logical size: {logical_bytes / 1_000_000_000:.3f} GB (decimal)\n")
             summary.write(f"- Model files: {len(models)}\n")
             summary.write(f"- OpenKeyScan models: {len(openkey_models)}\n")
+            summary.write(f"- DeepRhythm models: {len(deeprhythm_models)}\n")
             summary.write(f"- Basic Pitch models: {len(basic_pitch_models)}\n")
+            summary.write(f"- Bungee executables: {len(bungees)}\n")
+            summary.write(f"- FFmpeg executables: {len(ffmpegs)}\n")
             summary.write(f"- torch_cpu binaries: {len(torch_cpu)}\n")
 
     return {
@@ -71,7 +89,10 @@ def audit_bundle(bundle):
         "logical_bytes": logical_bytes,
         "models": relative_models,
         "openkey_models": [path.relative_to(bundle) for path in openkey_models],
+        "deeprhythm_models": [path.relative_to(bundle) for path in deeprhythm_models],
         "basic_pitch_models": [path.relative_to(bundle) for path in basic_pitch_models],
+        "bungee": [path.relative_to(bundle) for path in bungees],
+        "ffmpeg": [path.relative_to(bundle) for path in ffmpegs],
         "torch_cpu": relative_torch,
     }
 

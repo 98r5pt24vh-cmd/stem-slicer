@@ -79,7 +79,7 @@ except ImportError:
     NSColor = _UnusedNativeType
 
 APP_NAME = "Stem Slicer"
-APP_VERSION = "1.5S Beta"
+APP_VERSION = "1.6B"
 MIN_LAYER_REMAINING_RATIO = 0.74
 PARALLEL_WORKERS = 2
 DIAGNOSTICS_ENABLED = False
@@ -173,8 +173,55 @@ def find_ffprobe(ffmpeg):
 def get_vrai_zero(filepath, ffmpeg):
     cmd = [ffmpeg, "-i", filepath, "-af", "silencedetect=noise=-45dB:d=0.001", "-f", "null", "-"]
     out = run_subprocess(cmd, capture_output=True, text=True).stderr
-    impact = re.search(r"silence_end: ([\d.]+)", out)
-    return float(impact.group(1)) if impact else 0.0
+    first_start = re.search(r"silence_start: ([\d.]+)", out)
+    first_end = re.search(r"silence_end: ([\d.]+)", out)
+    if not first_start or not first_end:
+        return 0.0
+    # Only silence attached to the beginning is encoder padding.  A later
+    # musical silence must never shift the structural grid.
+    return float(first_end.group(1)) if float(first_start.group(1)) <= 0.001 else 0.0
+
+
+def analyze_audio_once(filepath, ffmpeg, bpm, sample_rate=22050):
+    """Collect silence markers, duration and bar energy in one decode."""
+    command = [
+        ffmpeg, "-hide_banner", "-loglevel", "info", "-nostdin", "-i", filepath,
+        "-filter_complex",
+        (
+            "[0:a]asplit=3[short][long][pcm_in];"
+            "[short]silencedetect@short=noise=-45dB:d=0.001[short_out];"
+            "[short_out]anullsink;"
+            "[long]silencedetect@long=noise=-45dB:d=0.1[long_out];"
+            "[long_out]anullsink;"
+            f"[pcm_in]aformat=sample_fmts=s16:sample_rates={sample_rate}:channel_layouts=mono[pcm]"
+        ),
+        "-map", "[pcm]", "-f", "s16le", "-",
+    ]
+    result = run_subprocess(command, capture_output=True, check=True)
+    log = result.stderr.decode("utf-8", errors="replace")
+    pcm = result.stdout
+    short_starts = [float(value) for value in re.findall(
+        r"silencedetect@short[^\n]*silence_start: ([\d.]+)", log
+    )]
+    short_ends = [float(value) for value in re.findall(
+        r"silencedetect@short[^\n]*silence_end: ([\d.]+)", log
+    )]
+    long_ends = [float(value) for value in re.findall(
+        r"silencedetect@long[^\n]*silence_end: ([\d.]+)", log
+    )]
+    vrai_zero = 0.0
+    if short_starts and short_ends and short_starts[0] <= 0.001:
+        vrai_zero = short_ends[0]
+    sec_per_bar = (60 / bpm) * 4
+    bytes_per_bar = max(2, int(sample_rate * sec_per_bar) * 2)
+    bytes_per_bar -= bytes_per_bar % 2
+    energies = [rms_dbfs(pcm[pos:pos + bytes_per_bar]) for pos in range(0, len(pcm), bytes_per_bar)]
+    return {
+        "vrai_zero": vrai_zero,
+        "all_starts": long_ends,
+        "duration": len(pcm) / (sample_rate * 2),
+        "energies": energies,
+    }
 
 
 def get_all_starts(filepath, ffmpeg):
@@ -946,15 +993,16 @@ def process_one_file(d_in, d_out, filename, ffmpeg, ffprobe, run_timestamp, outp
     diagnostics = []
     export_elapsed = 0.0
 
-    res = re.search(r"\b(\d{2,3})\b", filename)
-    bpm = int(res.group(1)) if res else 140
+    parsed_bpm = parse_loop_filename(filename).get("BPM")
+    bpm = int(parsed_bpm or 140)
     sec_per_bar = (60 / bpm) * 4
 
     analysis_started = time.perf_counter()
-    vrai_zero = get_vrai_zero(filepath, ffmpeg)
-    all_starts = get_all_starts(filepath, ffmpeg)
-    source_duration = get_duration(filepath, ffmpeg, ffprobe)
-    energies = bar_energy(filepath, ffmpeg, bpm)
+    analysis = analyze_audio_once(filepath, ffmpeg, bpm)
+    vrai_zero = analysis["vrai_zero"]
+    all_starts = analysis["all_starts"]
+    source_duration = analysis["duration"]
+    energies = analysis["energies"]
     analysis_elapsed = time.perf_counter() - analysis_started
 
     seuil_stems = vrai_zero + (sec_per_bar * 15)
@@ -1009,6 +1057,7 @@ def process_one_file(d_in, d_out, filename, ffmpeg, ffprobe, run_timestamp, outp
     duration_by_slot = grid.get("duration_by_slot", {})
     active_slots = set(grid["active_slots"])
     max_bar = int(source_duration / sec_per_bar) if source_duration else len(energies)
+    pending_exports = []
 
     for slot_bar in grid["slots"]:
         start_exact = vrai_zero + (slot_bar * sec_per_bar)
@@ -1067,31 +1116,41 @@ def process_one_file(d_in, d_out, filename, ffmpeg, ffprobe, run_timestamp, outp
 
         output_name = f"{output_stem or os.path.splitext(filename)[0]}_L{layer_idx}.mp3"
         output_path = os.path.join(d_out, output_name)
-        cmd_cut = [
-            ffmpeg,
-            "-y",
-            "-ss",
-            str(round(start_exact, 3)),
-            "-t",
-            str(round(dur_sec, 3)),
-            "-i",
-            filepath,
-            "-af",
-            "volume=0dB",
-            "-c:a",
-            "libmp3lame",
-            "-q:a",
-            "2",
-            output_path,
-            "-loglevel",
-            "error",
-        ]
-        export_started = time.perf_counter()
-        run_subprocess(cmd_cut, check=False)
-        export_elapsed += time.perf_counter() - export_started
+        pending_exports.append({
+            "start": start_exact,
+            "duration": dur_sec,
+            "slot_bar": slot_bar,
+            "remaining_seconds": remaining_seconds,
+            "layer_index": layer_idx,
+            "output_name": output_name,
+            "output_path": output_path,
+        })
+        layer_idx += 1
 
-        output_exists = os.path.exists(output_path)
-        output_bytes = os.path.getsize(output_path) if output_exists else 0
+    if pending_exports:
+        labels = "".join(f"[split{index}]" for index in range(len(pending_exports)))
+        filters = [f"[0:a]asplit={len(pending_exports)}{labels}"]
+        for index, item in enumerate(pending_exports):
+            filters.append(
+                f"[split{index}]atrim=start={item['start']:.9f}:duration={item['duration']:.9f},"
+                f"asetpts=PTS-STARTPTS[out{index}]"
+            )
+        command = [
+            ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-nostdin",
+            "-i", filepath, "-filter_complex", ";".join(filters),
+        ]
+        for index, item in enumerate(pending_exports):
+            command.extend([
+                "-map", f"[out{index}]", "-c:a", "libmp3lame", "-q:a", "2",
+                item["output_path"],
+            ])
+        export_started = time.perf_counter()
+        run_subprocess(command, check=False)
+        export_elapsed = time.perf_counter() - export_started
+
+    for item in pending_exports:
+        output_exists = os.path.exists(item["output_path"])
+        output_bytes = os.path.getsize(item["output_path"]) if output_exists else 0
         diagnostics.append(
             make_diag_row(
                 run_timestamp,
@@ -1106,20 +1165,17 @@ def process_one_file(d_in, d_out, filename, ffmpeg, ffprobe, run_timestamp, outp
                 all_starts,
                 starts_stems,
                 raw_silence_start="",
-                snapped_start=round(start_exact, 6),
-                snapped_bar=slot_bar,
-                duration_seconds=round(dur_sec, 6),
-                remaining_seconds=round(remaining_seconds, 6),
-                layer_index=layer_idx,
-                output_name=output_name,
+                snapped_start=round(item["start"], 6),
+                snapped_bar=item["slot_bar"],
+                duration_seconds=round(item["duration"], 6),
+                remaining_seconds=round(item["remaining_seconds"], 6),
+                layer_index=item["layer_index"],
+                output_name=item["output_name"],
                 output_exists=output_exists,
                 output_bytes=output_bytes,
                 correction_reason=grid_reason,
             )
         )
-
-        if output_exists:
-            layer_idx += 1
 
     file_elapsed = time.perf_counter() - file_started
     for row in diagnostics:
@@ -1196,6 +1252,8 @@ def process_audio(d_in, d_out, on_progress, on_done, on_error, key_settings=None
     extract_enabled = bool(key_settings.get("extract_enabled", True))
     destination_mode = key_settings.get("destination_mode", "copy_to_output")
     token_order = key_settings.get("token_order") or list(TOKENS)
+    analysis_results = key_settings.get("analysis_results") or {}
+    output_stems_override = key_settings.get("output_stems_override") or {}
     if not key_enabled and not extract_enabled:
         on_error("Enable key analysis, layer extraction, or both.")
         return
@@ -1235,7 +1293,12 @@ def process_audio(d_in, d_out, on_progress, on_done, on_error, key_settings=None
         def analyze_files(active_analyzer):
             for index, filename in enumerate(files, start=1):
                 try:
-                    result = active_analyzer.analyze(os.path.join(d_in, filename))
+                    if filename in analysis_results:
+                        result = analysis_results[filename]
+                        if isinstance(result, BaseException):
+                            raise result
+                    else:
+                        result = active_analyzer.analyze(os.path.join(d_in, filename))
                     key = format_camelot(result["camelot"], key_mode, accidentals)
                     detected_keys[filename] = key
                     on_progress(index, len(files) * 2, f"Detected {key}: {filename}")
@@ -1244,7 +1307,9 @@ def process_audio(d_in, d_out, on_progress, on_done, on_error, key_settings=None
                     on_progress(index, len(files) * 2, f"Key unavailable, extracting unchanged: {filename}")
 
         try:
-            if analyzer is not None:
+            if all(filename in analysis_results for filename in files):
+                analyze_files(None)
+            elif analyzer is not None:
                 analyze_files(analyzer)
             else:
                 on_progress(0, len(files) * 2, "Loading the musical key engine...")
@@ -1256,11 +1321,17 @@ def process_audio(d_in, d_out, on_progress, on_done, on_error, key_settings=None
 
     output_stems = {}
     for filename in files:
-        if key_enabled:
+        if filename in output_stems_override:
+            output_stems[filename] = str(output_stems_override[filename])
+        elif key_enabled:
             rendered = render_name(parsed[filename], token_order, detected_keys[filename])
             output_stems[filename] = os.path.splitext(rendered)[0]
         else:
             output_stems[filename] = os.path.splitext(filename)[0]
+
+    if len(set(output_stems.values())) != len(output_stems):
+        on_error("The selected filename structure creates duplicate output names.")
+        return
 
     total_steps = len(files) * 2 if key_enabled else len(files)
     processing_offset = len(files) if key_enabled else 0
@@ -1324,7 +1395,18 @@ def process_audio(d_in, d_out, on_progress, on_done, on_error, key_settings=None
         except OSError:
             # Diagnostics must never invalidate otherwise successful exports.
             pass
-    on_done(key_failures, None)
+    outputs_by_source = {filename: [] for filename in files}
+    for row in diagnostics:
+        if row.get("event") != "exported" or not row.get("output_exists"):
+            continue
+        outputs_by_source.setdefault(row["filename"], []).append(
+            os.path.join(d_out, row["output_name"])
+        )
+    on_done(key_failures, {
+        "diagnostics": diagnostics,
+        "output_stems": output_stems,
+        "outputs_by_source": outputs_by_source,
+    })
 
 
 RED = NSColor.colorWithCalibratedRed_green_blue_alpha_(0.98, 0.16, 0.08, 1.0)

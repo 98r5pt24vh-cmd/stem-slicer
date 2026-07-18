@@ -6,13 +6,17 @@ datas = [
     ("assets/app-icon.png", "assets"),
     ("assets/midi-logo-mask.png", "assets"),
     ("assets/key-engine-warmup.wav", "assets"),
+    ("assets/key-and-bpm-engine-warmup.wav", "assets"),
     ("basic_pitch/saved_models/icassp_2022/nmp.onnx", "basic_pitch/saved_models/icassp_2022"),
     ("licenses/basic-pitch", "licenses/basic-pitch"),
+    ("licenses/DeepRhythm-LICENSE.txt", "licenses"),
+    ("licenses/Bungee-MPL-2.0.txt", "licenses"),
     ("THIRD_PARTY_NOTICES.md", "."),
 ]
 
 binaries = [
     ("vendor-windows/ffmpeg-bin/ffmpeg.exe", "."),
+    ("bin/bungee.exe", "bin"),
 ]
 
 a = Analysis(
@@ -103,7 +107,7 @@ exe = EXE(
     pyz,
     a.scripts,
     [],
-    name="Stem Slicer 1.5S Beta",
+    name="Stem Slicer 1.6B",
     icon="assets/StemSlicer.ico",
     debug=False,
     bootloader_ignore_signals=False,
@@ -123,5 +127,5 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=False,
-    name="Stem Slicer 1.5S Beta",
+    name="Stem Slicer 1.6B",
 )

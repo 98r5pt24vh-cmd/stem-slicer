@@ -1,9 +1,13 @@
 .DS_Store
 .venv/
+.venv-build/
 build/
 dist/
 vendor/
 vendor-windows/
+bungee-source/
+bungee-build/
+bin/bungee.exe
 __pycache__/
 tests/__pycache__/
 *.pyc
