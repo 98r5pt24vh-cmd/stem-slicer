@@ -31,11 +31,21 @@ class WindowsReleaseConfigTests(unittest.TestCase):
         self.assertIn("746833f68a574d997ec50443e7cfd2d37b026302", workflow)
         self.assertIn("-DBUNGEE_VERSION=2.4.24", workflow)
         self.assertIn("-DBUNGEE_BUILD_SHARED_LIBRARY=OFF", workflow)
+        self.assertIn("git apply ../patches/bungee-waveformatextensible.patch", workflow)
         self.assertIn("./bin/bungee.exe --help", workflow)
         self.assertIn("msys-2\\.0", workflow)
         self.assertIn("scripts/smoke_windows_bundle.py", workflow)
         self.assertIn("scripts/audit_windows_bundle.py", workflow)
         self.assertIn("Stem-Slicer-1.6B-Windows", workflow)
+
+    def test_bungee_patch_supports_ffmpeg_extensible_float_wav(self):
+        patch_source = self._read("patches/bungee-waveformatextensible.patch")
+        self.assertIn("sampleFormat == 0xfffe", patch_source)
+        self.assertIn("sampleFormat = read<uint16_t>(&wavHeader[44])", patch_source)
+        self.assertIn("read<uint16_t>(&wavHeader[38]) == bitsPerSample", patch_source)
+        self.assertIn("0x00100000", patch_source)
+        self.assertIn("0xaa000080", patch_source)
+        self.assertIn("0x719b3800", patch_source)
 
     def test_custom_analyzer_contains_the_validated_loop_bpm_mode(self):
         analyzer = self._read("analyzer/openkeyscan_analyzer_server.py")

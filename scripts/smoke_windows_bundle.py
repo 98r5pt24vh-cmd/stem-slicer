@@ -149,7 +149,8 @@ def main():
         layer_source = os.path.join(temporary, "optional-target-source.mp3")
         completed = run_subprocess([
             ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-nostdin",
-            "-i", sample, "-t", "4", "-c:a", "libmp3lame", "-q:a", "0", layer_source,
+            "-i", sample, "-t", "4", "-ar", "44100", "-ac", "2",
+            "-c:a", "libmp3lame", "-q:a", "0", layer_source,
         ], capture_output=True, text=True, timeout=60)
         if completed.returncode != 0 or not os.path.isfile(layer_source):
             raise RuntimeError(f"Could not create the Optional Target MP3 smoke source: {completed.stderr}")

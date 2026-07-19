@@ -90,6 +90,8 @@ jobs:
           git fetch --depth 1 origin 746833f68a574d997ec50443e7cfd2d37b026302
           git checkout --detach FETCH_HEAD
           git submodule update --init --recursive
+          git apply ../patches/bungee-waveformatextensible.patch
+          git diff --check
           if ((git rev-parse HEAD).Trim() -ne "746833f68a574d997ec50443e7cfd2d37b026302") {
             throw "Bungee source is not at the pinned commit."
           }
