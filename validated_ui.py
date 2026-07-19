@@ -617,28 +617,17 @@ class TargetKeySelector(AnchoredChoiceSelector):
         """Fit every target label inside a deliberately compact field."""
         width = int(width)
         available = max(1, width - 28)
-        base_font = self.font()
-        base_font.setPixelSize(10)
-        fitted_font = type(base_font)(base_font)
-        # Windows can ignore QFont stretching for its UI fallback font.  Try
-        # horizontal compression first, then reduce the pixel size just enough
-        # to preserve the complete label inside the approved compact column.
+        # The application QSS owns the font size, so QFont.setPixelSize() is
+        # overridden during the Windows polish pass.  A per-widget QSS value
+        # has higher precedence and remains measurable after that pass.
         for pixel_size in range(10, 0, -1):
-            found = False
-            for stretch in range(100, 49, -5):
-                candidate = type(base_font)(base_font)
-                candidate.setPixelSize(pixel_size)
-                candidate.setStretch(stretch)
-                fitted_font = candidate
-                if max(
-                    (QFontMetrics(candidate).horizontalAdvance(item) for item in self._items),
-                    default=0,
-                ) <= available:
-                    found = True
-                    break
-            if found:
+            self.setStyleSheet(f"font-size:{pixel_size}px;")
+            self.ensurePolished()
+            if max(
+                (self.fontMetrics().horizontalAdvance(item) for item in self._items),
+                default=0,
+            ) <= available:
                 break
-        self.setFont(fitted_font)
         self.setMinimumWidth(0)
         self.setFixedWidth(width)
 
