@@ -596,6 +596,18 @@ class ScaleSelector(AnchoredChoiceSelector):
 class TargetKeySelector(AnchoredChoiceSelector):
     def __init__(self, parent=None):
         super().__init__(TARGET_KEYS, accent=ORANGE, parent=parent)
+        # The Windows Qt font backend reports substantially wider text than
+        # CoreText for the same visual style.  Reserve enough room for the
+        # widest target plus the selector chevron instead of relying on a
+        # platform-specific fixed width.
+        self.setMinimumWidth(self.readableWidth())
+
+    def readableWidth(self, minimum=228):
+        longest = max(
+            (self.fontMetrics().horizontalAdvance(item) for item in self._items),
+            default=0,
+        )
+        return max(int(minimum), longest + 28)
 
 
 class V16DropZone(QFrame):
@@ -892,9 +904,9 @@ class ValidatedMainWindow(FunctionalMainWindow):
         self.open_folder_button = QPushButton("OPEN FOLDER"); self.open_folder_button.setProperty("accent", "red"); self.open_folder_button.setFixedSize(112, 30)
         self.reset_destination_button = QPushButton("RESET"); self.reset_destination_button.setVisible(False)
         layer_location.addWidget(self.change_root_button); layer_location.addWidget(self.open_folder_button)
-        # The header already ends with a stretch.  Appending the fixed-size
-        # location group after it anchors CHANGE/OPEN FOLDER to the right,
-        # regardless of the path length.
+        # The compressible header copy yields first to this fixed-size group,
+        # keeping the elided path and both actions disjoint on every font
+        # backend while the actions remain anchored to the right.
         layer_head.layout().addLayout(layer_location)
         operations_layout.addWidget(self.layer_operation_card)
 
@@ -971,9 +983,15 @@ class ValidatedMainWindow(FunctionalMainWindow):
         layout = QVBoxLayout(card); layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
         head = OperationHeader(); head.setFixedHeight(45); row = QHBoxLayout(head); row.setContentsMargins(11, 0, 11, 0); row.setSpacing(10)
         toggle = V16Toggle(checked, accent); row.addWidget(toggle); color = {"red": RED, "purple": PURPLE, "orange": ORANGE}[accent]
-        row.addWidget(LineIcon(icon_kind, color, 20)); copy = QVBoxLayout(); copy.setSpacing(1)
+        row.addWidget(LineIcon(icon_kind, color, 20))
+        copy_host = QWidget()
+        copy_host.setMinimumWidth(0)
+        copy_host.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        copy = QVBoxLayout(copy_host); copy.setContentsMargins(0, 0, 0, 0); copy.setSpacing(1)
         title_label = QLabel(title); title_label.setProperty("role", "operationTitle"); desc_label = QLabel(description); desc_label.setProperty("role", "operationDescription")
-        copy.addWidget(title_label); copy.addWidget(desc_label); row.addLayout(copy); row.addStretch()
+        title_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        desc_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        copy.addWidget(title_label); copy.addWidget(desc_label); row.addWidget(copy_host, 1)
         head.toggle = toggle; head.title_label = title_label
         card.header = head
         arrow = Chevron(checked); head.arrow = arrow
@@ -1020,10 +1038,10 @@ class ValidatedMainWindow(FunctionalMainWindow):
         bpm_line_width = max(138, bpm_label.sizeHint().width() + 34 + 58 + 11)
         bpm_line.setFixedWidth(bpm_line_width); tl.addWidget(bpm_line, 1, 0)
         self.quick_extract_key_switch = V16Toggle(True, "orange"); self.quick_extract_key_switch.setFixedWidth(34)
-        self.quick_extract_key = TargetKeySelector(); self.quick_extract_key.setFixedWidth(130)
+        self.quick_extract_key = TargetKeySelector(); quick_extract_key_width = self.quick_extract_key.readableWidth(); self.quick_extract_key.setFixedWidth(quick_extract_key_width)
         key_line = QWidget(); keyrow = QHBoxLayout(key_line); keyrow.setContentsMargins(0, 0, 3, 0); keyrow.setSpacing(4)
         key_label = QLabel("KEY"); keyrow.addWidget(key_label); keyrow.addWidget(self.quick_extract_key_switch); keyrow.addWidget(self.quick_extract_key, 1)
-        key_line_width = max(207, key_label.sizeHint().width() + 34 + 130 + 11)
+        key_line_width = max(207, key_label.sizeHint().width() + 34 + quick_extract_key_width + 11)
         key_line.setMinimumWidth(key_line_width); tl.addWidget(key_line, 1, 1)
         left.setFixedWidth(max(374, bpm_line_width + key_line_width + 27))
         tl.setColumnStretch(1, 1)
@@ -1070,9 +1088,10 @@ class ValidatedMainWindow(FunctionalMainWindow):
         convert, convert_body = self._section("orange", "retarget", "QUICK CONVERT", "Convert one loop to a selected BPM and key.")
         convert.setFixedHeight(118); cg = QGridLayout(convert_body); cg.setContentsMargins(12, 0, 12, 6); cg.setHorizontalSpacing(8); cg.setVerticalSpacing(4)
         self.quick_convert_drop = V16DropZone("audio", "Drop one loop here", ORANGE, allowed_extensions={".mp3", ".wav", ".flac"}); self.quick_convert_drop.setFixedWidth(285); cg.addWidget(self.quick_convert_drop, 0, 0)
-        settings = QFrame(); self.quick_convert_settings = settings; settings.setProperty("role", "inset"); settings.setFixedWidth(350); setl = QHBoxLayout(settings); setl.setContentsMargins(8, 5, 8, 5); setl.setSpacing(5)
-        setl.addWidget(QLabel("BPM")); self.quick_convert_bpm_switch = V16Toggle(True, "orange"); self.quick_convert_bpm_switch.setFixedWidth(34); setl.addWidget(self.quick_convert_bpm_switch); self.quick_convert_bpm = QLineEdit("120"); self.quick_convert_bpm.setMaxLength(3); self.quick_convert_bpm.setFixedSize(58, 29); self.quick_convert_bpm.setAlignment(Qt.AlignCenter); setl.addWidget(self.quick_convert_bpm)
-        setl.addWidget(QLabel("KEY")); self.quick_convert_key_switch = V16Toggle(True, "orange"); self.quick_convert_key_switch.setFixedWidth(34); setl.addWidget(self.quick_convert_key_switch); self.quick_convert_key = TargetKeySelector(); self.quick_convert_key.setMinimumWidth(132); setl.addWidget(self.quick_convert_key, 1); cg.addWidget(settings, 0, 1)
+        settings = QFrame(); self.quick_convert_settings = settings; settings.setProperty("role", "inset"); setl = QHBoxLayout(settings); setl.setContentsMargins(8, 5, 8, 5); setl.setSpacing(5)
+        convert_bpm_label = QLabel("BPM"); setl.addWidget(convert_bpm_label); self.quick_convert_bpm_switch = V16Toggle(True, "orange"); self.quick_convert_bpm_switch.setFixedWidth(34); setl.addWidget(self.quick_convert_bpm_switch); self.quick_convert_bpm = QLineEdit("120"); self.quick_convert_bpm.setMaxLength(3); self.quick_convert_bpm.setFixedSize(58, 29); self.quick_convert_bpm.setAlignment(Qt.AlignCenter); setl.addWidget(self.quick_convert_bpm)
+        convert_key_label = QLabel("KEY"); setl.addWidget(convert_key_label); self.quick_convert_key_switch = V16Toggle(True, "orange"); self.quick_convert_key_switch.setFixedWidth(34); setl.addWidget(self.quick_convert_key_switch); self.quick_convert_key = TargetKeySelector(); quick_convert_key_width = self.quick_convert_key.readableWidth(); self.quick_convert_key.setFixedWidth(quick_convert_key_width); setl.addWidget(self.quick_convert_key)
+        settings.setFixedWidth(max(350, 16 + convert_bpm_label.sizeHint().width() + 34 + 58 + convert_key_label.sizeHint().width() + 34 + quick_convert_key_width + 25)); cg.addWidget(settings, 0, 1)
         result = QFrame(); result.setProperty("role", "resultLine"); rl = QHBoxLayout(result); rl.setContentsMargins(10, 4, 8, 4); rl.setSpacing(6)
         self.quick_convert_check = LineIcon("check", GREEN, 15); self.quick_convert_check.setVisible(False); rl.addWidget(self.quick_convert_check)
         result_copy = QWidget(); result_copy_layout = QVBoxLayout(result_copy); result_copy_layout.setContentsMargins(0, 0, 0, 0); result_copy_layout.setSpacing(0); result_copy_layout.addStretch()

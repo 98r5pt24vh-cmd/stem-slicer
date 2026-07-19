@@ -242,6 +242,17 @@ class QtInterfaceTests(unittest.TestCase):
             key_metrics.horizontalAdvance(window.quick_extract_key.currentText()),
             window.quick_extract_key.width() - 28,
         )
+        for selector in (
+            window.quick_extract_key,
+            window.quick_convert_key,
+            window.target_key_combo,
+        ):
+            metrics = QFontMetrics(selector.font())
+            for index in range(selector.count()):
+                self.assertLessEqual(
+                    metrics.horizontalAdvance(selector.itemText(index)),
+                    selector.width() - 28,
+                )
         self.assertGreaterEqual(window.quick_extract_bpm.height(), 29)
         self.assertGreaterEqual(window.quick_extract_key.height(), 29)
 
