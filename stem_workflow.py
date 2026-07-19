@@ -10,6 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import shutil
+import sys
 import tempfile
 import time
 
@@ -147,14 +149,56 @@ class QuickExtractWorkflowWorker(QObject):
             if self.target.active:
                 analysis, _ = analyze_loop(self.analyzer, self.source)
                 output_stem = build_output_stem(self.source, analysis, self.target)
-            diagnostics = process_single_file(self.source, self.output, output_stem)
-            exported = [
-                row for row in diagnostics
-                if row.get("event") == "exported" and row.get("output_exists")
-            ]
-
             conversion_results = {}
-            if analysis is not None and exported:
+            if sys.platform == "win32" and analysis is not None:
+                # Windows may temporarily lock freshly encoded MP3 files (for
+                # example while Defender or Explorer indexes them).  Extract
+                # and convert away from the user-visible session, then publish
+                # brand-new final files.  This avoids replacing an existing
+                # MP3, which was the only path unique to Quick Extract with an
+                # Optional Target enabled.
+                with tempfile.TemporaryDirectory(prefix="stem-slicer-quick-extract-") as staging:
+                    raw_folder = os.path.join(staging, "raw")
+                    converted_folder = os.path.join(staging, "converted")
+                    os.makedirs(raw_folder, exist_ok=True)
+                    os.makedirs(converted_folder, exist_ok=True)
+                    diagnostics = process_single_file(self.source, raw_folder, output_stem)
+                    exported = [
+                        row for row in diagnostics
+                        if row.get("event") == "exported" and row.get("output_exists")
+                    ]
+                    for row in exported:
+                        output_name = row["output_name"]
+                        source_layer = os.path.join(raw_folder, output_name)
+                        converted_layer = os.path.join(converted_folder, output_name)
+                        try:
+                            result = convert_audio(ConversionRequest(
+                                source=Path(source_layer),
+                                destination=Path(converted_layer),
+                                source_bpm=analysis.bpm,
+                                target_bpm=self.target.bpm if self.target.bpm_enabled else None,
+                                source_key=analysis.source_key,
+                                target_key=self.target.key_pair if self.target.key_enabled else None,
+                            ))
+                        except Exception as exc:
+                            raise RuntimeError(f"Optional Target failed for {output_name}: {exc}") from exc
+                        conversion_results[output_name] = result
+
+                    os.makedirs(self.output, exist_ok=True)
+                    for row in exported:
+                        output_name = row["output_name"]
+                        final_layer = os.path.join(self.output, output_name)
+                        if os.path.exists(final_layer):
+                            raise FileExistsError(f"The output layer already exists: {output_name}")
+                        shutil.copyfile(os.path.join(converted_folder, output_name), final_layer)
+            else:
+                diagnostics = process_single_file(self.source, self.output, output_stem)
+                exported = [
+                    row for row in diagnostics
+                    if row.get("event") == "exported" and row.get("output_exists")
+                ]
+
+            if sys.platform != "win32" and analysis is not None and exported:
                 with tempfile.TemporaryDirectory(prefix=".stem-slicer-stage-", dir=self.output) as staging:
                     staged = []
                     for row in exported:
@@ -298,8 +342,20 @@ class BatchWorkflowWorker(QObject):
             analysis_by_file = {}
             raw_by_file = {}
             failures = []
-            process_steps = len(files)
-            conversion_steps = len(files) if convert and not extract else 0
+            # Convert-only does not call the structural processing engine on
+            # Windows.  Counting that non-existent phase produced 52 / 78 for
+            # 26 loops (26 analyses + 26 conversions over a false total of 78).
+            # Keep the established macOS accounting unchanged.
+            process_steps = (
+                len(files)
+                if sys.platform != "win32" or extract or not convert
+                else 0
+            )
+            conversion_steps = (
+                len(files)
+                if sys.platform == "win32" and convert
+                else len(files) if convert and not extract else 0
+            )
             total_steps = len(files) * (1 if needs_analysis else 0) + process_steps + conversion_steps
             total_steps = max(1, total_steps)
 
@@ -353,15 +409,20 @@ class BatchWorkflowWorker(QObject):
                         failures.extend(engine_failures)
                         outputs = (manifest or {}).get("outputs_by_source", {})
                         exported_count = sum(len(items) for items in outputs.values())
-                        total_steps += exported_count
+                        if sys.platform != "win32":
+                            total_steps += exported_count
                         current = analysis_offset + process_steps
                         converted_sources = set()
                         with tempfile.TemporaryDirectory(prefix=".stem-slicer-convert-", dir=self.output) as conversion_stage:
                             for filename in files:
                                 analysis = analysis_by_file.get(filename)
                                 if not isinstance(analysis, LoopAnalysis):
+                                    if sys.platform == "win32":
+                                        current += 1
+                                        self.progress.emit(current, total_steps, f"Conversion unavailable: {filename}")
                                     continue
                                 staged_pairs = []
+                                conversion_status = f"Converted: {filename}"
                                 try:
                                     for source_layer in outputs.get(filename, []):
                                         staged_layer = os.path.join(conversion_stage, os.path.basename(source_layer))
@@ -374,13 +435,18 @@ class BatchWorkflowWorker(QObject):
                                             target_key=target.key_pair if target.key_enabled else None,
                                         ))
                                         staged_pairs.append((staged_layer, os.path.join(self.output, os.path.basename(source_layer))))
-                                        current += 1
-                                        self.progress.emit(current, total_steps, f"Converted: {os.path.basename(source_layer)}")
+                                        if sys.platform != "win32":
+                                            current += 1
+                                            self.progress.emit(current, total_steps, f"Converted: {os.path.basename(source_layer)}")
                                     for staged_layer, final_layer in staged_pairs:
                                         os.replace(staged_layer, final_layer)
                                     converted_sources.add(filename)
                                 except Exception as exc:
                                     failures.append((filename, str(exc)))
+                                    conversion_status = f"Conversion failed: {filename}"
+                                if sys.platform == "win32":
+                                    current += 1
+                                    self.progress.emit(current, total_steps, conversion_status)
                         final_outputs = {
                             filename: [os.path.join(self.output, os.path.basename(path)) for path in paths]
                             for filename, paths in outputs.items()
@@ -401,7 +467,11 @@ class BatchWorkflowWorker(QObject):
                     for filename in files:
                         analysis = analysis_by_file.get(filename)
                         if not isinstance(analysis, LoopAnalysis):
+                            if sys.platform == "win32":
+                                current += 1
+                                self.progress.emit(current, total_steps, f"Conversion unavailable: {filename}")
                             continue
+                        conversion_status = f"Converted: {filename}"
                         try:
                             staged = os.path.join(conversion_stage, output_stems[filename] + ".mp3")
                             final = os.path.join(self.output, output_stems[filename] + ".mp3")
@@ -417,8 +487,9 @@ class BatchWorkflowWorker(QObject):
                             manifest["outputs_by_source"][filename] = [final]
                         except Exception as exc:
                             failures.append((filename, str(exc)))
+                            conversion_status = f"Conversion failed: {filename}"
                         current += 1
-                        self.progress.emit(current, total_steps, f"Converted: {filename}")
+                        self.progress.emit(current, total_steps, conversion_status)
             else:
                 engine_failures, manifest = self._run_engine(
                     self.output, engine_settings, analysis_offset, process_steps, total_steps

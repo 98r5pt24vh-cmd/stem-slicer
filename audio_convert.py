@@ -59,14 +59,25 @@ def _hidden_process_kwargs() -> dict:
 
 
 def _run(command: list[str], *, capture: bool = False) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        command,
-        check=True,
-        text=True,
-        stdout=subprocess.PIPE if capture else subprocess.DEVNULL,
-        stderr=subprocess.PIPE if capture else subprocess.DEVNULL,
-        **_hidden_process_kwargs(),
-    )
+    capture_output = capture or os.name == "nt"
+    try:
+        return subprocess.run(
+            command,
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE if capture_output else subprocess.DEVNULL,
+            stderr=subprocess.PIPE if capture_output else subprocess.DEVNULL,
+            **_hidden_process_kwargs(),
+        )
+    except subprocess.CalledProcessError as exc:
+        if os.name != "nt":
+            raise
+        detail = (exc.stderr or exc.stdout or "").strip()
+        executable = os.path.basename(str(command[0]))
+        message = f"{executable} failed with exit code {exc.returncode}"
+        if detail:
+            message += f": {detail}"
+        raise RuntimeError(message) from exc
 
 
 def _key_parts(key: str) -> tuple[str, bool]:

@@ -1,5 +1,6 @@
 import math
 import os
+from pathlib import Path
 import struct
 import sys
 import tempfile
@@ -89,7 +90,7 @@ def main():
     print(f"Bundled Qt Multimedia backend: {qt_multimedia_plugin}", flush=True)
     sys._MEIPASS = internal
 
-    from audio_convert import _find_bungee
+    from audio_convert import ConversionRequest, _find_bungee, convert_audio
     from engine import find_ffmpeg, find_ffprobe, get_duration, run_subprocess
     from key_detection import KeyAnalyzer, analyzer_executable
 
@@ -140,6 +141,31 @@ def main():
                 f"returncode={completed.returncode}, stderr={completed.stderr}"
             )
         print("Bundled Windows Bungee engine ready.", flush=True)
+
+        # Exercise the exact MP3 decode -> Bungee -> MP3 encode wrapper used by
+        # Optional Target, twice in succession.  The former smoke only called
+        # bungee.exe directly with a WAV and could not detect wrapper or MP3
+        # integration failures in the packaged Windows toolchain.
+        layer_source = os.path.join(temporary, "optional-target-source.mp3")
+        completed = run_subprocess([
+            ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-nostdin",
+            "-i", sample, "-t", "4", "-c:a", "libmp3lame", "-q:a", "0", layer_source,
+        ], capture_output=True, text=True, timeout=60)
+        if completed.returncode != 0 or not os.path.isfile(layer_source):
+            raise RuntimeError(f"Could not create the Optional Target MP3 smoke source: {completed.stderr}")
+        for index in (1, 2):
+            layer_output = os.path.join(temporary, f"optional-target-layer-{index}.mp3")
+            result = convert_audio(ConversionRequest(
+                source=Path(layer_source),
+                destination=Path(layer_output),
+                source_bpm=120,
+                target_bpm=110,
+                source_key="A minor",
+                target_key="C major / A minor",
+            ))
+            if not result.output.is_file() or result.output.stat().st_size == 0:
+                raise RuntimeError(f"Optional Target MP3 conversion {index} produced no output.")
+        print("Bundled Windows Optional Target MP3 pipeline ready (2 layers).", flush=True)
 
         with KeyAnalyzer(workers=1, startup_timeout=90, request_timeout=180) as key_analyzer:
             result = key_analyzer.analyze(

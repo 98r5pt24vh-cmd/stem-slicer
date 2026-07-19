@@ -1,4 +1,5 @@
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -24,6 +25,21 @@ class PitchMappingTests(unittest.TestCase):
         self.assertEqual(options["creationflags"], 0x08000000)
         self.assertEqual(options["startupinfo"].dwFlags, 1)
         self.assertEqual(options["startupinfo"].wShowWindow, 0)
+
+    def test_windows_subprocess_failure_preserves_tool_stderr(self):
+        error = subprocess.CalledProcessError(
+            7,
+            ["bungee.exe", "input.wav", "output.wav"],
+            stderr="unsupported layer format",
+        )
+        with patch.object(audio_convert.os, "name", "nt"), \
+             patch.object(audio_convert, "_hidden_process_kwargs", return_value={}), \
+             patch.object(audio_convert.subprocess, "run", side_effect=error):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "bungee.exe failed with exit code 7: unsupported layer format",
+            ):
+                audio_convert._run(["bungee.exe", "input.wav", "output.wav"])
 
     def test_minor_source_uses_relative_minor_target(self):
         self.assertEqual(shortest_semitone_shift("C# minor", "C major / A minor"), -4)

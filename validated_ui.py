@@ -8,6 +8,7 @@ validated audio workers from :mod:`functional_core`.
 from __future__ import annotations
 
 import os
+import sys
 
 from PySide6.QtCore import QEvent, QMimeData, QPoint, QPointF, QRect, QRectF, QThread, QTimer, Qt, QUrl, Signal, Slot
 from PySide6.QtGui import QActionGroup, QColor, QDrag, QFontMetrics, QIcon, QPainter, QPainterPath, QPen, QTransform
@@ -1634,7 +1635,13 @@ class ValidatedMainWindow(FunctionalMainWindow):
 
         self.busy = True
         self.progress_bar.setValue(0)
-        self.progress_counter.setText("0 / 0")
+        self._batch_source_total = sum(
+            name.lower().endswith(".mp3") for name in os.listdir(self.source_path)
+        )
+        if sys.platform == "win32":
+            self.progress_counter.setText(f"0 / {self._batch_source_total}")
+        else:
+            self.progress_counter.setText("0 / 0")
         self.success_stat.setText("0 SUCCESSFUL")
         self.error_stat.setText("0 ERRORS")
         self.process_status.setText("Preparing audio engine…")
@@ -1658,6 +1665,18 @@ class ValidatedMainWindow(FunctionalMainWindow):
         self.batch_thread.finished.connect(self._batch_finished)
         self.batch_thread.start()
 
+    @Slot(int, int, str)
+    def _batch_progress(self, current, total, status):
+        if sys.platform != "win32":
+            super()._batch_progress(current, total, status)
+            return
+        fraction = min(1.0, max(0.0, float(current) / total)) if total else 0.0
+        source_total = getattr(self, "_batch_source_total", 0)
+        source_current = min(source_total, round(fraction * source_total))
+        self.progress_bar.setValue(round(fraction * 100))
+        self.progress_counter.setText(f"{source_current} / {source_total}")
+        self.process_status.setText(status)
+
     @Slot(object, object)
     def _batch_completed(self, failures, manifest):
         self.progress_bar.setValue(100)
@@ -1665,6 +1684,8 @@ class ValidatedMainWindow(FunctionalMainWindow):
         total = 0
         if self.source_path and os.path.isdir(self.source_path):
             total = sum(name.lower().endswith(".mp3") for name in os.listdir(self.source_path))
+        if sys.platform == "win32":
+            self.progress_counter.setText(f"{total} / {total}")
         failed_files = {item[0] for item in failures}
         self.success_stat.setText(f"{max(0, total - len(failed_files))} SUCCESSFUL")
         self.error_stat.setText(f"{len(failed_files)} ERRORS")

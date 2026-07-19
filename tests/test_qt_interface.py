@@ -116,6 +116,17 @@ class QtInterfaceTests(unittest.TestCase):
         self.assertEqual(original_pages, tuple(window.pages.widget(index) for index in range(2)))
         window.close()
 
+    def test_windows_batch_counter_is_normalized_to_source_loops(self):
+        window = MainWindow()
+        window._batch_source_total = 26
+        with patch.object(validated_ui.sys, "platform", "win32"):
+            window._batch_progress(26, 52, "Analyzing loops…")
+            self.assertEqual(window.progress_counter.text(), "13 / 26")
+            window._batch_progress(52, 52, "Converted loops.")
+            self.assertEqual(window.progress_counter.text(), "26 / 26")
+            self.assertEqual(window.progress_bar.value(), 100)
+        window.close()
+
     def test_custom_tabs_toggles_and_headers_receive_real_viewport_clicks(self):
         window = MainWindow()
         window.show()
