@@ -132,6 +132,16 @@ jobs:
           STEM_SLICER_DISABLE_ENGINE_AUTOSTART: "1"
         run: python -m unittest discover -s tests -v
 
+      - name: Run native Windows drag-and-drop and Browse regressions
+        env:
+          QT_QPA_PLATFORM: windows
+          STEM_SLICER_DISABLE_ENGINE_AUTOSTART: "1"
+        run: >-
+          python -m unittest
+          tests.test_qt_interface.QtInterfaceTests.test_validated_drop_zones_accept_copy_through_graphics_view
+          tests.test_qt_interface.QtInterfaceTests.test_windows_browse_dialog_uses_stable_top_level_owner
+          -v
+
       - name: Build Windows application
         shell: pwsh
         run: |

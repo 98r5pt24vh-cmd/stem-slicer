@@ -12,6 +12,7 @@ import os
 from PySide6.QtCore import QEvent, QMimeData, QPoint, QPointF, QRect, QRectF, QThread, QTimer, Qt, QUrl, Signal, Slot
 from PySide6.QtGui import QActionGroup, QColor, QDrag, QFontMetrics, QIcon, QPainter, QPainterPath, QPen, QTransform
 from PySide6.QtWidgets import (
+    QApplication,
     QComboBox,
     QFileDialog,
     QFrame,
@@ -596,18 +597,39 @@ class ScaleSelector(AnchoredChoiceSelector):
 class TargetKeySelector(AnchoredChoiceSelector):
     def __init__(self, parent=None):
         super().__init__(TARGET_KEYS, accent=ORANGE, parent=parent)
-        # The Windows Qt font backend reports substantially wider text than
-        # CoreText for the same visual style.  Reserve enough room for the
-        # widest target plus the selector chevron instead of relying on a
-        # platform-specific fixed width.
+        # Keep target labels on the same 10 px visual metric on every Qt
+        # backend.  In particular, the Windows offscreen/native backends can
+        # otherwise inherit a DPI-scaled fallback font and inflate the whole
+        # Quick Tools column just to fit one selector.
+        target_font = self.font()
+        target_font.setPixelSize(10)
+        self.setFont(target_font)
         self.setMinimumWidth(self.readableWidth())
 
-    def readableWidth(self, minimum=228):
+    def readableWidth(self, minimum=132):
         longest = max(
             (self.fontMetrics().horizontalAdvance(item) for item in self._items),
             default=0,
         )
         return max(int(minimum), longest + 28)
+
+    def setCompactWidth(self, width):
+        """Fit every target label inside a deliberately compact field."""
+        width = int(width)
+        available = max(1, width - 25)
+        base_font = self.font()
+        base_font.setPixelSize(10)
+        for stretch in range(100, 49, -5):
+            candidate = type(base_font)(base_font)
+            candidate.setStretch(stretch)
+            self.setFont(candidate)
+            if max(
+                (self.fontMetrics().horizontalAdvance(item) for item in self._items),
+                default=0,
+            ) <= available:
+                break
+        self.setMinimumWidth(0)
+        self.setFixedWidth(width)
 
 
 class V16DropZone(QFrame):
@@ -621,6 +643,7 @@ class V16DropZone(QFrame):
         *,
         allowed_extensions=None,
         vertical=False,
+        dialog_parent=None,
         parent=None,
     ):
         super().__init__(parent)
@@ -628,6 +651,7 @@ class V16DropZone(QFrame):
         self.path = ""
         self.accent = accent
         self.allowed_extensions = set(allowed_extensions or ({".mp3", ".wav", ".flac"} if kind == "audio" else set()))
+        self.dialog_parent = dialog_parent
         self.highlighted = False
         self.setAcceptDrops(True)
         self.setProperty("role", "dropZone")
@@ -665,14 +689,28 @@ class V16DropZone(QFrame):
         return "red"
 
     def choose(self):
+        parent = self.dialog_parent or QApplication.activeWindow()
+        options = QFileDialog.Options()
+        # Native Windows dialogs do not reliably coexist with a QWidget
+        # embedded in QGraphicsProxyWidget: the owner can be left disabled or
+        # only partially repainted.  A top-level owner plus Qt's non-native
+        # dialog keeps Browse stable while retaining the same filesystem view.
+        if os.name == "nt":
+            options |= QFileDialog.DontUseNativeDialog
         if self.kind == "folder":
-            selected = QFileDialog.getExistingDirectory(self, "Choose loops folder", self.path or os.path.expanduser("~/Music"))
+            selected = QFileDialog.getExistingDirectory(
+                parent,
+                "Choose loops folder",
+                self.path or os.path.expanduser("~/Music"),
+                options | QFileDialog.ShowDirsOnly,
+            )
         else:
             selected, _ = QFileDialog.getOpenFileName(
-                self,
+                parent,
                 "Choose one audio file",
                 os.path.dirname(self.path) if self.path else os.path.expanduser("~/Music"),
                 "Audio files (" + " ".join("*" + ext for ext in sorted(self.allowed_extensions)) + ")",
+                options=options,
             )
         if selected:
             self.set_path(selected)
@@ -694,20 +732,29 @@ class V16DropZone(QFrame):
         if self.kind == "folder": return path if os.path.isdir(path) else ""
         return path if os.path.isfile(path) and os.path.splitext(path)[1].lower() in self.allowed_extensions else ""
 
+    @staticmethod
+    def _accept_copy(event):
+        # Explorer may propose MoveAction for a local path.  Stem Slicer only
+        # reads the source, so force the proven CopyAction contract instead of
+        # accepting a platform-dependent proposed action.
+        if event.possibleActions() & Qt.CopyAction:
+            event.setDropAction(Qt.CopyAction)
+        event.accept()
+
     def dragEnterEvent(self, event):
-        if self._drop_path(event.mimeData()): self.highlighted = True; self.update(); event.acceptProposedAction()
+        if self._drop_path(event.mimeData()): self.highlighted = True; self.update(); self._accept_copy(event)
         else: event.ignore()
 
     def dragMoveEvent(self, event):
-        if self._drop_path(event.mimeData()): self.highlighted = True; self.update(); event.acceptProposedAction()
-        else: event.ignore()
+        if self._drop_path(event.mimeData()): self.highlighted = True; self.update(); self._accept_copy(event)
+        else: self.highlighted = False; self.update(); event.ignore()
 
     def dragLeaveEvent(self, event):
         self.highlighted = False; self.update(); super().dragLeaveEvent(event)
 
     def dropEvent(self, event):
         path = self._drop_path(event.mimeData()); self.highlighted = False
-        if path and self.set_path(path): event.acceptProposedAction()
+        if path and self.set_path(path): self._accept_copy(event)
         else: event.ignore()
         self.update()
 
@@ -807,6 +854,9 @@ class ValidatedMainWindow(FunctionalMainWindow):
         self.setStyleSheet(validated_stylesheet())
 
         self.view = QGraphicsView(self)
+        self.setAcceptDrops(True)
+        self.view.setAcceptDrops(True)
+        self.view.viewport().setAcceptDrops(True)
         self.view.setFrameShape(QFrame.NoFrame)
         self.view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -814,11 +864,13 @@ class ValidatedMainWindow(FunctionalMainWindow):
         self.scene.setSceneRect(0, 0, BASE_WIDTH, BASE_HEIGHT)
         self.view.setScene(self.scene)
         self.canvas = StudioRoot(); self.canvas.setObjectName("ValidatedCanvas"); self.canvas.setFixedSize(BASE_WIDTH, BASE_HEIGHT)
+        self.canvas.setAcceptDrops(True)
         # A widget embedded through QGraphicsProxyWidget is its own style
         # propagation root.  Apply the validated theme to the canvas itself so
         # packaged and diagnostic launches render identically.
         self.canvas.setStyleSheet(validated_stylesheet())
         self.proxy = self.scene.addWidget(self.canvas)
+        self.proxy.setAcceptDrops(True)
         self.setCentralWidget(self.view)
 
         outer = QVBoxLayout(self.canvas); outer.setContentsMargins(0, 0, 0, 0); outer.setSpacing(0)
@@ -882,12 +934,12 @@ class ValidatedMainWindow(FunctionalMainWindow):
 
         source, source_body = self._section("red", "folder_in", "SOURCE FOLDER", "Drop a folder containing loops to configure the batch.")
         source.setFixedHeight(118); source_layout = QHBoxLayout(source_body); source_layout.setContentsMargins(12, 0, 12, 8); source_layout.setSpacing(7)
-        self.input_drop = V16DropZone("folder", "Drop a loop folder here", RED); self.input_drop.setFixedHeight(66)
+        self.input_drop = V16DropZone("folder", "Drop a loop folder here", RED, dialog_parent=self); self.input_drop.setFixedHeight(66)
         source_layout.addWidget(self.input_drop, 1)
-        self.source_path_box = QFrame(); self.source_path_box.setProperty("role", "pathBox"); self.source_path_box.setFixedSize(300, 66)
+        self.source_path_box = QFrame(); self.source_path_box.setProperty("role", "pathBox"); self.source_path_box.setFixedHeight(66); self.source_path_box.setMinimumWidth(0)
         spl = QHBoxLayout(self.source_path_box); spl.setContentsMargins(11, 6, 11, 6); spl.setSpacing(10); spl.addWidget(LineIcon("folder", RED, 25))
         self.source_path_label = QLabel("No folder selected"); self.source_path_label.setProperty("role", "path"); self.source_path_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        spl.addWidget(self.source_path_label, 1); source_layout.addWidget(self.source_path_box); layout.addWidget(source)
+        spl.addWidget(self.source_path_label, 1); source_layout.addWidget(self.source_path_box, 1); layout.addWidget(source)
 
         operations, operations_body = self._section("red", "gear", "OPERATIONS", "Enable only the operations required for this batch.")
         operations_layout = QVBoxLayout(operations_body); operations_layout.setContentsMargins(12, 0, 12, 8); operations_layout.setSpacing(6)
@@ -1027,23 +1079,25 @@ class ValidatedMainWindow(FunctionalMainWindow):
         page = QWidget(); layout = QVBoxLayout(page); layout.setContentsMargins(9, 9, 9, 9); layout.setSpacing(9)
         extract, extract_body = self._section("red", "layers", "QUICK EXTRACT", "Extract layers from one loop, with optional target transformation.")
         extract_layout = QGridLayout(extract_body); extract_layout.setContentsMargins(12, 0, 12, 7); extract_layout.setHorizontalSpacing(8); extract_layout.setVerticalSpacing(4)
-        left = QWidget(); left.setFixedWidth(374); left_layout = QVBoxLayout(left); left_layout.setContentsMargins(0, 0, 0, 0); left_layout.setSpacing(7)
-        self.quick_extract_drop = V16DropZone("audio", "Drop one loop here", RED, allowed_extensions={".mp3"}, vertical=True); left_layout.addWidget(self.quick_extract_drop, 1)
-        target = QFrame(); target.setProperty("role", "inset"); target.setFixedHeight(68); tl = QGridLayout(target); tl.setContentsMargins(10, 5, 10, 6); tl.setHorizontalSpacing(5); tl.setVerticalSpacing(4)
+        left = QWidget(); left.setFixedWidth(322); left_layout = QVBoxLayout(left); left_layout.setContentsMargins(0, 0, 0, 0); left_layout.setSpacing(7)
+        self.quick_extract_drop = V16DropZone("audio", "Drop one loop here", RED, allowed_extensions={".mp3"}, vertical=True, dialog_parent=self); left_layout.addWidget(self.quick_extract_drop, 1)
+        target = QFrame(); target.setProperty("role", "inset"); target.setFixedHeight(68); tl = QGridLayout(target); tl.setContentsMargins(8, 5, 8, 6); tl.setHorizontalSpacing(5); tl.setVerticalSpacing(4)
         tl.addWidget(self._caps("OPTIONAL TARGET"), 0, 0, 1, 2)
         self.quick_extract_bpm_switch = V16Toggle(True, "orange"); self.quick_extract_bpm_switch.setFixedWidth(34)
-        self.quick_extract_bpm = QLineEdit("120"); self.quick_extract_bpm.setMaxLength(3); self.quick_extract_bpm.setFixedSize(58, 29); self.quick_extract_bpm.setAlignment(Qt.AlignCenter)
+        self.quick_extract_bpm = QLineEdit("120"); self.quick_extract_bpm.setMaxLength(3); self.quick_extract_bpm.setFixedSize(50, 29); self.quick_extract_bpm.setAlignment(Qt.AlignCenter)
         bpm_line = QWidget(); bpmrow = QHBoxLayout(bpm_line); bpmrow.setContentsMargins(0, 0, 3, 0); bpmrow.setSpacing(4)
         bpm_label = QLabel("BPM"); bpmrow.addWidget(bpm_label); bpmrow.addWidget(self.quick_extract_bpm_switch); bpmrow.addWidget(self.quick_extract_bpm)
-        bpm_line_width = max(138, bpm_label.sizeHint().width() + 34 + 58 + 11)
+        # Keep three real pixels after the BPM field.  The extra allowance is
+        # intentional: Qt's layout spacing otherwise consumes the nominal
+        # right margin on Windows and visibly crops the field border.
+        bpm_line_width = max(115, bpm_label.sizeHint().width() + 34 + 50 + 11)
         bpm_line.setFixedWidth(bpm_line_width); tl.addWidget(bpm_line, 1, 0)
         self.quick_extract_key_switch = V16Toggle(True, "orange"); self.quick_extract_key_switch.setFixedWidth(34)
-        self.quick_extract_key = TargetKeySelector(); quick_extract_key_width = self.quick_extract_key.readableWidth(); self.quick_extract_key.setFixedWidth(quick_extract_key_width)
+        self.quick_extract_key = TargetKeySelector(); quick_extract_key_width = 110; self.quick_extract_key.setCompactWidth(quick_extract_key_width)
         key_line = QWidget(); keyrow = QHBoxLayout(key_line); keyrow.setContentsMargins(0, 0, 3, 0); keyrow.setSpacing(4)
         key_label = QLabel("KEY"); keyrow.addWidget(key_label); keyrow.addWidget(self.quick_extract_key_switch); keyrow.addWidget(self.quick_extract_key, 1)
-        key_line_width = max(207, key_label.sizeHint().width() + 34 + quick_extract_key_width + 11)
-        key_line.setMinimumWidth(key_line_width); tl.addWidget(key_line, 1, 1)
-        left.setFixedWidth(max(374, bpm_line_width + key_line_width + 27))
+        key_line_width = max(168, key_label.sizeHint().width() + 34 + quick_extract_key_width + 11)
+        key_line.setFixedWidth(key_line_width); tl.addWidget(key_line, 1, 1)
         tl.setColumnStretch(1, 1)
         left_layout.addWidget(target); extract_layout.addWidget(left, 0, 0)
         self.quick_layers_area = QScrollArea(); self.quick_layers_area.setWidgetResizable(True); self.quick_layers_area.setProperty("role", "layers"); self.quick_layers_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -1067,7 +1121,7 @@ class ValidatedMainWindow(FunctionalMainWindow):
 
         scan, scan_body = self._section("purple", "key_scan", "QUICK SCAN", "Detect BPM, key relationships and relative modes from one loop.")
         scan.setFixedHeight(168); grid = QGridLayout(scan_body); grid.setContentsMargins(12, 0, 12, 6); grid.setHorizontalSpacing(6); grid.setVerticalSpacing(4)
-        self.quick_scan_drop = V16DropZone("audio", "Drop one loop here", PURPLE, allowed_extensions={".mp3", ".wav", ".flac"}); self.quick_scan_drop.setFixedWidth(210); grid.addWidget(self.quick_scan_drop, 0, 0, 3, 1)
+        self.quick_scan_drop = V16DropZone("audio", "Drop one loop here", PURPLE, allowed_extensions={".mp3", ".wav", ".flac"}, dialog_parent=self); self.quick_scan_drop.setFixedWidth(210); grid.addWidget(self.quick_scan_drop, 0, 0, 3, 1)
         self.quick_bpm_card = self._metric("BPM", "—", width=82); grid.addWidget(self.quick_bpm_card, 0, 1)
         self.quick_detected_card = self._metric("DETECTED KEY", "—", "—", width=150, bind="quick_detected"); grid.addWidget(self.quick_detected_card, 0, 2)
         self.quick_relative_card = self._metric("RELATIVE KEY", "—", "—", width=150, bind="quick_relative"); grid.addWidget(self.quick_relative_card, 0, 3)
@@ -1087,11 +1141,11 @@ class ValidatedMainWindow(FunctionalMainWindow):
 
         convert, convert_body = self._section("orange", "retarget", "QUICK CONVERT", "Convert one loop to a selected BPM and key.")
         convert.setFixedHeight(118); cg = QGridLayout(convert_body); cg.setContentsMargins(12, 0, 12, 6); cg.setHorizontalSpacing(8); cg.setVerticalSpacing(4)
-        self.quick_convert_drop = V16DropZone("audio", "Drop one loop here", ORANGE, allowed_extensions={".mp3", ".wav", ".flac"}); self.quick_convert_drop.setFixedWidth(285); cg.addWidget(self.quick_convert_drop, 0, 0)
+        self.quick_convert_drop = V16DropZone("audio", "Drop one loop here", ORANGE, allowed_extensions={".mp3", ".wav", ".flac"}, dialog_parent=self); self.quick_convert_drop.setFixedWidth(270); cg.addWidget(self.quick_convert_drop, 0, 0)
         settings = QFrame(); self.quick_convert_settings = settings; settings.setProperty("role", "inset"); setl = QHBoxLayout(settings); setl.setContentsMargins(8, 5, 8, 5); setl.setSpacing(5)
-        convert_bpm_label = QLabel("BPM"); setl.addWidget(convert_bpm_label); self.quick_convert_bpm_switch = V16Toggle(True, "orange"); self.quick_convert_bpm_switch.setFixedWidth(34); setl.addWidget(self.quick_convert_bpm_switch); self.quick_convert_bpm = QLineEdit("120"); self.quick_convert_bpm.setMaxLength(3); self.quick_convert_bpm.setFixedSize(58, 29); self.quick_convert_bpm.setAlignment(Qt.AlignCenter); setl.addWidget(self.quick_convert_bpm)
-        convert_key_label = QLabel("KEY"); setl.addWidget(convert_key_label); self.quick_convert_key_switch = V16Toggle(True, "orange"); self.quick_convert_key_switch.setFixedWidth(34); setl.addWidget(self.quick_convert_key_switch); self.quick_convert_key = TargetKeySelector(); quick_convert_key_width = self.quick_convert_key.readableWidth(); self.quick_convert_key.setFixedWidth(quick_convert_key_width); setl.addWidget(self.quick_convert_key)
-        settings.setFixedWidth(max(350, 16 + convert_bpm_label.sizeHint().width() + 34 + 58 + convert_key_label.sizeHint().width() + 34 + quick_convert_key_width + 25)); cg.addWidget(settings, 0, 1)
+        convert_bpm_label = QLabel("BPM"); setl.addWidget(convert_bpm_label); self.quick_convert_bpm_switch = V16Toggle(True, "orange"); self.quick_convert_bpm_switch.setFixedWidth(34); setl.addWidget(self.quick_convert_bpm_switch); self.quick_convert_bpm = QLineEdit("120"); self.quick_convert_bpm.setMaxLength(3); self.quick_convert_bpm.setFixedSize(50, 29); self.quick_convert_bpm.setAlignment(Qt.AlignCenter); setl.addWidget(self.quick_convert_bpm)
+        convert_key_label = QLabel("KEY"); setl.addWidget(convert_key_label); self.quick_convert_key_switch = V16Toggle(True, "orange"); self.quick_convert_key_switch.setFixedWidth(34); setl.addWidget(self.quick_convert_key_switch); self.quick_convert_key = TargetKeySelector(); self.quick_convert_key.setCompactWidth(116); setl.addWidget(self.quick_convert_key)
+        settings.setFixedWidth(318); cg.addWidget(settings, 0, 1)
         result = QFrame(); result.setProperty("role", "resultLine"); rl = QHBoxLayout(result); rl.setContentsMargins(10, 4, 8, 4); rl.setSpacing(6)
         self.quick_convert_check = LineIcon("check", GREEN, 15); self.quick_convert_check.setVisible(False); rl.addWidget(self.quick_convert_check)
         result_copy = QWidget(); result_copy_layout = QVBoxLayout(result_copy); result_copy_layout.setContentsMargins(0, 0, 0, 0); result_copy_layout.setSpacing(0); result_copy_layout.addStretch()

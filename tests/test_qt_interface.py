@@ -9,7 +9,7 @@ os.environ.setdefault("STEM_SLICER_DISABLE_ENGINE_AUTOSTART", "1")
 from PySide6.QtCore import QMimeData, QPoint, QPointF, QRect, QSize, Qt, QUrl
 from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent, QFontMetrics
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QLabel
+from PySide6.QtWidgets import QApplication, QFileDialog, QLabel
 from PySide6.QtMultimedia import QMediaPlayer
 
 from app import DropZone, KeyEngineLoader, LayerCard, LineIcon, MainWindow, QuickExtractManagerDialog, WaveformWidget
@@ -19,6 +19,7 @@ from widgets import TokenStrip
 from storage import StorageManager
 from validated_ui import ORANGE, PURPLE, RED
 from stem_workflow import QuickExtractWorkflowWorker
+import validated_ui
 
 
 APP = QApplication.instance() or QApplication([])
@@ -279,6 +280,135 @@ class QtInterfaceTests(unittest.TestCase):
         APP.processEvents()
         self.assertEqual(sum(row.isChecked() for row in selector._rows.values()), 1)
         selector._popup.hide()
+        window.close()
+
+    def test_validated_column_boundaries_match_approved_crops(self):
+        window = MainWindow()
+        window.show()
+        APP.processEvents()
+
+        # The Source Folder row is intentionally split into two equal halves.
+        self.assertLessEqual(
+            abs(window.input_drop.width() - window.source_path_box.width()),
+            2,
+        )
+        self.assertGreaterEqual(
+            window.source_path_box.mapTo(window.canvas, QPoint(0, 0)).x(),
+            505,
+        )
+        self.assertLessEqual(
+            window.source_path_box.mapTo(window.canvas, QPoint(0, 0)).x(),
+            520,
+        )
+
+        window.select_tab(1)
+        APP.processEvents()
+        extract_boundary = window.quick_layers_area.mapTo(window.canvas, QPoint(0, 0)).x()
+        convert_boundary = window.quick_convert_drag.parentWidget().mapTo(window.canvas, QPoint(0, 0)).x()
+        self.assertGreaterEqual(extract_boundary, 344)
+        self.assertLessEqual(extract_boundary, 360)
+        self.assertGreaterEqual(convert_boundary, 620)
+        self.assertLessEqual(convert_boundary, 634)
+        self.assertGreater(window.quick_layers_area.width(), 2 * window.quick_extract_drop.width() - 5)
+        self.assertGreater(window.quick_convert_drag.parentWidget().width(), window.quick_convert_drop.width())
+
+        # UI scaling transforms the complete fixed canvas and must never alter
+        # the approved internal column boundaries.
+        for percent in (110, 120, 130, 140, 150):
+            window.scale_select.setCurrentText(f"{percent}%")
+            APP.processEvents()
+            self.assertEqual(
+                window.quick_layers_area.mapTo(window.canvas, QPoint(0, 0)).x(),
+                extract_boundary,
+            )
+            self.assertEqual(
+                window.quick_convert_drag.parentWidget().mapTo(window.canvas, QPoint(0, 0)).x(),
+                convert_boundary,
+            )
+        window.close()
+
+    def test_validated_drop_zones_accept_copy_through_graphics_view(self):
+        window = MainWindow()
+        window.show()
+        APP.processEvents()
+
+        self.assertTrue(window.acceptDrops())
+        self.assertTrue(window.view.acceptDrops())
+        self.assertTrue(window.view.viewport().acceptDrops())
+        self.assertTrue(window.canvas.acceptDrops())
+        self.assertTrue(window.proxy.acceptDrops())
+
+        with tempfile.TemporaryDirectory(prefix="Stem Slicer é ") as root:
+            audio = os.path.join(root, "Loop é test.mp3")
+            open(audio, "wb").close()
+            cases = (
+                (0, window.input_drop, root),
+                (1, window.quick_extract_drop, audio),
+                (1, window.quick_scan_drop, audio),
+                (1, window.quick_convert_drop, audio),
+            )
+            for tab, drop, path in cases:
+                window.select_tab(tab)
+                APP.processEvents()
+                drop.pathChanged.disconnect()
+                emitted = []
+                drop.pathChanged.connect(emitted.append)
+                mime = QMimeData()
+                mime.setUrls([QUrl.fromLocalFile(path)])
+                canvas_point = drop.mapTo(window.canvas, drop.rect().center())
+                scene_point = window.proxy.mapToScene(QPointF(canvas_point))
+                viewport_point = window.view.mapFromScene(scene_point)
+                actions = Qt.CopyAction | Qt.MoveAction
+
+                enter = QDragEnterEvent(viewport_point, actions, mime, Qt.LeftButton, Qt.NoModifier)
+                QApplication.sendEvent(window.view.viewport(), enter)
+                self.assertTrue(enter.isAccepted())
+                self.assertEqual(enter.dropAction(), Qt.CopyAction)
+
+                move = QDragMoveEvent(viewport_point, actions, mime, Qt.LeftButton, Qt.NoModifier)
+                QApplication.sendEvent(window.view.viewport(), move)
+                self.assertTrue(move.isAccepted())
+                self.assertEqual(move.dropAction(), Qt.CopyAction)
+
+                dropped = QDropEvent(QPointF(viewport_point), actions, mime, Qt.LeftButton, Qt.NoModifier)
+                QApplication.sendEvent(window.view.viewport(), dropped)
+                self.assertTrue(dropped.isAccepted())
+                self.assertEqual(dropped.dropAction(), Qt.CopyAction)
+                self.assertEqual(
+                    os.path.normcase(os.path.normpath(drop.path)),
+                    os.path.normcase(os.path.normpath(path)),
+                )
+                self.assertEqual(emitted, [drop.path])
+                self.assertFalse(drop.highlighted)
+        window.close()
+
+    def test_windows_browse_dialog_uses_stable_top_level_owner(self):
+        window = MainWindow()
+        window.show()
+        APP.processEvents()
+
+        with patch.object(validated_ui.os, "name", "nt"), patch.object(
+            validated_ui.QFileDialog,
+            "getOpenFileName",
+            return_value=("", ""),
+        ) as audio_picker:
+            window.quick_extract_drop.choose()
+        self.assertIs(audio_picker.call_args.args[0], window)
+        self.assertTrue(
+            audio_picker.call_args.kwargs["options"] & QFileDialog.DontUseNativeDialog
+        )
+
+        with patch.object(validated_ui.os, "name", "nt"), patch.object(
+            validated_ui.QFileDialog,
+            "getExistingDirectory",
+            return_value="",
+        ) as folder_picker:
+            window.input_drop.choose()
+        self.assertIs(folder_picker.call_args.args[0], window)
+        self.assertTrue(
+            folder_picker.call_args.args[3] & QFileDialog.DontUseNativeDialog
+        )
+        self.assertTrue(window.canvas.isVisible())
         window.close()
 
     def test_target_key_popups_stay_inside_the_visible_application(self):
