@@ -120,10 +120,10 @@ class WorkflowTests(unittest.TestCase):
                 {"event": "exported", "output_exists": True, "output_name": "Loop_L2.mp3", "duration_seconds": 8.0, "output_bytes": 5},
             ]
 
-            def extract(*args):
+            def extract(_source, extraction_folder, _stem):
                 events.append("extract")
                 for row in rows:
-                    Path(output, row["output_name"]).write_bytes(b"layer")
+                    Path(extraction_folder, row["output_name"]).write_bytes(b"layer")
                 return rows
 
             def convert(request):
