@@ -751,7 +751,34 @@ class MiddleElideLabel(QLabel):
 
     def _refresh_elision(self) -> None:
         available = max(1, self.contentsRect().width())
-        QLabel.setText(self, QFontMetrics(self.font()).elidedText(self._full_text, Qt.ElideMiddle, available))
+        metrics = QFontMetrics(self.font())
+        if metrics.horizontalAdvance(self._full_text) <= available:
+            QLabel.setText(self, self._full_text)
+            return
+
+        # Qt.ElideMiddle balances both halves using platform font metrics.  On
+        # Windows that can trim part of the final folder name, even though the
+        # UI contract is to keep the destination basename visible.  Reserve
+        # the complete final path component first, then use the remaining
+        # width for as much of the beginning as will fit.
+        separator_index = max(self._full_text.rfind("/"), self._full_text.rfind("\\"))
+        if separator_index > 0:
+            suffix = self._full_text[separator_index:]
+            marker = "…"
+            if metrics.horizontalAdvance(marker + suffix) <= available:
+                low, high, best = 0, separator_index, 0
+                while low <= high:
+                    middle = (low + high) // 2
+                    candidate = self._full_text[:middle] + marker + suffix
+                    if metrics.horizontalAdvance(candidate) <= available:
+                        best = middle
+                        low = middle + 1
+                    else:
+                        high = middle - 1
+                QLabel.setText(self, self._full_text[:best] + marker + suffix)
+                return
+
+        QLabel.setText(self, metrics.elidedText(self._full_text, Qt.ElideMiddle, available))
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -872,6 +899,9 @@ class ValidatedMainWindow(FunctionalMainWindow):
         operations_layout.addWidget(self.layer_operation_card)
 
         self.key_operation_card, key_head, self.key_panel = self._operation_shell("purple", "key_scan", "KEY ANALYSIS", "Detect keys and apply the selected output naming structure.", True, True)
+        # Fixed body heights keep the approved 139/110 px expanded cards
+        # identical across macOS and Windows font engines.
+        self.key_panel.setFixedHeight(92)
         self.key_switch = key_head.toggle
         key_settings = QGridLayout(self.key_panel); key_settings.setContentsMargins(10, 7, 10, 7); key_settings.setHorizontalSpacing(8); key_settings.setVerticalSpacing(6)
         mode_box = QWidget(); ml = QVBoxLayout(mode_box); ml.setContentsMargins(0, 0, 0, 0); ml.setSpacing(5); ml.addWidget(self._caps("KEY MODE"))
@@ -901,6 +931,7 @@ class ValidatedMainWindow(FunctionalMainWindow):
         operations_layout.addWidget(self.key_operation_card)
 
         self.target_operation_card, target_head, self.target_panel = self._operation_shell("orange", "retarget", "CONVERT BPM & KEY", "Convert extracted layers, or every source loop when extraction is disabled.", False, True)
+        self.target_panel.setFixedHeight(63)
         self.convert_switch = target_head.toggle
         target_layout = QHBoxLayout(self.target_panel); target_layout.setContentsMargins(0, 7, 0, 7); target_layout.setSpacing(16); target_layout.addStretch()
         self.target_bpm_switch = V16Toggle(True, "orange"); self.target_bpm_input = QLineEdit("120"); self.target_bpm_input.setMaxLength(3); self.target_bpm_input.setFixedWidth(82); self.target_bpm_input.setAlignment(Qt.AlignCenter)
@@ -978,18 +1009,23 @@ class ValidatedMainWindow(FunctionalMainWindow):
         page = QWidget(); layout = QVBoxLayout(page); layout.setContentsMargins(9, 9, 9, 9); layout.setSpacing(9)
         extract, extract_body = self._section("red", "layers", "QUICK EXTRACT", "Extract layers from one loop, with optional target transformation.")
         extract_layout = QGridLayout(extract_body); extract_layout.setContentsMargins(12, 0, 12, 7); extract_layout.setHorizontalSpacing(8); extract_layout.setVerticalSpacing(4)
-        left = QWidget(); left.setFixedWidth(360); left_layout = QVBoxLayout(left); left_layout.setContentsMargins(0, 0, 0, 0); left_layout.setSpacing(7)
+        left = QWidget(); left.setFixedWidth(374); left_layout = QVBoxLayout(left); left_layout.setContentsMargins(0, 0, 0, 0); left_layout.setSpacing(7)
         self.quick_extract_drop = V16DropZone("audio", "Drop one loop here", RED, allowed_extensions={".mp3"}, vertical=True); left_layout.addWidget(self.quick_extract_drop, 1)
         target = QFrame(); target.setProperty("role", "inset"); target.setFixedHeight(68); tl = QGridLayout(target); tl.setContentsMargins(10, 5, 10, 6); tl.setHorizontalSpacing(5); tl.setVerticalSpacing(4)
         tl.addWidget(self._caps("OPTIONAL TARGET"), 0, 0, 1, 2)
         self.quick_extract_bpm_switch = V16Toggle(True, "orange"); self.quick_extract_bpm_switch.setFixedWidth(34)
         self.quick_extract_bpm = QLineEdit("120"); self.quick_extract_bpm.setMaxLength(3); self.quick_extract_bpm.setFixedSize(58, 29); self.quick_extract_bpm.setAlignment(Qt.AlignCenter)
-        bpm_line = QWidget(); bpm_line.setFixedWidth(132); bpmrow = QHBoxLayout(bpm_line); bpmrow.setContentsMargins(0, 0, 3, 0); bpmrow.setSpacing(4)
-        bpmrow.addWidget(QLabel("BPM")); bpmrow.addWidget(self.quick_extract_bpm_switch); bpmrow.addWidget(self.quick_extract_bpm); tl.addWidget(bpm_line, 1, 0)
+        bpm_line = QWidget(); bpmrow = QHBoxLayout(bpm_line); bpmrow.setContentsMargins(0, 0, 3, 0); bpmrow.setSpacing(4)
+        bpm_label = QLabel("BPM"); bpmrow.addWidget(bpm_label); bpmrow.addWidget(self.quick_extract_bpm_switch); bpmrow.addWidget(self.quick_extract_bpm)
+        bpm_line_width = max(138, bpm_label.sizeHint().width() + 34 + 58 + 11)
+        bpm_line.setFixedWidth(bpm_line_width); tl.addWidget(bpm_line, 1, 0)
         self.quick_extract_key_switch = V16Toggle(True, "orange"); self.quick_extract_key_switch.setFixedWidth(34)
         self.quick_extract_key = TargetKeySelector(); self.quick_extract_key.setFixedWidth(130)
         key_line = QWidget(); keyrow = QHBoxLayout(key_line); keyrow.setContentsMargins(0, 0, 3, 0); keyrow.setSpacing(4)
-        keyrow.addWidget(QLabel("KEY")); keyrow.addWidget(self.quick_extract_key_switch); keyrow.addWidget(self.quick_extract_key, 1); tl.addWidget(key_line, 1, 1)
+        key_label = QLabel("KEY"); keyrow.addWidget(key_label); keyrow.addWidget(self.quick_extract_key_switch); keyrow.addWidget(self.quick_extract_key, 1)
+        key_line_width = max(207, key_label.sizeHint().width() + 34 + 130 + 11)
+        key_line.setMinimumWidth(key_line_width); tl.addWidget(key_line, 1, 1)
+        left.setFixedWidth(max(374, bpm_line_width + key_line_width + 27))
         tl.setColumnStretch(1, 1)
         left_layout.addWidget(target); extract_layout.addWidget(left, 0, 0)
         self.quick_layers_area = QScrollArea(); self.quick_layers_area.setWidgetResizable(True); self.quick_layers_area.setProperty("role", "layers"); self.quick_layers_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
