@@ -1,5 +1,6 @@
 import os
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -827,7 +828,12 @@ class QtInterfaceTests(unittest.TestCase):
             self.assertEqual(window.layer_cards, [])
             window._queue_midi_conversion(layers)
             start_midi.assert_not_called()
-            QTest.qWait(40)
+            # Native widget creation is substantially slower on a Windows CI
+            # runner than on macOS. Process short event-loop slices until the
+            # cooperative render completes, while retaining a strict timeout.
+            deadline = time.monotonic() + 2.0
+            while len(window.layer_cards) < len(layers) and time.monotonic() < deadline:
+                QTest.qWait(10)
 
         self.assertEqual(len(window.layer_cards), 17)
         start_midi.assert_called_once()
