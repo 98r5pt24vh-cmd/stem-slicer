@@ -49,7 +49,7 @@ def main():
     if not os.path.isdir(internal):
         raise RuntimeError(f"PyInstaller internal folder was not found: {internal}")
 
-    application = os.path.join(bundle, "Stem Slicer 1.7B.exe")
+    application = os.path.join(bundle, "Stem Slicer 1.8B.exe")
     if not os.path.isfile(application):
         raise RuntimeError(f"Application executable was not found: {application}")
     # IMAGE_SUBSYSTEM_WINDOWS_GUI == 2. A console build would be 3 and could

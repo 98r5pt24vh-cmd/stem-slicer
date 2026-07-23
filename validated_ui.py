@@ -1,4 +1,4 @@
-"""Native PySide6 port of the validated Stem Slicer 1.7B HTML prototype.
+"""Native PySide6 port of the validated Stem Slicer 1.8B interface.
 
 The HTML prototype remains the visual specification only.  This module builds
 the same fixed 1024 x 691 working surface with native Qt widgets and reuses the
@@ -941,7 +941,7 @@ class ValidatedMainWindow(FunctionalMainWindow):
         copy.addWidget(made); copy.addWidget(anti); copy.addStretch(); bl.addLayout(copy); bl.addStretch(); row.addWidget(brand)
         row.addStretch(); row.addWidget(image(resource_path("assets", "stem-slicer-wordmark.png"), 235, 50)); row.addStretch()
         build = QWidget(); build.setFixedWidth(280); br = QHBoxLayout(build); br.setContentsMargins(0, 0, 0, 0); br.setSpacing(12); br.addStretch()
-        bc = QVBoxLayout(); bc.setSpacing(2); title = QLabel("LOOP LAYER EXTRACTION SYSTEM"); version = QLabel("1.7B")
+        bc = QVBoxLayout(); bc.setSpacing(2); title = QLabel("LOOP LAYER EXTRACTION SYSTEM"); version = QLabel("1.8B")
         title.setStyleSheet("color:#7e8a92;font-size:9px;font-weight:700"); version.setStyleSheet("color:#7e8a92;font-family:'SF Mono';font-size:9px;font-weight:700")
         title.setAlignment(Qt.AlignRight); version.setAlignment(Qt.AlignRight); bc.addWidget(title); bc.addWidget(version); br.addLayout(bc)
         self.scale_select = ScaleSelector()
@@ -1256,6 +1256,11 @@ class ValidatedMainWindow(FunctionalMainWindow):
         layout.addLayout(row, 1); self.quick_modes_note = QLabel("Scan a file to reveal its relative modes."); self.quick_modes_note.setProperty("role", "metricSub"); self.quick_modes_note.setAlignment(Qt.AlignCenter); layout.addWidget(self.quick_modes_note); return card
 
     def _populate_layer_cards(self, layers, empty_text=None, show_empty_icon=False):
+        # Invalidate any pending incremental render from a previous result.
+        self._layer_card_generation = getattr(self, "_layer_card_generation", 0) + 1
+        generation = self._layer_card_generation
+        self._layer_cards_rendering = False
+        self._deferred_midi_layers = None
         while self.quick_layer_grid.count():
             item = self.quick_layer_grid.takeAt(0)
             if item.widget():
@@ -1266,17 +1271,49 @@ class ValidatedMainWindow(FunctionalMainWindow):
         self.quick_layers_empty_state = None; self.quick_layers_empty_icon = None
         if layers:
             rows = (len(layers) + 2) // 3
-            for index, layer in enumerate(layers):
-                card = V16LayerCard(layer); card.playRequested.connect(self._toggle_layer_playback); card.seekRequested.connect(self._seek_layer)
-                self.quick_layer_grid.addWidget(card, index // 3, index % 3); self.layer_cards.append(card)
             self.quick_layer_content.setMinimumHeight(8 + rows * 86)
-            self.quick_layer_grid.setRowStretch(rows, 1); return
+            self.quick_layer_grid.setRowStretch(rows, 1)
+            self._layer_cards_rendering = True
+            # Render one visual row per event-loop turn. The extraction is
+            # already complete; this prevents native card construction and
+            # waveform setup from freezing either macOS or Windows.
+            pending_layers = list(layers)
+
+            def render_next_row(start_index=0):
+                if generation != getattr(self, "_layer_card_generation", 0):
+                    return
+                stop_index = min(start_index + 3, len(pending_layers))
+                for index in range(start_index, stop_index):
+                    layer = pending_layers[index]
+                    card = V16LayerCard(layer)
+                    card.playRequested.connect(self._toggle_layer_playback)
+                    card.seekRequested.connect(self._seek_layer)
+                    self.quick_layer_grid.addWidget(card, index // 3, index % 3)
+                    self.layer_cards.append(card)
+                if stop_index < len(pending_layers):
+                    QTimer.singleShot(0, lambda next_index=stop_index: render_next_row(next_index))
+                else:
+                    self._layer_cards_rendering = False
+                    deferred_layers = self._deferred_midi_layers
+                    self._deferred_midi_layers = None
+                    if deferred_layers is not None:
+                        FunctionalMainWindow._queue_midi_conversion(self, deferred_layers)
+
+            QTimer.singleShot(0, render_next_row)
+            return
         self.quick_layer_content.setMinimumHeight(0)
         state = QWidget(); state.setProperty("role", "quickLayersEmpty"); sl = QVBoxLayout(state); sl.setContentsMargins(8, 8, 8, 8); sl.setSpacing(4); sl.addStretch()
         if show_empty_icon:
             self.quick_layers_empty_icon = LineIcon("layers", "#777e85", 36); sl.addWidget(self.quick_layers_empty_icon, 0, Qt.AlignHCenter)
         self.quick_layers_empty_label = QLabel(empty_text or "No layers detected."); self.quick_layers_empty_label.setProperty("role", "statusDetail"); self.quick_layers_empty_label.setAlignment(Qt.AlignCenter); sl.addWidget(self.quick_layers_empty_label); sl.addStretch()
         self.quick_layers_empty_state = state; self.quick_layer_grid.addWidget(state, 0, 0, 1, 3); self.quick_layer_grid.setRowStretch(0, 1)
+
+    def _queue_midi_conversion(self, layers):
+        """Start MIDI only after every incrementally rendered card exists."""
+        if getattr(self, "_layer_cards_rendering", False):
+            self._deferred_midi_layers = list(layers)
+            return
+        super()._queue_midi_conversion(layers)
 
     def _connect_stem_controls(self):
         self.layer_switch.toggled.connect(self._sync_stem_state); self.key_switch.toggled.connect(self._sync_stem_state); self.convert_switch.toggled.connect(self._sync_stem_state)

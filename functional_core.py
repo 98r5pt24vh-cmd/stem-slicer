@@ -27,7 +27,7 @@ from widgets import StudioRoot, TokenStrip
 
 
 APP_NAME = "Stem Slicer"
-APP_VERSION = "1.7B"
+APP_VERSION = "1.8B"
 ROMAN = ("I", "II", "III", "IV", "V", "VI", "VII")
 MODE_NAMES = ("Ionian", "Dorian", "Phrygian", "Lydian", "Mixolydian", "Aeolian", "Locrian")
 MAJOR_INTERVALS = (0, 2, 4, 5, 7, 9, 11)

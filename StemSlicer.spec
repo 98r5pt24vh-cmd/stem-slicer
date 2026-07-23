@@ -122,7 +122,7 @@ exe = EXE(
     pyz,
     a.scripts,
     [],
-    name="StemSlicer16B",
+    name="StemSlicer18B",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -141,7 +141,7 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=False,
-    name="StemSlicer16B",
+    name="StemSlicer18B",
 )
 
 # BUNDLE normally copies the whole COLLECT tree a second time. Prefer APFS
@@ -167,14 +167,14 @@ shutil.copyfile = _clonefile_or_copy
 try:
     app = BUNDLE(
         coll,
-        name="Stem Slicer 1.7B.app",
+        name="Stem Slicer 1.8B.app",
         icon="assets/StemSlicer.icns",
-        bundle_identifier="com.antiworld.stemslicer.16b",
+        bundle_identifier="com.antiworld.stemslicer.18b",
         info_plist={
-            "CFBundleDisplayName": "Stem Slicer 1.7B",
-            "CFBundleName": "Stem Slicer 1.7B",
-            "CFBundleShortVersionString": "1.6.0",
-            "CFBundleVersion": "1.6.0",
+            "CFBundleDisplayName": "Stem Slicer 1.8B",
+            "CFBundleName": "Stem Slicer 1.8B",
+            "CFBundleShortVersionString": "1.8.0",
+            "CFBundleVersion": "1.8.0",
             "NSHighResolutionCapable": True,
         },
     )

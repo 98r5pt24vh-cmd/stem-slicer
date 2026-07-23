@@ -83,7 +83,7 @@ except ImportError:
     NSColor = _UnusedNativeType
 
 APP_NAME = "Stem Slicer"
-APP_VERSION = "1.7B"
+APP_VERSION = "1.8B"
 MIN_LAYER_REMAINING_RATIO = 0.74
 PARALLEL_WORKERS = 2
 DIAGNOSTICS_ENABLED = False

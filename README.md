@@ -1,6 +1,6 @@
-# Stem Slicer 1.7B
+# Stem Slicer 1.8B
 
-Stem Slicer 1.7B is the PySide6 implementation of the validated 1.7B interface.
+Stem Slicer 1.8B is the PySide6 implementation of the validated 1.8B interface.
 It extracts loop layers, analyzes musical key and Loop-mode BPM, converts BPM
 and key with Bungee, and provides the Quick Extract, Quick Scan and Quick
 Convert workflows from the same fixed-layout desktop application.
@@ -50,7 +50,7 @@ GitHub Actions. It:
 7. smoke-tests the GUI PE subsystem, FFmpeg, Bungee, the robust Loop-mode BPM
    analyzer, Basic Pitch and the Qt interface;
 8. audits the finished payload for duplicate engines, models and Torch DLLs;
-9. publishes the `Stem-Slicer-1.7B-Windows` Actions artifact.
+9. publishes the `Stem-Slicer-1.8B-Windows` Actions artifact.
 
 The Windows application executable is built with `console=False`. Every
 FFmpeg, Bungee and analyzer subprocess is also started with

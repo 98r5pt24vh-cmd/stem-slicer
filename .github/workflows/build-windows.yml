@@ -1,4 +1,4 @@
-name: Build Stem Slicer 1.7B for Windows
+name: Build Stem Slicer 1.8B for Windows
 
 on:
   workflow_dispatch:
@@ -152,14 +152,14 @@ jobs:
           # build prevents PyInstaller from collecting its Torch DLLs twice.
           Copy-Item -Recurse -Force `
             "vendor-windows/openkeyscan-analyzer" `
-            "dist/Stem Slicer 1.7B/_internal/openkeyscan-analyzer"
+            "dist/Stem Slicer 1.8B/_internal/openkeyscan-analyzer"
 
       - name: Smoke-test the packaged Windows application
         shell: pwsh
         env:
           STEM_SLICER_KEY_DEBUG: "1"
         run: |
-          python scripts/smoke_windows_bundle.py "dist/Stem Slicer 1.7B" 2>&1 | Tee-Object -FilePath smoke-test.log
+          python scripts/smoke_windows_bundle.py "dist/Stem Slicer 1.8B" 2>&1 | Tee-Object -FilePath smoke-test.log
           if ($LASTEXITCODE -ne 0) {
             $message = (Get-Content smoke-test.log -Raw).Replace("%", "%25").Replace("`r", "").Replace("`n", "%0A")
             Write-Output "::error title=Windows bundle smoke test::$message"
@@ -167,12 +167,12 @@ jobs:
           }
 
       - name: Audit Windows bundle
-        run: python scripts/audit_windows_bundle.py "dist/Stem Slicer 1.7B"
+        run: python scripts/audit_windows_bundle.py "dist/Stem Slicer 1.8B"
 
       - name: Upload Windows build
         uses: actions/upload-artifact@v7
         with:
-          name: Stem-Slicer-1.7B-Windows
-          path: dist/Stem Slicer 1.7B
+          name: Stem-Slicer-1.8B-Windows
+          path: dist/Stem Slicer 1.8B
           compression-level: 6
           if-no-files-found: error

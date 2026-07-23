@@ -1,4 +1,4 @@
-"""Stem Slicer 1.7B native application entry point.
+"""Stem Slicer 1.8B native application entry point.
 
 The validated HTML prototype is faithfully ported by ``ValidatedMainWindow``;
 the old widget layout is deliberately not instantiated.
@@ -9,7 +9,7 @@ import os
 import sys
 
 APP_NAME = "Stem Slicer"
-APP_VERSION = "1.7B"
+APP_VERSION = "1.8B"
 
 # Configure every writable runtime cache before importing Qt, OpenKeyScan,
 # Numba or any audio engine.  A packaged application must never modify its own

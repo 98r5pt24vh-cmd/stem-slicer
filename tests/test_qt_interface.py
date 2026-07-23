@@ -784,6 +784,7 @@ class QtInterfaceTests(unittest.TestCase):
         window._populate_layer_cards([layer])
         self.assertFalse(processing_state.isVisible())
         self.assertIsNone(window.quick_layers_empty_state)
+        QTest.qWait(20)
         self.assertEqual(len(window.layer_cards), 1)
         window.close()
 
@@ -805,6 +806,31 @@ class QtInterfaceTests(unittest.TestCase):
         window._midi_completed(7, 1, 0.5)
         self.assertIn("extracted in 2.3s", window.quick_extract_status.text())
         self.assertIn("1 MIDI file ready", window.quick_extract_status.text())
+        window.close()
+
+    def test_layer_cards_render_incrementally_before_midi_starts(self):
+        window = MainWindow()
+        layers = [
+            {
+                "path": f"/private/tmp/layer-{index}.mp3",
+                "name": f"layer-{index}.mp3",
+                "bpm": 140,
+                "duration": 1.0,
+                "bytes": 32,
+                "peaks": [0.0] * 72,
+            }
+            for index in range(17)
+        ]
+
+        with patch.object(validated_ui.FunctionalMainWindow, "_queue_midi_conversion") as start_midi:
+            window._populate_layer_cards(layers)
+            self.assertEqual(window.layer_cards, [])
+            window._queue_midi_conversion(layers)
+            start_midi.assert_not_called()
+            QTest.qWait(40)
+
+        self.assertEqual(len(window.layer_cards), 17)
+        start_midi.assert_called_once()
         window.close()
 
     def test_quick_audio_drop_contents_never_overlap(self):
@@ -1004,7 +1030,7 @@ class QtInterfaceTests(unittest.TestCase):
             window.key_engine_state = "ready"
             window.input_drop.set_path(source)
 
-            # The validated 1.7B UI opens with extraction and key analysis on,
+            # The validated 1.8B UI opens with extraction and key analysis on,
             # while conversion remains an explicit optional operation.
             self.assertTrue(window.layer_switch.isChecked())
             self.assertTrue(window.key_switch.isChecked())

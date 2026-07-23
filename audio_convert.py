@@ -108,7 +108,7 @@ def _key_parts(key: str) -> tuple[str, bool]:
 
     OpenKeyScan deliberately returns compact minor names such as ``G#m``.
     Conversion also accepts the human-facing ``G# minor`` form used by the
-    1.7B interface.
+    1.8B interface.
     """
     normalized = key.strip().replace("♯", "#").replace("♭", "b")
     compact = re.fullmatch(r"([A-Ga-g](?:#|b)?)(m)?", normalized)

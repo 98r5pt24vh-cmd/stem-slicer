@@ -75,7 +75,7 @@ def _ensure_directory(path: Path, fallback_name: str) -> Path:
         return fallback
 
 
-def configure_runtime_environment(app_name: str = "Stem Slicer", version: str = "1.7B") -> dict:
+def configure_runtime_environment(app_name: str = "Stem Slicer", version: str = "1.8B") -> dict:
     """Redirect mutable caches to user-writable locations outside the bundle.
 
     The returned mapping contains string paths and the environment variables
@@ -413,7 +413,7 @@ class RuntimeDiagnostics:
     def __init__(
         self,
         app_name: str = "Stem Slicer",
-        version: str = "1.7B",
+        version: str = "1.8B",
         *,
         environment: dict | None = None,
         log_root: str | os.PathLike[str] | None = None,
@@ -535,8 +535,16 @@ class RuntimeDiagnostics:
     ) -> None:
         try:
             command_value = command if isinstance(command, str) else list(command)
-            stdout_text = _safe_json_value(stdout)
-            stderr_text = _safe_json_value(stderr)
+            # stdout may be raw PCM produced through an FFmpeg pipe. Never
+            # serialize binary audio into diagnostics: JSON escaping expands
+            # it dramatically and can starve the Qt event loop. Keep only its
+            # byte count; stderr remains available for actionable errors.
+            stdout_bytes = len(stdout) if isinstance(stdout, (bytes, bytearray, memoryview)) else None
+            stdout_text = None if stdout_bytes is not None else _safe_json_value(stdout)
+            if isinstance(stderr, (bytes, bytearray, memoryview)):
+                stderr_text = bytes(stderr).decode("utf-8", errors="replace")
+            else:
+                stderr_text = _safe_json_value(stderr)
             if isinstance(stdout_text, str):
                 stdout_text = stdout_text[-_MAX_PROCESS_OUTPUT_CHARS:]
             if isinstance(stderr_text, str):
@@ -548,6 +556,7 @@ class RuntimeDiagnostics:
                 duration_seconds=round(max(0.0, float(duration)), 6),
                 returncode=returncode,
                 stdout_tail=stdout_text,
+                stdout_bytes=stdout_bytes,
                 stderr_tail=stderr_text,
                 **fields,
             )
@@ -728,6 +737,7 @@ class RuntimeDiagnostics:
             self.app_name.replace(" ", ""),
             "StemSlicer16B",
             "StemSlicer17B",
+            "StemSlicer18B",
             "com.antiworld.stemslicer",
             Path(sys.executable).stem,
         }
@@ -994,7 +1004,7 @@ _NOOP_DIAGNOSTICS: RuntimeDiagnostics = _NoopRuntimeDiagnostics()
 
 def initialize_diagnostics(
     app_name: str = "Stem Slicer",
-    version: str = "1.7B",
+    version: str = "1.8B",
     *,
     environment: dict | None = None,
     log_root: str | os.PathLike[str] | None = None,

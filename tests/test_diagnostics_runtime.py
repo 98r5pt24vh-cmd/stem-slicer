@@ -15,7 +15,7 @@ class RuntimeDiagnosticsTests(unittest.TestCase):
         root = Path(root)
         return {
             "app_name": "Stem Slicer",
-            "version": "1.7B",
+            "version": "1.8B",
             "cache_root": str(root / "cache"),
             "log_root": str(root / "logs"),
             "state_root": str(root / "state"),
@@ -45,12 +45,12 @@ class RuntimeDiagnosticsTests(unittest.TestCase):
     def test_runtime_caches_and_engine_variables_are_outside_the_bundle(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            bundle = root / "Stem Slicer 1.7B.app" / "Contents" / "Resources"
+            bundle = root / "Stem Slicer 1.8B.app" / "Contents" / "Resources"
             user_data = root / "User Data"
             roots = {
-                "cache_root": user_data / "Caches" / "Stem Slicer" / "1.7B",
-                "log_root": user_data / "Logs" / "Stem Slicer" / "1.7B",
-                "state_root": user_data / "State" / "Stem Slicer" / "1.7B",
+                "cache_root": user_data / "Caches" / "Stem Slicer" / "1.8B",
+                "log_root": user_data / "Logs" / "Stem Slicer" / "1.8B",
+                "state_root": user_data / "State" / "Stem Slicer" / "1.8B",
             }
             previous_pycache_prefix = getattr(diagnostics_runtime.sys, "pycache_prefix", None)
             try:
@@ -128,6 +128,28 @@ class RuntimeDiagnosticsTests(unittest.TestCase):
             self.assertIn("Invalid data found", record["stderr_tail"])
             self.assertEqual(record["file"], "Timer.mp3")
 
+    def test_binary_subprocess_stdout_is_never_written_to_logs(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            diagnostics = self._diagnostics(temporary)
+            pcm = b"\x00\xffRAW_PCM_MUST_NOT_APPEAR" * 4096
+            diagnostics.record_subprocess(
+                ["ffmpeg", "-f", "f32le", "-"],
+                duration=0.125,
+                returncode=0,
+                stdout=pcm,
+                stderr=b"",
+            )
+            diagnostics.shutdown()
+
+            record = next(
+                item for item in self._records(diagnostics.log_root)
+                if item["event"] == "subprocess.finished"
+            )
+            self.assertIsNone(record["stdout_tail"])
+            self.assertEqual(record["stdout_bytes"], len(pcm))
+            log_text = (diagnostics.log_root / "runtime.log").read_text(encoding="utf-8")
+            self.assertNotIn("RAW_PCM_MUST_NOT_APPEAR", log_text)
+
     def test_watchdog_can_emit_a_freeze_event_and_stack_report_quickly(self):
         with tempfile.TemporaryDirectory() as temporary:
             diagnostics = self._diagnostics(temporary)
@@ -172,8 +194,8 @@ class RuntimeDiagnosticsTests(unittest.TestCase):
             home = root / "home"
             report_root = home / "Library" / "Logs" / "DiagnosticReports"
             report_root.mkdir(parents=True)
-            report = report_root / "StemSlicer17B-test.ips"
-            report.write_text("Stem Slicer 1.7B simulated macOS report", encoding="utf-8")
+            report = report_root / "StemSlicer18B-test.ips"
+            report.write_text("Stem Slicer 1.8B simulated macOS report", encoding="utf-8")
             now = time.time()
             os.utime(report, (now, now))
             diagnostics = self._diagnostics(root / "runtime")
@@ -196,16 +218,16 @@ class RuntimeDiagnosticsTests(unittest.TestCase):
     def test_collects_windows_wer_and_application_event_log_from_injected_sources(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            report = root / "ReportArchive" / "StemSlicer17B.wer"
+            report = root / "ReportArchive" / "StemSlicer18B.wer"
             report.parent.mkdir(parents=True)
-            report.write_text("AppName=Stem Slicer 1.7B", encoding="utf-8")
+            report.write_text("AppName=Stem Slicer 1.8B", encoding="utf-8")
             now = time.time()
             os.utime(report, (now, now))
             diagnostics = self._diagnostics(root / "runtime")
 
             def fake_event_log(destination):
                 event_log = destination / "windows-application-events.txt"
-                event_log.write_text("Stem Slicer 1.7B application error", encoding="utf-8")
+                event_log.write_text("Stem Slicer 1.8B application error", encoding="utf-8")
                 return str(event_log)
 
             with (
