@@ -137,7 +137,8 @@ class WorkflowTests(unittest.TestCase):
             )
             completed = []
             worker.completed.connect(lambda layers, elapsed: completed.extend(layers))
-            with patch("stem_workflow.analyze_loop", return_value=(LoopAnalysis(140, "5A", "C minor"), {})), \
+            with patch("stem_workflow.sys.platform", "darwin"), \
+                 patch("stem_workflow.analyze_loop", return_value=(LoopAnalysis(140, "5A", "C minor"), {})), \
                  patch("stem_workflow.process_single_file", side_effect=extract), \
                  patch("stem_workflow.convert_audio", side_effect=convert), \
                  patch("stem_workflow.waveform_peaks", return_value=[0.0] * 72):
