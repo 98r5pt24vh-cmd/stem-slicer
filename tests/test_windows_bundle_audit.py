@@ -13,19 +13,21 @@ class WindowsBundleAuditTests(unittest.TestCase):
             output.write(contents)
         return path
 
-    def test_accepts_one_isolated_key_engine_and_one_midi_model(self):
+    def test_accepts_one_isolated_analysis_engine_and_one_midi_model(self):
         with tempfile.TemporaryDirectory() as bundle:
             self.make_file(bundle, "Stem Slicer 1.5S Beta.exe")
             engine = "_internal/openkeyscan-analyzer"
             self.make_file(bundle, f"{engine}/openkeyscan-analyzer.exe")
             self.make_file(bundle, f"{engine}/_internal/checkpoints/openkeyscan3.pt")
+            self.make_file(bundle, f"{engine}/_internal/checkpoints/deeprhythm-0.7.pth")
             self.make_file(bundle, f"{engine}/_internal/torch/lib/torch_cpu.dll")
             self.make_file(bundle, "_internal/basic_pitch/saved_models/icassp_2022/nmp.onnx")
 
             result = audit_bundle(bundle)
 
-            self.assertEqual(len(result["models"]), 2)
+            self.assertEqual(len(result["models"]), 3)
             self.assertEqual(len(result["openkey_models"]), 1)
+            self.assertEqual(len(result["deeprhythm_models"]), 1)
             self.assertEqual(len(result["basic_pitch_models"]), 1)
             self.assertEqual(len(result["torch_cpu"]), 1)
 
@@ -34,6 +36,7 @@ class WindowsBundleAuditTests(unittest.TestCase):
             engine = "_internal/openkeyscan-analyzer"
             self.make_file(bundle, f"{engine}/openkeyscan-analyzer.exe")
             self.make_file(bundle, f"{engine}/_internal/checkpoints/openkeyscan3.pt")
+            self.make_file(bundle, f"{engine}/_internal/checkpoints/deeprhythm-0.7.pth")
             self.make_file(bundle, f"{engine}/_internal/torch/lib/torch_cpu.dll")
             self.make_file(bundle, "_internal/basic_pitch/saved_models/icassp_2022/nmp.onnx")
             self.make_file(bundle, "_internal/torch/lib/torch_cpu.dll")
@@ -46,6 +49,7 @@ class WindowsBundleAuditTests(unittest.TestCase):
             engine = "_internal/openkeyscan-analyzer"
             self.make_file(bundle, f"{engine}/openkeyscan-analyzer.exe")
             self.make_file(bundle, f"{engine}/_internal/checkpoints/openkeyscan3.pt")
+            self.make_file(bundle, f"{engine}/_internal/checkpoints/deeprhythm-0.7.pth")
             self.make_file(bundle, f"{engine}/_internal/torch/lib/torch_cpu.dll")
 
             with self.assertRaisesRegex(RuntimeError, "Basic Pitch model, found 0"):
@@ -56,6 +60,7 @@ class WindowsBundleAuditTests(unittest.TestCase):
             engine = "_internal/openkeyscan-analyzer"
             self.make_file(bundle, f"{engine}/openkeyscan-analyzer.exe")
             self.make_file(bundle, f"{engine}/_internal/checkpoints/openkeyscan3.pt")
+            self.make_file(bundle, f"{engine}/_internal/checkpoints/deeprhythm-0.7.pth")
             self.make_file(bundle, f"{engine}/_internal/torch/lib/torch_cpu.dll")
             self.make_file(bundle, f"{engine}/_internal/ffmpeg")
             self.make_file(bundle, "_internal/basic_pitch/saved_models/icassp_2022/nmp.onnx")
