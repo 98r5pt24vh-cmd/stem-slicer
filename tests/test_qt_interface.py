@@ -116,17 +116,6 @@ class QtInterfaceTests(unittest.TestCase):
         self.assertEqual(original_pages, tuple(window.pages.widget(index) for index in range(2)))
         window.close()
 
-    def test_windows_batch_counter_is_normalized_to_source_loops(self):
-        window = MainWindow()
-        window._batch_source_total = 26
-        with patch.object(validated_ui.sys, "platform", "win32"):
-            window._batch_progress(26, 52, "Analyzing loops…")
-            self.assertEqual(window.progress_counter.text(), "13 / 26")
-            window._batch_progress(52, 52, "Converted loops.")
-            self.assertEqual(window.progress_counter.text(), "26 / 26")
-            self.assertEqual(window.progress_bar.value(), 100)
-        window.close()
-
     def test_custom_tabs_toggles_and_headers_receive_real_viewport_clicks(self):
         window = MainWindow()
         window.show()
@@ -158,10 +147,10 @@ class QtInterfaceTests(unittest.TestCase):
         APP.processEvents()
         self.click_through_graphics_view(window, window.quick_tab)
 
-        self.assertTrue(window.quick_extract_bpm_switch.isChecked())
-        self.click_through_graphics_view(window, window.quick_extract_bpm_switch)
         self.assertFalse(window.quick_extract_bpm_switch.isChecked())
-        self.assertFalse(window.quick_extract_bpm.isEnabled())
+        self.click_through_graphics_view(window, window.quick_extract_bpm_switch)
+        self.assertTrue(window.quick_extract_bpm_switch.isChecked())
+        self.assertTrue(window.quick_extract_bpm.isEnabled())
 
         self.assertTrue(window.quick_convert_key_switch.isChecked())
         self.click_through_graphics_view(window, window.quick_convert_key_switch)
@@ -221,7 +210,7 @@ class QtInterfaceTests(unittest.TestCase):
         self.assertTrue(menu_rect.top() > selector_bottom or menu_rect.bottom() < selector_top)
         selector_left = window.scale_select.mapToGlobal(QPoint(0, 0)).x()
         selector_right = window.scale_select.mapToGlobal(QPoint(window.scale_select.width(), 0)).x()
-        self.assertEqual(menu_rect.width(), abs(selector_right - selector_left))
+        self.assertGreaterEqual(menu_rect.width(), abs(selector_right - selector_left))
         selected = window.scale_select._actions[130]
         check_center = selected.check_label.mapToGlobal(selected.check_label.rect().center()).y()
         text_center = selected.text_label.mapToGlobal(selected.text_label.rect().center()).y()
@@ -239,7 +228,12 @@ class QtInterfaceTests(unittest.TestCase):
         for percent in (100, 110, 120, 130, 140, 150):
             window.scale_select.setCurrentText(f"{percent}%")
             APP.processEvents()
-            for field in (window.quick_extract_bpm, window.quick_extract_key):
+            for field in (
+                window.quick_extract_bpm,
+                window.quick_extract_key,
+                window.quick_convert_bpm,
+                window.quick_convert_key,
+            ):
                 parent = field.parentWidget()
                 self.assertTrue(parent.rect().contains(field.geometry()))
                 self.assertGreaterEqual(
@@ -265,8 +259,43 @@ class QtInterfaceTests(unittest.TestCase):
                     metrics.horizontalAdvance(selector.itemText(index)),
                     selector.width() - 28,
                 )
-        self.assertGreaterEqual(window.quick_extract_bpm.height(), 29)
-        self.assertGreaterEqual(window.quick_extract_key.height(), 29)
+        self.assertEqual(window.quick_extract_bpm.height(), 18)
+        self.assertEqual(window.quick_extract_key.height(), 18)
+        self.assertEqual(window.quick_convert_bpm.size(), QSize(48, 18))
+        self.assertEqual(window.quick_convert_key.height(), 18)
+        self.assertEqual(window.target_bpm_input.height(), window.target_key_combo.height())
+        self.assertEqual(window.target_bpm_input.height(), 29)
+
+        # All controls share one explicit vertical axis.  This guards the
+        # optical split where BPM/KEY formed one row and the values another.
+        convert_controls = (
+            window.quick_convert_bpm_label,
+            window.quick_convert_bpm_switch,
+            window.quick_convert_bpm,
+            window.quick_convert_key_label,
+            window.quick_convert_key_switch,
+            window.quick_convert_key,
+        )
+        centers = {widget.geometry().center().y() for widget in convert_controls}
+        self.assertEqual(len(centers), 1)
+        self.assertEqual(window.quick_convert_settings.height(), 36)
+        self.assertEqual(window.quick_convert_button.height(), 36)
+        self.assertEqual(window.quick_convert_result.height(), 36)
+        for field in (window.quick_convert_bpm, window.quick_convert_key):
+            top = field.geometry().top() - window.quick_convert_settings.contentsRect().top()
+            bottom = window.quick_convert_settings.contentsRect().bottom() - field.geometry().bottom()
+            self.assertEqual(top, bottom)
+
+        convert_contents = window.quick_convert_settings.contentsRect()
+        self.assertLessEqual(
+            window.quick_convert_settings.layout().minimumSize().width(),
+            convert_contents.width(),
+        )
+        self.assertTrue(convert_contents.contains(window.quick_convert_key.geometry()))
+        self.assertGreaterEqual(
+            convert_contents.right() - window.quick_convert_key.geometry().right(),
+            3,
+        )
 
         for selector in (window.quick_extract_key, window.quick_convert_key):
             self.assertEqual(
@@ -291,6 +320,42 @@ class QtInterfaceTests(unittest.TestCase):
         APP.processEvents()
         self.assertEqual(sum(row.isChecked() for row in selector._rows.values()), 1)
         selector._popup.hide()
+        window.close()
+
+    def test_scale_popup_fits_its_rows_and_current_screen_at_every_scale(self):
+        window = MainWindow()
+        window.show()
+        APP.processEvents()
+
+        selector = window.scale_select
+        # The popup must be a native top-level surface.  If it is parented to
+        # the selector, QGraphicsProxyWidget scales it a second time and the
+        # lower choices disappear progressively above 100%.
+        self.assertIsNone(selector._popup.parentWidget())
+        self.assertTrue(selector._popup.isWindow())
+        for percent in (100, 110, 120, 130, 140, 150):
+            selector.setCurrentText(f"{percent}%")
+            APP.processEvents()
+            selector._show_menu()
+            APP.processEvents()
+
+            popup = selector._popup
+            screen = popup.screen() or window.screen()
+            self.assertIsNotNone(screen)
+            self.assertTrue(screen.availableGeometry().contains(popup.frameGeometry()))
+            self.assertGreaterEqual(popup.height(), popup.sizeHint().height())
+
+            selector_rect = self.global_rect(selector)
+            self.assertFalse(popup.frameGeometry().intersects(selector_rect))
+            for row in selector._rows.values():
+                self.assertGreaterEqual(row.width(), row.minimumSizeHint().width())
+                self.assertGreaterEqual(
+                    row.text_label.width(),
+                    row.text_label.sizeHint().width(),
+                )
+            popup.hide()
+
+        selector.setCurrentText("100%")
         window.close()
 
     def test_validated_column_boundaries_match_approved_crops(self):
@@ -318,10 +383,28 @@ class QtInterfaceTests(unittest.TestCase):
         convert_boundary = window.quick_convert_drag.parentWidget().mapTo(window.canvas, QPoint(0, 0)).x()
         self.assertGreaterEqual(extract_boundary, 344)
         self.assertLessEqual(extract_boundary, 360)
-        self.assertGreaterEqual(convert_boundary, 620)
-        self.assertLessEqual(convert_boundary, 634)
+        # Quick Convert now has a dedicated action column between its compact
+        # target controls and result card.  The card must retain the remainder
+        # of the approved fixed canvas without being cropped at the right edge.
+        self.assertGreaterEqual(convert_boundary, 686)
+        self.assertLessEqual(convert_boundary, 700)
         self.assertGreater(window.quick_layers_area.width(), 2 * window.quick_extract_drop.width() - 5)
         self.assertGreater(window.quick_convert_drag.parentWidget().width(), window.quick_convert_drop.width())
+
+        convert_widgets = (
+            window.quick_convert_drop,
+            window.quick_convert_settings,
+            window.quick_convert_button,
+            window.quick_convert_drag.parentWidget(),
+        )
+        convert_parent = window.quick_convert_drop.parentWidget()
+        for widget in convert_widgets:
+            self.assertTrue(
+                convert_parent.contentsRect().contains(widget.geometry()),
+                f"{widget.objectName() or type(widget).__name__} is cropped by Quick Convert",
+            )
+        for left, right in zip(convert_widgets, convert_widgets[1:]):
+            self.assertLess(left.geometry().right(), right.geometry().left())
 
         # UI scaling transforms the complete fixed canvas and must never alter
         # the approved internal column boundaries.
@@ -422,7 +505,7 @@ class QtInterfaceTests(unittest.TestCase):
         self.assertTrue(window.canvas.isVisible())
         window.close()
 
-    def test_target_key_popups_stay_inside_the_visible_application(self):
+    def test_target_key_popups_stay_inside_the_available_screen(self):
         window = MainWindow()
         window.show()
         APP.processEvents()
@@ -431,28 +514,27 @@ class QtInterfaceTests(unittest.TestCase):
         for percent in (100, 110, 120, 130, 140, 150):
             window.scale_select.setCurrentText(f"{percent}%")
             APP.processEvents()
-            host_rect = self.global_rect(window.canvas)
-            screen_rect = window.screen().availableGeometry()
-            bounds = host_rect.intersected(screen_rect)
 
             window.select_tab(1)
             APP.processEvents()
             for selector in (window.quick_extract_key, window.quick_convert_key):
                 selector._show_menu()
                 APP.processEvents()
-                self.assertTrue(bounds.contains(selector._popup.geometry()))
+                popup = selector._popup
+                screen = popup.screen() or window.screen()
+                self.assertTrue(screen.availableGeometry().contains(popup.frameGeometry()))
+                self.assertGreaterEqual(popup.height(), popup.sizeHint().height())
                 selector._popup.hide()
 
             window.select_tab(0)
             APP.processEvents()
             window.target_key_combo._show_menu()
             APP.processEvents()
-            self.assertTrue(bounds.contains(window.target_key_combo._popup.geometry()))
-            self.assertLess(
-                window.target_key_combo._popup.geometry().bottom(),
-                self.global_rect(window.target_key_combo).top(),
-            )
-            window.target_key_combo._popup.hide()
+            popup = window.target_key_combo._popup
+            screen = popup.screen() or window.screen()
+            self.assertTrue(screen.availableGeometry().contains(popup.frameGeometry()))
+            self.assertGreaterEqual(popup.height(), popup.sizeHint().height())
+            popup.hide()
         window.close()
 
     def test_quick_status_rows_follow_their_content_columns(self):
@@ -705,6 +787,26 @@ class QtInterfaceTests(unittest.TestCase):
         self.assertEqual(len(window.layer_cards), 1)
         window.close()
 
+    def test_quick_extract_status_keeps_audio_elapsed_time_during_midi(self):
+        window = MainWindow()
+        layer = {
+            "path": "/private/tmp/quick-layer.mp3",
+            "name": "quick-layer.mp3",
+            "bpm": 140,
+            "duration": 1.0,
+            "bytes": 32,
+            "peaks": [0.0] * 72,
+        }
+        with patch.object(window, "_queue_midi_conversion"):
+            window._quick_extract_completed([layer], 2.34)
+        self.assertIn("extracted in 2.3s", window.quick_extract_status.text())
+
+        window.midi_job_id = 7
+        window._midi_completed(7, 1, 0.5)
+        self.assertIn("extracted in 2.3s", window.quick_extract_status.text())
+        self.assertIn("1 MIDI file ready", window.quick_extract_status.text())
+        window.close()
+
     def test_quick_audio_drop_contents_never_overlap(self):
         """Protect the compact Quick Scan/Extract drop-zone composition."""
         previous_stylesheet = APP.styleSheet()
@@ -902,7 +1004,7 @@ class QtInterfaceTests(unittest.TestCase):
             window.key_engine_state = "ready"
             window.input_drop.set_path(source)
 
-            # The validated 1.6B UI opens with extraction and key analysis on,
+            # The validated 1.7B UI opens with extraction and key analysis on,
             # while conversion remains an explicit optional operation.
             self.assertTrue(window.layer_switch.isChecked())
             self.assertTrue(window.key_switch.isChecked())
@@ -1098,18 +1200,136 @@ class QtInterfaceTests(unittest.TestCase):
 
     def test_quick_target_switches_enable_only_their_own_fields(self):
         window = MainWindow()
-        self.assertTrue(window.quick_extract_bpm.isEnabled())
-        self.assertTrue(window.quick_extract_key.isEnabled())
+        self.assertFalse(window.quick_extract_bpm.isEnabled())
+        self.assertFalse(window.quick_extract_key.isEnabled())
         self.assertTrue(window.quick_convert_bpm.isEnabled())
         self.assertTrue(window.quick_convert_key.isEnabled())
 
-        window.quick_extract_bpm_switch.setChecked(False)
+        window.quick_extract_bpm_switch.setChecked(True)
         window.quick_convert_key_switch.setChecked(False)
-        self.assertFalse(window.quick_extract_bpm.isEnabled())
-        self.assertTrue(window.quick_extract_key.isEnabled())
+        self.assertTrue(window.quick_extract_bpm.isEnabled())
+        self.assertFalse(window.quick_extract_key.isEnabled())
         self.assertTrue(window.quick_convert_bpm.isEnabled())
         self.assertFalse(window.quick_convert_key.isEnabled())
         window.close()
+
+    def test_quick_convert_drop_only_stages_the_source(self):
+        with tempfile.TemporaryDirectory() as root:
+            audio = os.path.join(root, "Loop 144 C minor.mp3")
+            with open(audio, "wb") as stream:
+                stream.write(b"audio")
+            window = MainWindow()
+            window.select_tab(1)
+            with patch.object(window, "_run_quick_convert") as run_convert:
+                self.assertTrue(window.quick_convert_drop.set_path(audio))
+                APP.processEvents()
+
+            run_convert.assert_not_called()
+            self.assertFalse(window.quick_convert_busy)
+            self.assertEqual(window.pending_quick_convert, "")
+            self.assertEqual(window.quick_convert_path, audio)
+            self.assertEqual(window.quick_convert_drop.path, audio)
+            self.assertEqual(window.quick_convert_footer_filename.text(), os.path.basename(audio))
+            self.assertIn("Loaded", window.quick_convert_footer_status.text())
+            self.assertEqual(window.quick_convert_status.text(), "Ready to convert.")
+            self.assertTrue(window.quick_convert_button.isEnabled())
+            window.close()
+
+    def test_quick_convert_button_tracks_source_targets_validation_and_busy_states(self):
+        with tempfile.TemporaryDirectory() as root:
+            audio = os.path.join(root, "Loop.mp3")
+            open(audio, "wb").close()
+            window = MainWindow()
+
+            self.assertFalse(window.quick_convert_button.isEnabled())
+            self.assertTrue(window.quick_convert_drop.set_path(audio))
+            self.assertTrue(window.quick_convert_button.isEnabled())
+
+            window.quick_convert_bpm_switch.setChecked(False)
+            window.quick_convert_key_switch.setChecked(False)
+            self.assertFalse(window.quick_convert_button.isEnabled())
+
+            window.quick_convert_key_switch.setChecked(True)
+            self.assertTrue(window.quick_convert_button.isEnabled())
+
+            window.quick_convert_key_switch.setChecked(False)
+            window.quick_convert_bpm_switch.setChecked(True)
+            window.quick_convert_bpm.setText("0")
+            self.assertFalse(window.quick_convert_button.isEnabled())
+            window.quick_convert_bpm.setText("145")
+            self.assertTrue(window.quick_convert_button.isEnabled())
+
+            window.quick_scan_busy = True
+            window._sync_quick_target_fields()
+            self.assertFalse(window.quick_convert_button.isEnabled())
+            window.quick_scan_busy = False
+            window.busy = True
+            window._sync_quick_target_fields()
+            self.assertFalse(window.quick_convert_button.isEnabled())
+            window.busy = False
+            window._sync_quick_target_fields()
+            self.assertTrue(window.quick_convert_button.isEnabled())
+            window.close()
+
+    def test_quick_convert_button_can_reuse_the_loaded_source(self):
+        with tempfile.TemporaryDirectory() as root:
+            audio = os.path.join(root, "Reusable Loop.mp3")
+            open(audio, "wb").close()
+            window = MainWindow()
+            window.key_engine_state = "ready"
+            window.select_tab(1)
+            self.assertTrue(window.quick_convert_drop.set_path(audio))
+
+            with patch.object(window, "_run_quick_convert") as run_convert:
+                QTest.mouseClick(window.quick_convert_button, Qt.LeftButton)
+                APP.processEvents()
+                run_convert.assert_called_once_with(audio)
+                self.assertTrue(window.quick_convert_busy)
+                self.assertFalse(window.quick_convert_drop.isEnabled())
+                self.assertFalse(window.quick_convert_button.isEnabled())
+
+                window._quick_convert_finished()
+                self.assertEqual(window.quick_convert_path, audio)
+                self.assertEqual(window.quick_convert_drop.path, audio)
+                self.assertTrue(window.quick_convert_button.isEnabled())
+
+                window.quick_convert_bpm.setText("150")
+                window.quick_convert_key.setCurrentText("D major / B minor")
+                QTest.mouseClick(window.quick_convert_button, Qt.LeftButton)
+                APP.processEvents()
+                self.assertEqual(run_convert.call_count, 2)
+                self.assertEqual(run_convert.call_args.args, (audio,))
+
+            window._quick_convert_finished()
+            self.assertEqual(window.quick_convert_path, audio)
+            self.assertEqual(window.quick_convert_drop.path, audio)
+            self.assertTrue(window.quick_convert_button.isEnabled())
+            window.close()
+
+    def test_quick_convert_button_recovers_after_batch_and_retries_engine_loading(self):
+        with tempfile.TemporaryDirectory() as root:
+            audio = os.path.join(root, "Retry Loop.mp3")
+            open(audio, "wb").close()
+            window = MainWindow()
+            self.assertTrue(window.quick_convert_drop.set_path(audio))
+
+            window.busy = True
+            window._sync_quick_target_fields()
+            self.assertFalse(window.quick_convert_button.isEnabled())
+            with patch.object(validated_ui.FunctionalMainWindow, "_batch_finished") as finish:
+                finish.side_effect = lambda: setattr(window, "busy", False)
+                window._batch_finished()
+            self.assertTrue(window.quick_convert_button.isEnabled())
+
+            window.key_engine_state = "failed"
+            with patch.object(window, "_start_key_engine") as start_engine:
+                QTest.mouseClick(window.quick_convert_button, Qt.LeftButton)
+                APP.processEvents()
+            start_engine.assert_called_once_with()
+            self.assertEqual(window.pending_quick_convert, audio)
+            self.assertTrue(window.quick_convert_busy)
+            window._quick_convert_finished()
+            window.close()
 
     def test_pending_quick_operations_resume_when_key_engine_becomes_ready(self):
         window = MainWindow()

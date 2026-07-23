@@ -27,9 +27,11 @@ class StorageTests(unittest.TestCase):
             first = storage.unique_session_folder("extractions", "Untitled Folder")
             second = storage.unique_session_folder("extractions", "Untitled Folder")
             third = storage.unique_session_folder("extractions", "Untitled Folder")
+            fourth = storage.unique_session_folder("extractions", "Untitled Folder")
             self.assertTrue(first.endswith("Untitled Folder"))
             self.assertTrue(second.endswith("Untitled Folder — 26-07-12 18-42"))
             self.assertTrue(third.endswith("Untitled Folder — 26-07-12 18-42-37"))
+            self.assertTrue(fourth.endswith("Untitled Folder — 26-07-12 18-42-37 (2)"))
 
     def test_file_collisions_increment_numbers(self):
         with tempfile.TemporaryDirectory() as root:

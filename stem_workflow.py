@@ -1,4 +1,4 @@
-"""Validated 1.6B orchestration shared by the native interface.
+"""Validated 1.7B orchestration shared by the native interface.
 
 This module keeps UI code away from the audio pipeline.  A loop is analyzed at
 most once per operation, extraction always precedes conversion, and converted
@@ -8,6 +8,7 @@ files are staged before becoming visible in their final destination.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor
 import os
 from pathlib import Path
 import shutil
@@ -18,6 +19,7 @@ import time
 from PySide6.QtCore import QObject, Signal, Slot
 
 from audio_convert import ConversionRequest, convert_audio, expanded_key_name
+from diagnostics_runtime import get_diagnostics
 from engine import find_ffmpeg, process_audio, process_single_file
 from filename_templates import parse_loop_filename, render_name
 from functional_core import canonical_loop_bpm, waveform_peaks
@@ -143,6 +145,14 @@ class QuickExtractWorkflowWorker(QObject):
     @Slot()
     def run(self):
         started = time.perf_counter()
+        diagnostics_log = get_diagnostics()
+        diagnostics_log.event(
+            "quick_extract_started",
+            file=self.source,
+            output_folder=self.output,
+            target_bpm=self.target.bpm if self.target.bpm_enabled else None,
+            target_key=self.target.key_pair if self.target.key_enabled else None,
+        )
         try:
             analysis = None
             output_stem = os.path.splitext(os.path.basename(self.source))[0]
@@ -151,12 +161,9 @@ class QuickExtractWorkflowWorker(QObject):
                 output_stem = build_output_stem(self.source, analysis, self.target)
             conversion_results = {}
             if sys.platform == "win32" and analysis is not None:
-                # Windows may temporarily lock freshly encoded MP3 files (for
-                # example while Defender or Explorer indexes them).  Extract
-                # and convert away from the user-visible session, then publish
-                # brand-new final files.  This avoids replacing an existing
-                # MP3, which was the only path unique to Quick Extract with an
-                # Optional Target enabled.
+                # Keep freshly written MP3s away from Explorer/Defender until
+                # every conversion is complete.  Windows can otherwise lock a
+                # raw layer between extraction and its atomic replacement.
                 with tempfile.TemporaryDirectory(prefix="stem-slicer-quick-extract-") as staging:
                     raw_folder = os.path.join(staging, "raw")
                     converted_folder = os.path.join(staging, "converted")
@@ -167,14 +174,13 @@ class QuickExtractWorkflowWorker(QObject):
                         row for row in diagnostics
                         if row.get("event") == "exported" and row.get("output_exists")
                     ]
-                    for row in exported:
+
+                    def convert_windows_layer(row):
                         output_name = row["output_name"]
-                        source_layer = os.path.join(raw_folder, output_name)
-                        converted_layer = os.path.join(converted_folder, output_name)
                         try:
                             result = convert_audio(ConversionRequest(
-                                source=Path(source_layer),
-                                destination=Path(converted_layer),
+                                source=Path(raw_folder, output_name),
+                                destination=Path(converted_folder, output_name),
                                 source_bpm=analysis.bpm,
                                 target_bpm=self.target.bpm if self.target.bpm_enabled else None,
                                 source_key=analysis.source_key,
@@ -182,7 +188,12 @@ class QuickExtractWorkflowWorker(QObject):
                             ))
                         except Exception as exc:
                             raise RuntimeError(f"Optional Target failed for {output_name}: {exc}") from exc
-                        conversion_results[output_name] = result
+                        return output_name, result
+
+                    worker_count = min(4, len(exported))
+                    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+                        converted = list(executor.map(convert_windows_layer, exported))
+                    conversion_results.update(converted)
 
                     os.makedirs(self.output, exist_ok=True)
                     for row in exported:
@@ -200,8 +211,7 @@ class QuickExtractWorkflowWorker(QObject):
 
             if sys.platform != "win32" and analysis is not None and exported:
                 with tempfile.TemporaryDirectory(prefix=".stem-slicer-stage-", dir=self.output) as staging:
-                    staged = []
-                    for row in exported:
+                    def convert_layer(row):
                         source_layer = os.path.join(self.output, row["output_name"])
                         staged_layer = os.path.join(staging, row["output_name"])
                         result = convert_audio(ConversionRequest(
@@ -212,8 +222,19 @@ class QuickExtractWorkflowWorker(QObject):
                             source_key=analysis.source_key,
                             target_key=self.target.key_pair if self.target.key_enabled else None,
                         ))
+                        return row["output_name"], staged_layer, source_layer, result
+
+                    # Four conversions gave the best stable latency/CPU balance
+                    # in the 17-layer reference benchmark.  Each task owns its
+                    # temporary files, and final files remain atomic below.
+                    worker_count = min(4, len(exported))
+                    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+                        converted = list(executor.map(convert_layer, exported))
+
+                    staged = []
+                    for output_name, staged_layer, source_layer, result in converted:
                         staged.append((staged_layer, source_layer))
-                        conversion_results[row["output_name"]] = result
+                        conversion_results[output_name] = result
                     for staged_layer, source_layer in staged:
                         os.replace(staged_layer, source_layer)
 
@@ -234,10 +255,25 @@ class QuickExtractWorkflowWorker(QObject):
                         "bpm": source_bpm,
                         "duration": float(row.get("duration_seconds") or 0),
                         "bytes": int(row.get("output_bytes") or os.path.getsize(path)),
-                        "peaks": waveform_peaks(path),
+                        "peaks": row.get("waveform_peaks") or waveform_peaks(path),
                     })
-            self.completed.emit(layers, time.perf_counter() - started)
+            elapsed = time.perf_counter() - started
+            diagnostics_log.event(
+                "quick_extract_complete",
+                file=self.source,
+                output_folder=self.output,
+                layers=len(layers),
+                duration_seconds=elapsed,
+            )
+            self.completed.emit(layers, elapsed)
         except Exception as exc:
+            diagnostics_log.exception(
+                "quick_extract_worker",
+                exc,
+                file=self.source,
+                output_folder=self.output,
+                duration_seconds=time.perf_counter() - started,
+            )
             self.failed.emit(str(exc))
         finally:
             self.finished.emit()
@@ -258,6 +294,14 @@ class QuickConvertWorkflowWorker(QObject):
     @Slot()
     def run(self):
         started = time.perf_counter()
+        diagnostics_log = get_diagnostics()
+        diagnostics_log.event(
+            "quick_convert_started",
+            file=self.source,
+            output_folder=self.output_folder,
+            target_bpm=self.target.bpm if self.target.bpm_enabled else None,
+            target_key=self.target.key_pair if self.target.key_enabled else None,
+        )
         try:
             if not self.target.active:
                 raise ValueError("Enable BPM, Key, or both before converting.")
@@ -272,15 +316,32 @@ class QuickConvertWorkflowWorker(QObject):
                 source_key=analysis.source_key,
                 target_key=self.target.key_pair if self.target.key_enabled else None,
             ))
-            self.completed.emit({
+            payload = {
                 "path": str(result.output),
                 "source_bpm": analysis.bpm,
                 "target_bpm": resolved_target_bpm(analysis, self.target),
                 "source_key": analysis.source_key,
                 "target_key": target_key_for_source(analysis, self.target.key_pair) if self.target.key_enabled else analysis.source_key,
                 "bytes": os.path.getsize(result.output),
-            }, time.perf_counter() - started)
+            }
+            elapsed = time.perf_counter() - started
+            diagnostics_log.event(
+                "quick_convert_complete",
+                file=self.source,
+                output=str(result.output),
+                duration_seconds=elapsed,
+                target_bpm=payload["target_bpm"],
+                target_key=payload["target_key"],
+            )
+            self.completed.emit(payload, elapsed)
         except Exception as exc:
+            diagnostics_log.exception(
+                "quick_convert_worker",
+                exc,
+                file=self.source,
+                output_folder=self.output_folder,
+                duration_seconds=time.perf_counter() - started,
+            )
             self.failed.emit(str(exc))
         finally:
             self.finished.emit()
@@ -322,6 +383,14 @@ class BatchWorkflowWorker(QObject):
 
     @Slot()
     def run(self):
+        started = time.perf_counter()
+        diagnostics_log = get_diagnostics()
+        diagnostics_log.event(
+            "batch_started",
+            source_folder=self.source,
+            output_folder=self.output,
+            settings=self.settings,
+        )
         try:
             files = sorted(name for name in os.listdir(self.source) if name.lower().endswith(".mp3"))
             if not files:
@@ -342,20 +411,8 @@ class BatchWorkflowWorker(QObject):
             analysis_by_file = {}
             raw_by_file = {}
             failures = []
-            # Convert-only does not call the structural processing engine on
-            # Windows.  Counting that non-existent phase produced 52 / 78 for
-            # 26 loops (26 analyses + 26 conversions over a false total of 78).
-            # Keep the established macOS accounting unchanged.
-            process_steps = (
-                len(files)
-                if sys.platform != "win32" or extract or not convert
-                else 0
-            )
-            conversion_steps = (
-                len(files)
-                if sys.platform == "win32" and convert
-                else len(files) if convert and not extract else 0
-            )
+            process_steps = len(files)
+            conversion_steps = len(files) if convert and not extract else 0
             total_steps = len(files) * (1 if needs_analysis else 0) + process_steps + conversion_steps
             total_steps = max(1, total_steps)
 
@@ -367,6 +424,11 @@ class BatchWorkflowWorker(QObject):
                         raw_by_file[filename] = raw
                         status = f"Analyzed {analysis.bpm} BPM · {analysis.source_key}: {filename}"
                     except Exception as exc:
+                        diagnostics_log.exception(
+                            "batch_analysis_file",
+                            exc,
+                            file=os.path.join(self.source, filename),
+                        )
                         analysis_by_file[filename] = exc
                         raw_by_file[filename] = exc
                         failures.append((filename, str(exc)))
@@ -409,20 +471,15 @@ class BatchWorkflowWorker(QObject):
                         failures.extend(engine_failures)
                         outputs = (manifest or {}).get("outputs_by_source", {})
                         exported_count = sum(len(items) for items in outputs.values())
-                        if sys.platform != "win32":
-                            total_steps += exported_count
+                        total_steps += exported_count
                         current = analysis_offset + process_steps
                         converted_sources = set()
                         with tempfile.TemporaryDirectory(prefix=".stem-slicer-convert-", dir=self.output) as conversion_stage:
                             for filename in files:
                                 analysis = analysis_by_file.get(filename)
                                 if not isinstance(analysis, LoopAnalysis):
-                                    if sys.platform == "win32":
-                                        current += 1
-                                        self.progress.emit(current, total_steps, f"Conversion unavailable: {filename}")
                                     continue
                                 staged_pairs = []
-                                conversion_status = f"Converted: {filename}"
                                 try:
                                     for source_layer in outputs.get(filename, []):
                                         staged_layer = os.path.join(conversion_stage, os.path.basename(source_layer))
@@ -435,18 +492,18 @@ class BatchWorkflowWorker(QObject):
                                             target_key=target.key_pair if target.key_enabled else None,
                                         ))
                                         staged_pairs.append((staged_layer, os.path.join(self.output, os.path.basename(source_layer))))
-                                        if sys.platform != "win32":
-                                            current += 1
-                                            self.progress.emit(current, total_steps, f"Converted: {os.path.basename(source_layer)}")
+                                        current += 1
+                                        self.progress.emit(current, total_steps, f"Converted: {os.path.basename(source_layer)}")
                                     for staged_layer, final_layer in staged_pairs:
                                         os.replace(staged_layer, final_layer)
                                     converted_sources.add(filename)
                                 except Exception as exc:
+                                    diagnostics_log.exception(
+                                        "batch_layer_conversion_file",
+                                        exc,
+                                        file=os.path.join(self.source, filename),
+                                    )
                                     failures.append((filename, str(exc)))
-                                    conversion_status = f"Conversion failed: {filename}"
-                                if sys.platform == "win32":
-                                    current += 1
-                                    self.progress.emit(current, total_steps, conversion_status)
                         final_outputs = {
                             filename: [os.path.join(self.output, os.path.basename(path)) for path in paths]
                             for filename, paths in outputs.items()
@@ -467,11 +524,7 @@ class BatchWorkflowWorker(QObject):
                     for filename in files:
                         analysis = analysis_by_file.get(filename)
                         if not isinstance(analysis, LoopAnalysis):
-                            if sys.platform == "win32":
-                                current += 1
-                                self.progress.emit(current, total_steps, f"Conversion unavailable: {filename}")
                             continue
-                        conversion_status = f"Converted: {filename}"
                         try:
                             staged = os.path.join(conversion_stage, output_stems[filename] + ".mp3")
                             final = os.path.join(self.output, output_stems[filename] + ".mp3")
@@ -486,10 +539,14 @@ class BatchWorkflowWorker(QObject):
                             os.replace(staged, final)
                             manifest["outputs_by_source"][filename] = [final]
                         except Exception as exc:
+                            diagnostics_log.exception(
+                                "batch_loop_conversion_file",
+                                exc,
+                                file=os.path.join(self.source, filename),
+                            )
                             failures.append((filename, str(exc)))
-                            conversion_status = f"Conversion failed: {filename}"
                         current += 1
-                        self.progress.emit(current, total_steps, conversion_status)
+                        self.progress.emit(current, total_steps, f"Converted: {filename}")
             else:
                 engine_failures, manifest = self._run_engine(
                     self.output, engine_settings, analysis_offset, process_steps, total_steps
@@ -504,8 +561,24 @@ class BatchWorkflowWorker(QObject):
                 if marker not in seen:
                     seen.add(marker)
                     unique_failures.append(failure)
+            diagnostics_log.event(
+                "batch_complete",
+                source_folder=self.source,
+                output_folder=self.output,
+                duration_seconds=time.perf_counter() - started,
+                files=len(files),
+                failures=len(unique_failures),
+            )
             self.completed.emit(unique_failures, manifest)
         except Exception as exc:
+            diagnostics_log.exception(
+                "batch_worker",
+                exc,
+                source_folder=self.source,
+                output_folder=self.output,
+                settings=self.settings,
+                duration_seconds=time.perf_counter() - started,
+            )
             self.failed.emit(str(exc))
         finally:
             self.finished.emit()

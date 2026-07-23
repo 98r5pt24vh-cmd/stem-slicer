@@ -107,7 +107,7 @@ exe = EXE(
     pyz,
     a.scripts,
     [],
-    name="Stem Slicer 1.6B",
+    name="Stem Slicer 1.7B",
     icon="assets/StemSlicer.ico",
     debug=False,
     bootloader_ignore_signals=False,
@@ -127,5 +127,5 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=False,
-    name="Stem Slicer 1.6B",
+    name="Stem Slicer 1.7B",
 )

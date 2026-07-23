@@ -167,12 +167,12 @@ shutil.copyfile = _clonefile_or_copy
 try:
     app = BUNDLE(
         coll,
-        name="Stem Slicer 1.6B.app",
+        name="Stem Slicer 1.7B.app",
         icon="assets/StemSlicer.icns",
         bundle_identifier="com.antiworld.stemslicer.16b",
         info_plist={
-            "CFBundleDisplayName": "Stem Slicer 1.6B",
-            "CFBundleName": "Stem Slicer 1.6B",
+            "CFBundleDisplayName": "Stem Slicer 1.7B",
+            "CFBundleName": "Stem Slicer 1.7B",
             "CFBundleShortVersionString": "1.6.0",
             "CFBundleVersion": "1.6.0",
             "NSHighResolutionCapable": True,

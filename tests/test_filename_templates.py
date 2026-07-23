@@ -18,6 +18,18 @@ class FilenameTemplateTests(unittest.TestCase):
             "A#m CALLMEUR3 137 +NRGY_L1.mp3",
         )
 
+    def test_parse_compact_lowercase_bpm_suffix(self):
+        parts = parse_loop_filename("fleon + rafe - average 130bpm.mp3")
+        self.assertEqual(parts["BPM"], "130")
+        self.assertEqual(parts["LOOP NAME"], "fleon + rafe - average")
+        self.assertEqual(parts["PROD NAME"], "")
+
+    def test_parse_spaced_bpm_suffix_without_rendering_it_as_producer(self):
+        parts = parse_loop_filename("L Timer 145 BPM +NRGY.mp3")
+        self.assertEqual(parts["BPM"], "145")
+        self.assertEqual(parts["LOOP NAME"], "Timer")
+        self.assertEqual(parts["PROD NAME"], "+NRGY")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -5,8 +5,10 @@ import re
 import subprocess
 import sys
 import threading
+import time
 import uuid
 
+from diagnostics_runtime import configure_runtime_environment, get_diagnostics
 
 SHARP_KEYS = {
     "1A": "G#m", "2A": "D#m", "3A": "A#m", "4A": "Fm",
@@ -115,6 +117,7 @@ class KeyAnalyzer:
         self.process = None
         self.messages = queue.Queue()
         self.reader = None
+        self.stderr_handle = None
         # One analyzer process serves Quick Scan, Quick Extract and Convert.
         # NDJSON replies are request-scoped but the client queue is shared, so
         # serialize complete request/reply cycles instead of allowing one UI
@@ -122,28 +125,56 @@ class KeyAnalyzer:
         self.request_lock = threading.Lock()
 
     def start(self):
+        configure_runtime_environment()
+        diagnostics = get_diagnostics()
         path = analyzer_executable()
         if not path:
             raise RuntimeError("The embedded key analyzer was not found.")
-        debug_stderr = None if os.environ.get("STEM_SLICER_KEY_DEBUG") else subprocess.DEVNULL
-        self.process = subprocess.Popen(
-            [path, "--workers", str(self.workers)],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=debug_stderr,
-            text=True,
-            encoding="utf-8",
-            bufsize=1,
-            cwd=os.path.join(os.path.dirname(path), "_internal")
-            if os.path.isdir(os.path.join(os.path.dirname(path), "_internal")) else None,
-            **hidden_process_options(),
-        )
+        if os.environ.get("STEM_SLICER_KEY_DEBUG"):
+            analyzer_stderr = None
+        else:
+            try:
+                os.makedirs(diagnostics.log_root, exist_ok=True)
+                self.stderr_handle = open(
+                    os.path.join(diagnostics.log_root, "openkeyscan-stderr.log"),
+                    "a",
+                    encoding="utf-8",
+                    buffering=1,
+                )
+                analyzer_stderr = self.stderr_handle
+            except OSError:
+                analyzer_stderr = subprocess.DEVNULL
+        command = [path, "--workers", str(self.workers)]
+        started = time.perf_counter()
+        try:
+            self.process = subprocess.Popen(
+                command,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=analyzer_stderr,
+                text=True,
+                encoding="utf-8",
+                bufsize=1,
+                cwd=os.path.join(os.path.dirname(path), "_internal")
+                if os.path.isdir(os.path.join(os.path.dirname(path), "_internal")) else None,
+                env=os.environ.copy(),
+                **hidden_process_options(),
+            )
+        except Exception as exc:
+            diagnostics.exception("openkeyscan_start", exc, command=command)
+            raise
         self.reader = threading.Thread(target=self._read_stdout, daemon=True)
         self.reader.start()
         message = self._next_message(self.startup_timeout)
         if message.get("type") != "ready":
             self.stop()
             raise RuntimeError("The key analyzer did not become ready.")
+        diagnostics.event(
+            "openkeyscan_ready",
+            executable=path,
+            pid=self.process.pid,
+            duration_seconds=time.perf_counter() - started,
+        )
 
     def _read_stdout(self):
         try:
@@ -163,6 +194,8 @@ class KeyAnalyzer:
 
     def analyze(self, audio_path, *, bpm_mode=None, structure_ffmpeg_path=None):
         with self.request_lock:
+            diagnostics = get_diagnostics()
+            started = time.perf_counter()
             if not self.process or self.process.poll() is not None:
                 raise RuntimeError("The key analyzer is not running.")
             request_id = str(uuid.uuid4())
@@ -182,7 +215,22 @@ class KeyAnalyzer:
                 if message.get("id") != request_id:
                     continue
                 if message.get("status") != "success":
-                    raise RuntimeError(message.get("error", "Key analysis failed."))
+                    error = RuntimeError(message.get("error", "Key analysis failed."))
+                    diagnostics.exception(
+                        "openkeyscan_analysis",
+                        error,
+                        file=os.path.abspath(audio_path),
+                        duration_seconds=time.perf_counter() - started,
+                    )
+                    raise error
+                diagnostics.event(
+                    "openkeyscan_analysis_complete",
+                    file=os.path.abspath(audio_path),
+                    bpm_mode=bpm_mode,
+                    duration_seconds=time.perf_counter() - started,
+                    bpm=message.get("bpm"),
+                    camelot=message.get("camelot"),
+                )
                 return message
 
     def stop(self):
@@ -194,15 +242,14 @@ class KeyAnalyzer:
                 process.stdin.close()
         except OSError:
             pass
-        finally:
-            if self.reader is not None:
-                self.reader.join(timeout=1)
-            for stream in (process.stdout, process.stderr):
-                if stream is not None:
-                    try:
-                        stream.close()
-                    except OSError:
-                        pass
+        if self.reader is not None:
+            self.reader.join(timeout=1)
+        for stream in (process.stdout, process.stderr):
+            if stream is not None:
+                try:
+                    stream.close()
+                except OSError:
+                    pass
         try:
             # The analyzer exits cleanly when its NDJSON input reaches EOF.
             # Its PyInstaller bootloader manages a child process, so a normal
@@ -218,6 +265,13 @@ class KeyAnalyzer:
                 pass
         except OSError:
             pass
+        finally:
+            if self.stderr_handle is not None:
+                try:
+                    self.stderr_handle.close()
+                except OSError:
+                    pass
+                self.stderr_handle = None
 
     def __enter__(self):
         self.start()

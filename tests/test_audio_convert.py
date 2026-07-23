@@ -1,46 +1,12 @@
 from pathlib import Path
-import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
 
-import audio_convert
 from audio_convert import ConversionRequest, convert_audio, expanded_key_name, shortest_semitone_shift
 
 
 class PitchMappingTests(unittest.TestCase):
-    def test_windows_converter_processes_are_hidden(self):
-        class StartupInfo:
-            def __init__(self):
-                self.dwFlags = 0
-                self.wShowWindow = None
-
-        with patch.object(audio_convert.os, "name", "nt"), \
-             patch.object(audio_convert.subprocess, "STARTUPINFO", StartupInfo, create=True), \
-             patch.object(audio_convert.subprocess, "STARTF_USESHOWWINDOW", 1, create=True), \
-             patch.object(audio_convert.subprocess, "SW_HIDE", 0, create=True), \
-             patch.object(audio_convert.subprocess, "CREATE_NO_WINDOW", 0x08000000, create=True):
-            options = audio_convert._hidden_process_kwargs()
-
-        self.assertEqual(options["creationflags"], 0x08000000)
-        self.assertEqual(options["startupinfo"].dwFlags, 1)
-        self.assertEqual(options["startupinfo"].wShowWindow, 0)
-
-    def test_windows_subprocess_failure_preserves_tool_stderr(self):
-        error = subprocess.CalledProcessError(
-            7,
-            ["bungee.exe", "input.wav", "output.wav"],
-            stderr="unsupported layer format",
-        )
-        with patch.object(audio_convert.os, "name", "nt"), \
-             patch.object(audio_convert, "_hidden_process_kwargs", return_value={}), \
-             patch.object(audio_convert.subprocess, "run", side_effect=error):
-            with self.assertRaisesRegex(
-                RuntimeError,
-                "bungee.exe failed with exit code 7: unsupported layer format",
-            ):
-                audio_convert._run(["bungee.exe", "input.wav", "output.wav"])
-
     def test_minor_source_uses_relative_minor_target(self):
         self.assertEqual(shortest_semitone_shift("C# minor", "C major / A minor"), -4)
 

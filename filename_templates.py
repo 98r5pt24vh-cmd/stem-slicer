@@ -3,7 +3,12 @@ import re
 
 
 TOKENS = ("KEY", "LOOP NAME", "BPM", "PROD NAME")
-BPM_RE = re.compile(r"\b(?:[6-9]\d|1\d{2}|2[0-4]\d)\b")
+# Accept the producer naming variants used in real loop packs: ``145``,
+# ``145 BPM`` and the compact ``145bpm`` form.  Keep the numeric value in a
+# dedicated group so the optional suffix never leaks into rendered names.
+BPM_RE = re.compile(
+    r"(?i)(?<!\d)(?P<value>[6-9]\d|1\d{2}|2[0-4]\d)(?:\s*bpm\b|\b)(?!\d)"
+)
 KEY_AT_START_RE = re.compile(
     r"(?i)^(?P<key>[A-G](?:#|b)?m|[A-G](?:#|b)?(?:\s+(?:major|minor))?)(?:\s+|$)"
 )
@@ -31,7 +36,7 @@ def parse_loop_filename(filename):
         after = after[key_match.end() :].strip()
     return {
         "KEY": key,
-        "BPM": bpm_match.group(0),
+        "BPM": bpm_match.group("value"),
         "LOOP NAME": loop_name,
         "PROD NAME": after,
         "extension": extension or ".mp3",

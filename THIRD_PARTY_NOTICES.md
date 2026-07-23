@@ -62,16 +62,6 @@ Source and license information: https://ffmpeg.org/
 Windows binary distribution source:
 https://github.com/descriptinc/ffmpeg-ffprobe-static/releases/tag/b6.1.2-rc.1
 
-## DeepRhythm
-
-Stem Slicer's isolated analyzer uses the open-source DeepRhythm model and
-runtime as one input to its Loop-mode BPM decision. DeepRhythm is distributed
-under the GNU Affero General Public License version 3. The complete license and
-the corresponding analyzer source used by this build are included in this
-repository.
-
-Source: https://github.com/bleugreen/deeprhythm
-
 ## Bungee
 
 Stem Slicer uses the open-source Bungee time-stretch and pitch-shift engine
@@ -79,6 +69,4 @@ for BPM and key conversion. Bungee is distributed under the Mozilla Public
 License 2.0. The complete license is included under
 `licenses/Bungee-MPL-2.0.txt`.
 
-Source: https://github.com/bungee-audio-stretch/bungee
-
-Pinned source commit: `746833f68a574d997ec50443e7cfd2d37b026302`
+Source: https://github.com/kupix/bungee

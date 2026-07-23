@@ -12,8 +12,12 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import numpy as np
+
+from diagnostics_runtime import get_diagnostics
 from key_detection import KeyAnalyzer, format_camelot
 from filename_templates import TOKENS, parse_loop_filename, render_name
+from sequence_decoder import infer_sequence_grid
 
 try:
     import objc
@@ -79,7 +83,7 @@ except ImportError:
     NSColor = _UnusedNativeType
 
 APP_NAME = "Stem Slicer"
-APP_VERSION = "1.6B"
+APP_VERSION = "1.7B"
 MIN_LAYER_REMAINING_RATIO = 0.74
 PARALLEL_WORKERS = 2
 DIAGNOSTICS_ENABLED = False
@@ -105,7 +109,26 @@ def hidden_process_options():
 def run_subprocess(cmd, **kwargs):
     for key, value in hidden_process_options().items():
         kwargs.setdefault(key, value)
-    return subprocess.run(cmd, **kwargs)
+    started = time.perf_counter()
+    diagnostics = get_diagnostics()
+    try:
+        completed = subprocess.run(cmd, **kwargs)
+    except Exception as exc:
+        diagnostics.exception(
+            "subprocess",
+            exc,
+            command=cmd,
+            duration_seconds=time.perf_counter() - started,
+        )
+        raise
+    diagnostics.record_subprocess(
+        command=cmd,
+        duration=time.perf_counter() - started,
+        returncode=completed.returncode,
+        stdout=getattr(completed, "stdout", None),
+        stderr=getattr(completed, "stderr", None),
+    )
+    return completed
 
 
 def find_ffmpeg():
@@ -182,46 +205,99 @@ def get_vrai_zero(filepath, ffmpeg):
     return float(first_end.group(1)) if float(first_start.group(1)) <= 0.001 else 0.0
 
 
+def _silence_runs(samples, threshold_db, sample_rate):
+    """Return stereo silence runs without launching a second FFmpeg pass."""
+    if samples.size == 0:
+        return []
+    threshold = 10.0 ** (threshold_db / 20.0)
+    silent = np.all(np.abs(samples) <= threshold, axis=1)
+    edges = np.flatnonzero(
+        np.diff(np.concatenate(([False], silent, [False])).astype(np.int8))
+    )
+    return [
+        (int(start), int(end), start / sample_rate, end / sample_rate)
+        for start, end in zip(edges[::2], edges[1::2])
+    ]
+
+
 def analyze_audio_once(filepath, ffmpeg, bpm, sample_rate=22050):
-    """Collect silence markers, duration and bar energy in one decode."""
+    """Decode once, normalize analysis levels and collect structural features."""
     command = [
-        ffmpeg, "-hide_banner", "-loglevel", "info", "-nostdin", "-i", filepath,
-        "-filter_complex",
-        (
-            "[0:a]asplit=3[short][long][pcm_in];"
-            "[short]silencedetect@short=noise=-45dB:d=0.001[short_out];"
-            "[short_out]anullsink;"
-            "[long]silencedetect@long=noise=-45dB:d=0.1[long_out];"
-            "[long_out]anullsink;"
-            f"[pcm_in]aformat=sample_fmts=s16:sample_rates={sample_rate}:channel_layouts=mono[pcm]"
-        ),
-        "-map", "[pcm]", "-f", "s16le", "-",
+        ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-i", filepath,
+        "-ac", "2", "-ar", str(sample_rate),
+        "-acodec", "pcm_f32le", "-f", "f32le", "-",
     ]
     result = run_subprocess(command, capture_output=True, check=True)
-    log = result.stderr.decode("utf-8", errors="replace")
     pcm = result.stdout
-    short_starts = [float(value) for value in re.findall(
-        r"silencedetect@short[^\n]*silence_start: ([\d.]+)", log
-    )]
-    short_ends = [float(value) for value in re.findall(
-        r"silencedetect@short[^\n]*silence_end: ([\d.]+)", log
-    )]
-    long_ends = [float(value) for value in re.findall(
-        r"silencedetect@long[^\n]*silence_end: ([\d.]+)", log
-    )]
-    vrai_zero = 0.0
-    if short_starts and short_ends and short_starts[0] <= 0.001:
-        vrai_zero = short_ends[0]
+    stereo = np.frombuffer(pcm, dtype="<f4")
+    if stereo.size % 2:
+        stereo = stereo[:-1]
+    stereo = stereo.reshape(-1, 2)
+    mixed = stereo.mean(axis=1)
+    raw_mono = np.clip(
+        np.rint(mixed * 32768.0), -32768, 32767
+    ).astype("<i2")
+    raw_mono_pcm = raw_mono.tobytes()
+
     sec_per_bar = (60 / bpm) * 4
     bytes_per_bar = max(2, int(sample_rate * sec_per_bar) * 2)
     bytes_per_bar -= bytes_per_bar % 2
-    energies = [rms_dbfs(pcm[pos:pos + bytes_per_bar]) for pos in range(0, len(pcm), bytes_per_bar)]
+    raw_energies = [
+        rms_dbfs(raw_mono_pcm[pos : pos + bytes_per_bar])
+        for pos in range(0, len(raw_mono_pcm), bytes_per_bar)
+    ]
+    reference_level = percentile_value(raw_energies, 0.90, -14.0)
+    analysis_gain_db = -14.0 - reference_level
+    normalized_mono = np.clip(
+        np.rint(mixed * (10.0 ** (analysis_gain_db / 20.0)) * 32768.0),
+        -32768,
+        32767,
+    ).astype("<i2")
+    normalized_pcm = normalized_mono.tobytes()
+    energies = [
+        rms_dbfs(normalized_pcm[pos : pos + bytes_per_bar])
+        for pos in range(0, len(normalized_pcm), bytes_per_bar)
+    ]
+
+    # Detecting at -45 dB after a fixed gain is equivalent to moving the
+    # threshold by the inverse gain. This keeps normalization analysis-only and
+    # avoids decoding the file again.
+    runs = _silence_runs(stereo, -45.0 - analysis_gain_db, sample_rate)
+    short_frames = math.ceil(sample_rate * 0.001)
+    long_frames = math.ceil(sample_rate * 0.1)
+    short_runs = [run for run in runs if run[1] - run[0] >= short_frames]
+    long_ends = [run[3] for run in runs if run[1] - run[0] >= long_frames]
+    vrai_zero = (
+        short_runs[0][3]
+        if short_runs and short_runs[0][0] <= math.ceil(sample_rate * 0.001)
+        else 0.0
+    )
     return {
         "vrai_zero": vrai_zero,
         "all_starts": long_ends,
-        "duration": len(pcm) / (sample_rate * 2),
+        "duration": len(stereo) / sample_rate,
         "energies": energies,
+        "analysis_gain_db": analysis_gain_db,
+        # Keep the already-decoded mono signal available to Quick Extract.
+        # It lets the UI build every layer waveform without launching one
+        # additional FFmpeg process per exported layer.
+        "waveform_mono": mixed,
+        "waveform_sample_rate": sample_rate,
     }
+
+
+def waveform_peaks_from_samples(samples, points=72):
+    """Return normalized display peaks from an in-memory mono signal."""
+    samples = np.asarray(samples)
+    if samples.size == 0:
+        return [0.0] * points
+    boundaries = np.linspace(0, samples.size, points + 1, dtype=np.int64)
+    values = []
+    for index in range(points):
+        segment = samples[boundaries[index]:boundaries[index + 1]]
+        values.append(float(np.max(np.abs(segment))) if segment.size else 0.0)
+    maximum = max(values) or 1.0
+    return [value / maximum for value in values]
 
 
 def get_all_starts(filepath, ffmpeg):
@@ -817,90 +893,29 @@ def prepend_active_previous_slot(grid, energies, threshold):
 
 
 def infer_structural_grid(energies, all_starts, vrai_zero, sec_per_bar, source_duration):
-    threshold, active_by_bar = classify_bar_activity(energies)
-    ranges = active_ranges(active_by_bar)
-    if ranges and ranges[0][0] == 0:
-        initial_full_end = ranges[0][1]
-    else:
-        initial_full_end = 16
-    max_bar = int(source_duration / sec_per_bar) if source_duration else len(energies)
-    silence_bars = {round((t - vrai_zero) / sec_per_bar) for t in all_starts}
-    range_starts = {start for start, end in ranges if start >= initial_full_end}
-    support_candidates = set(silence_bars) | set(range_starts)
-
-    candidate_first_starts = set()
-    min_start = max(0, initial_full_end + 1)
-    max_start = min(max_bar, initial_full_end + 12)
-    for candidate in support_candidates:
-        if min_start <= candidate <= max_start:
-            candidate_first_starts.add(candidate)
-        # Some sparse first slots have support a few bars late.
-        for delta in (-8, -4, -2, -1):
-            shifted = candidate + delta
-            if min_start <= shifted <= max_start:
-                candidate_first_starts.add(shifted)
-    for candidate in range(min_start, max_start + 1):
-        if candidate in (initial_full_end + 2, initial_full_end + 4, initial_full_end + 8):
-            candidate_first_starts.add(candidate)
-    structures = [(8, 4), (8, 2), (8, 1), (16, 4), (4, 4), (4, 2), (4, 1), (8, 8), (16, 8)]
-    scored = []
-    for first_start in sorted(candidate_first_starts):
-        for layer_bars, space_bars in structures:
-            item = score_grid_v2(
-                energies,
-                first_start,
-                layer_bars,
-                space_bars,
-                threshold,
-                source_duration,
-                sec_per_bar,
-                support_candidates,
-            )
-            if item:
-                scored.append(item)
-        for leading_layer_bars, repeat_layer_bars, space_bars, family in (
-            ((16,), 8, 4, "mixed_first_16_then_8_space_4"),
-            ((32, 16), 8, 4, "mixed_first_32_second_16_then_8_space_4"),
-        ):
-            item = score_mixed_grid(
-                energies,
-                first_start,
-                leading_layer_bars,
-                repeat_layer_bars,
-                space_bars,
-                threshold,
-                source_duration,
-                sec_per_bar,
-                support_candidates,
-                family,
-            )
-            if item:
-                scored.append(item)
-        for extended_gap_after_index in range(0, 4):
-            item = score_variable_space_grid(
-                energies,
-                first_start,
-                8,
-                2,
-                2,
-                extended_gap_after_index,
-                threshold,
-                source_duration,
-                sec_per_bar,
-                support_candidates,
-            )
-            if item:
-                scored.append(item)
-    if not scored:
+    result = infer_sequence_grid(
+        energies,
+        all_starts,
+        vrai_zero,
+        sec_per_bar,
+        source_duration,
+    )
+    if result is None or not result.slots:
         return None
-    scored.sort(key=lambda item: item["score"], reverse=True)
-    chosen = scored[0]
-    if chosen.get("layer_bars") != "mixed" and not chosen.get("variable_space_family"):
-        chosen = maybe_shift_grid_left_one(chosen, energies, threshold)
-        chosen = apply_long_slot_expansion(chosen, energies, threshold, support_candidates)
-        chosen = apply_final_extended_space(chosen, energies, threshold, support_candidates)
-        chosen = prepend_active_previous_slot(chosen, energies, threshold)
-    return chosen
+    slots = list(result.slots)
+    return {
+        "score": result.score,
+        "confidence_margin": result.confidence_margin,
+        "first_start": slots[0].start,
+        "layer_bars": result.base_layer_bars,
+        "space_bars": result.base_space_bars,
+        "stride_bars": result.base_layer_bars + result.base_space_bars,
+        "slots": [slot.start for slot in slots],
+        "active_slots": [slot.start for slot in slots if slot.active],
+        "silent_slots": [slot.start for slot in slots if not slot.active],
+        "duration_by_slot": {slot.start: slot.duration for slot in slots},
+        "sequence_decoder": True,
+    }
 
 
 def can_export_full_layer(start_exact, dur_sec, source_duration):
@@ -990,6 +1005,13 @@ def make_diag_row(run_timestamp, filename, event, reason, bpm, sec_per_bar, sour
 def process_one_file(d_in, d_out, filename, ffmpeg, ffprobe, run_timestamp, output_stem=None):
     file_started = time.perf_counter()
     filepath = os.path.join(d_in, filename)
+    persistent_diagnostics = get_diagnostics()
+    persistent_diagnostics.event(
+        "layer_extraction_started",
+        file=filepath,
+        output_folder=d_out,
+        output_stem=output_stem,
+    )
     diagnostics = []
     export_elapsed = 0.0
 
@@ -1003,6 +1025,8 @@ def process_one_file(d_in, d_out, filename, ffmpeg, ffprobe, run_timestamp, outp
     all_starts = analysis["all_starts"]
     source_duration = analysis["duration"]
     energies = analysis["energies"]
+    waveform_mono = analysis["waveform_mono"]
+    waveform_sample_rate = analysis["waveform_sample_rate"]
     analysis_elapsed = time.perf_counter() - analysis_started
 
     seuil_stems = vrai_zero + (sec_per_bar * 15)
@@ -1051,6 +1075,14 @@ def process_one_file(d_in, d_out, filename, ffmpeg, ffprobe, run_timestamp, outp
         for row in diagnostics:
             row["file_elapsed_seconds"] = round(file_elapsed, 6)
             row["export_elapsed_seconds"] = round(export_elapsed, 6)
+        persistent_diagnostics.event(
+            "layer_extraction_complete",
+            file=filepath,
+            output_folder=d_out,
+            layers=0,
+            duration_seconds=file_elapsed,
+            reason="no_structural_grid",
+        )
         return diagnostics
 
     layer_bars = grid["layer_bars"]
@@ -1124,6 +1156,12 @@ def process_one_file(d_in, d_out, filename, ffmpeg, ffprobe, run_timestamp, outp
             "layer_index": layer_idx,
             "output_name": output_name,
             "output_path": output_path,
+            "waveform_peaks": waveform_peaks_from_samples(
+                waveform_mono[
+                    max(0, int(round(start_exact * waveform_sample_rate))):
+                    max(0, int(round((start_exact + dur_sec) * waveform_sample_rate)))
+                ]
+            ),
         })
         layer_idx += 1
 
@@ -1133,7 +1171,7 @@ def process_one_file(d_in, d_out, filename, ffmpeg, ffprobe, run_timestamp, outp
         for index, item in enumerate(pending_exports):
             filters.append(
                 f"[split{index}]atrim=start={item['start']:.9f}:duration={item['duration']:.9f},"
-                f"asetpts=PTS-STARTPTS[out{index}]"
+                f"asetpts=PTS-STARTPTS,aformat=sample_fmts=s32p[out{index}]"
             )
         command = [
             ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-nostdin",
@@ -1145,7 +1183,10 @@ def process_one_file(d_in, d_out, filename, ffmpeg, ffprobe, run_timestamp, outp
                 item["output_path"],
             ])
         export_started = time.perf_counter()
-        run_subprocess(command, check=False)
+        completed = run_subprocess(command, check=False, capture_output=True, text=True)
+        if completed.returncode != 0:
+            message = (completed.stderr or "FFmpeg returned an unknown error.").strip()
+            raise RuntimeError(f"FFmpeg layer export failed: {message[-4000:]}")
         export_elapsed = time.perf_counter() - export_started
 
     for item in pending_exports:
@@ -1173,6 +1214,7 @@ def process_one_file(d_in, d_out, filename, ffmpeg, ffprobe, run_timestamp, outp
                 output_name=item["output_name"],
                 output_exists=output_exists,
                 output_bytes=output_bytes,
+                waveform_peaks=item["waveform_peaks"],
                 correction_reason=grid_reason,
             )
         )
@@ -1181,6 +1223,16 @@ def process_one_file(d_in, d_out, filename, ffmpeg, ffprobe, run_timestamp, outp
     for row in diagnostics:
         row["file_elapsed_seconds"] = round(file_elapsed, 6)
         row["export_elapsed_seconds"] = round(export_elapsed, 6)
+    persistent_diagnostics.event(
+        "layer_extraction_complete",
+        file=filepath,
+        output_folder=d_out,
+        layers=sum(row.get("event") == "exported" for row in diagnostics),
+        duration_seconds=file_elapsed,
+        analysis_seconds=analysis_elapsed,
+        export_seconds=export_elapsed,
+        structural_grid=grid_reason,
+    )
     return diagnostics
 
 

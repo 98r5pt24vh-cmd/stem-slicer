@@ -15,8 +15,10 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+import time
 from typing import Callable
 
+from diagnostics_runtime import get_diagnostics
 from engine import find_ffmpeg
 
 
@@ -59,25 +61,46 @@ def _hidden_process_kwargs() -> dict:
 
 
 def _run(command: list[str], *, capture: bool = False) -> subprocess.CompletedProcess:
-    capture_output = capture or os.name == "nt"
+    started = time.perf_counter()
+    diagnostics = get_diagnostics()
     try:
-        return subprocess.run(
+        completed = subprocess.run(
             command,
             check=True,
             text=True,
-            stdout=subprocess.PIPE if capture_output else subprocess.DEVNULL,
-            stderr=subprocess.PIPE if capture_output else subprocess.DEVNULL,
+            stdout=subprocess.PIPE if capture else subprocess.DEVNULL,
+            # Always retain stderr: FFmpeg/Bungee failures in a GUI build have
+            # no console and otherwise leave beta testers with no evidence.
+            stderr=subprocess.PIPE,
             **_hidden_process_kwargs(),
         )
     except subprocess.CalledProcessError as exc:
-        if os.name != "nt":
-            raise
-        detail = (exc.stderr or exc.stdout or "").strip()
-        executable = os.path.basename(str(command[0]))
-        message = f"{executable} failed with exit code {exc.returncode}"
-        if detail:
-            message += f": {detail}"
-        raise RuntimeError(message) from exc
+        diagnostics.record_subprocess(
+            command=command,
+            duration=time.perf_counter() - started,
+            returncode=exc.returncode,
+            stdout=exc.stdout,
+            stderr=exc.stderr,
+            failed=True,
+        )
+        diagnostics.exception("audio_conversion_subprocess", exc, command=command)
+        raise
+    except Exception as exc:
+        diagnostics.exception(
+            "audio_conversion_subprocess",
+            exc,
+            command=command,
+            duration_seconds=time.perf_counter() - started,
+        )
+        raise
+    diagnostics.record_subprocess(
+        command=command,
+        duration=time.perf_counter() - started,
+        returncode=completed.returncode,
+        stdout=completed.stdout,
+        stderr=completed.stderr,
+    )
+    return completed
 
 
 def _key_parts(key: str) -> tuple[str, bool]:
@@ -85,7 +108,7 @@ def _key_parts(key: str) -> tuple[str, bool]:
 
     OpenKeyScan deliberately returns compact minor names such as ``G#m``.
     Conversion also accepts the human-facing ``G# minor`` form used by the
-    1.6B interface.
+    1.7B interface.
     """
     normalized = key.strip().replace("♯", "#").replace("♭", "b")
     compact = re.fullmatch(r"([A-Ga-g](?:#|b)?)(m)?", normalized)
@@ -165,6 +188,17 @@ def convert_audio(
     bungee: str | os.PathLike[str] | None = None,
     progress: Callable[[str], None] | None = None,
 ) -> ConversionResult:
+    diagnostics = get_diagnostics()
+    operation_started = time.perf_counter()
+    diagnostics.event(
+        "audio_conversion_started",
+        file=str(request.source),
+        destination=str(request.destination),
+        source_bpm=request.source_bpm,
+        target_bpm=request.target_bpm,
+        source_key=request.source_key,
+        target_key=request.target_key,
+    )
     effective_bpm = request.target_bpm if request.target_bpm is not None else request.source_bpm
     if request.source_bpm <= 0 or effective_bpm <= 0:
         raise ValueError("BPM values must be positive")
@@ -204,4 +238,15 @@ def convert_audio(
             progress("Encoding MP3")
         _run(command)
 
-    return ConversionResult(request.destination, semitones, speed, peak, gain)
+    result = ConversionResult(request.destination, semitones, speed, peak, gain)
+    diagnostics.event(
+        "audio_conversion_complete",
+        file=str(request.source),
+        destination=str(request.destination),
+        duration_seconds=time.perf_counter() - operation_started,
+        semitones=semitones,
+        speed_ratio=speed,
+        peak_db=peak,
+        gain_db=gain,
+    )
+    return result

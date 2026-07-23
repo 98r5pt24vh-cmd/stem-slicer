@@ -102,8 +102,20 @@ class StorageManager:
 
         seconds = stamp.strftime("%y-%m-%d %H-%M-%S")
         candidate = os.path.join(parent, f"{clean} — {seconds}")
-        os.makedirs(candidate)
-        return candidate
+        if not os.path.exists(candidate):
+            os.makedirs(candidate)
+            return candidate
+
+        # Very short Quick Convert jobs can be repeated more than three times
+        # within the same second.  Keep every result instead of colliding with
+        # the already timestamped session.
+        index = 2
+        while True:
+            numbered = os.path.join(parent, f"{clean} — {seconds} ({index})")
+            if not os.path.exists(numbered):
+                os.makedirs(numbered)
+                return numbered
+            index += 1
 
     def list_quick_extracts(self):
         return self.list_sessions("quick", "layers")

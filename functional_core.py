@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 
 from engine import find_ffmpeg, process_audio, process_single_file, run_subprocess
 from audio_convert import ConversionRequest, convert_audio
+from diagnostics_runtime import get_diagnostics
 from filename_templates import TOKENS, parse_loop_filename, render_name
 from key_detection import KeyAnalyzer, format_camelot
 from storage import StorageManager, format_decimal_size, open_in_file_manager
@@ -26,7 +27,7 @@ from widgets import StudioRoot, TokenStrip
 
 
 APP_NAME = "Stem Slicer"
-APP_VERSION = "1.6B"
+APP_VERSION = "1.7B"
 ROMAN = ("I", "II", "III", "IV", "V", "VI", "VII")
 MODE_NAMES = ("Ionian", "Dorian", "Phrygian", "Lydian", "Mixolydian", "Aeolian", "Locrian")
 MAJOR_INTERVALS = (0, 2, 4, 5, 7, 9, 11)
@@ -69,6 +70,9 @@ class KeyEngineLoader(QObject):
 
     @Slot()
     def run(self):
+        started = time.perf_counter()
+        diagnostics = get_diagnostics()
+        diagnostics.event("key_engine_load_started")
         try:
             analyzer = KeyAnalyzer(workers=1)
             analyzer.start()
@@ -81,7 +85,16 @@ class KeyEngineLoader(QObject):
                 structure_ffmpeg_path=find_ffmpeg(),
             )
             self.ready.emit(analyzer)
+            diagnostics.event(
+                "key_engine_load_complete",
+                duration_seconds=time.perf_counter() - started,
+            )
         except Exception as exc:
+            diagnostics.exception(
+                "key_engine_loader",
+                exc,
+                duration_seconds=time.perf_counter() - started,
+            )
             self.failed.emit(str(exc))
         finally:
             self.finished.emit()
@@ -131,16 +144,30 @@ class QuickScanWorker(QObject):
     @Slot()
     def run(self):
         started = time.perf_counter()
+        diagnostics = get_diagnostics()
+        diagnostics.event("quick_scan_started", file=self.path)
         try:
-            self.completed.emit(
-                self.analyzer.analyze(
+            result = self.analyzer.analyze(
                     self.path,
                     bpm_mode="quick_scan_loop",
                     structure_ffmpeg_path=find_ffmpeg(),
-                ),
-                time.perf_counter() - started,
             )
+            elapsed = time.perf_counter() - started
+            diagnostics.event(
+                "quick_scan_complete",
+                file=self.path,
+                duration_seconds=elapsed,
+                bpm=result.get("bpm"),
+                camelot=result.get("camelot"),
+            )
+            self.completed.emit(result, elapsed)
         except Exception as exc:
+            diagnostics.exception(
+                "quick_scan_worker",
+                exc,
+                file=self.path,
+                duration_seconds=time.perf_counter() - started,
+            )
             self.failed.emit(str(exc))
         finally:
             self.finished.emit()
@@ -281,8 +308,14 @@ class MidiWorker(QObject):
                     break
                 ready_count += 1
                 self.progress.emit(job_id, path, midi_path, index, total)
-            except Exception:
+            except Exception as exc:
                 logging.exception("MIDI conversion failed for %s", path)
+                get_diagnostics().exception(
+                    "midi_conversion_worker",
+                    exc,
+                    file=path,
+                    output=midi_path,
+                )
                 if job_id == self.latest_job_id:
                     self.progress.emit(job_id, path, "", index, total)
         self.completed.emit(job_id, ready_count, time.perf_counter() - started)
@@ -298,6 +331,7 @@ class MidiEngineLoader(QObject):
             self.ready.emit(MidiConverter())
         except Exception as exc:
             logging.exception("MIDI engine failed to start")
+            get_diagnostics().exception("midi_engine_loader", exc)
             self.failed.emit(str(exc))
 
 
@@ -1123,6 +1157,7 @@ class MainWindow(QMainWindow):
         self.quick_extract_thread = None
         self.quick_extract_worker = None
         self.quick_extract_session = ""
+        self.quick_extract_elapsed = 0.0
         self.quick_convert_busy = False
         self.quick_convert_thread = None
         self.quick_convert_worker = None
@@ -1865,14 +1900,16 @@ class MainWindow(QMainWindow):
             if card.layer["path"] == audio_path:
                 card.setMidiPath(midi_path)
                 break
-        self.quick_extract_status.setText(f"{total} layers extracted  ·  Generating MIDI {current}/{total}…")
+        timing = f" in {self.quick_extract_elapsed:.1f}s" if self.quick_extract_elapsed > 0 else ""
+        self.quick_extract_status.setText(f"{total} layers extracted{timing}  ·  Generating MIDI {current}/{total}…")
 
     @Slot(int, int, float)
     def _midi_completed(self, job_id, ready_count, elapsed):
         if job_id != self.midi_job_id:
             return
         total = len(self.layer_cards)
-        layers_text = f"{total} layer{'s' if total != 1 else ''} extracted"
+        timing = f" in {self.quick_extract_elapsed:.1f}s" if self.quick_extract_elapsed > 0 else ""
+        layers_text = f"{total} layer{'s' if total != 1 else ''} extracted{timing}"
         midi_text = f"{ready_count} MIDI file{'s' if ready_count != 1 else ''} ready"
         if ready_count == total:
             self.quick_extract_status.setText(f"{layers_text}  ·  {midi_text}")
@@ -1886,7 +1923,8 @@ class MainWindow(QMainWindow):
                 card.setMidiPath("")
         if self.layer_cards:
             count = len(self.layer_cards)
-            self.quick_extract_status.setText(f"{count} layers extracted  ·  MIDI unavailable")
+            timing = f" in {self.quick_extract_elapsed:.1f}s" if self.quick_extract_elapsed > 0 else ""
+            self.quick_extract_status.setText(f"{count} layers extracted{timing}  ·  MIDI unavailable")
 
     def _start_batch(self):
         if self.busy or self.quick_scan_busy or not self.source_path:
@@ -2188,11 +2226,14 @@ class MainWindow(QMainWindow):
 
     @Slot(object, float)
     def _quick_extract_completed(self, layers, elapsed):
+        self.quick_extract_elapsed = float(elapsed)
         self._populate_layer_cards(layers)
         count = len(layers)
         self.quick_extract_check.setVisible(True)
         if count:
-            self.quick_extract_status.setText(f"{count} layer{'s' if count != 1 else ''} extracted  ·  Generating MIDI…")
+            self.quick_extract_status.setText(
+                f"{count} layer{'s' if count != 1 else ''} extracted in {elapsed:.1f}s  ·  Generating MIDI…"
+            )
         else:
             self.quick_extract_status.setText("No complete layers were detected in this loop.")
         self.quick_show_results.setEnabled(True)

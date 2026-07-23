@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import engine
 from filename_templates import TOKENS
+from sequence_decoder import SequenceResult, Slot
 
 
 class FakeAnalyzer:
@@ -25,6 +26,29 @@ class FakeAnalyzer:
 
 
 class EngineWorkflowTests(unittest.TestCase):
+    def test_sequence_decoder_result_maps_to_existing_grid_contract(self):
+        result = SequenceResult(
+            score=42.5,
+            confidence_margin=3.0,
+            base_layer_bars=8,
+            base_space_bars=4,
+            first_start=36,
+            slots=(
+                Slot(36, 8, 4, True, 1.0),
+                Slot(48, 8, 4, False, 0.0),
+                Slot(60, 24, 0, True, 1.0),
+            ),
+        )
+        with patch.object(engine, "infer_sequence_grid", return_value=result):
+            grid = engine.infer_structural_grid([], [], 0.0, 1.0, 100.0)
+
+        self.assertEqual(grid["first_start"], 36)
+        self.assertEqual(grid["slots"], [36, 48, 60])
+        self.assertEqual(grid["active_slots"], [36, 60])
+        self.assertEqual(grid["silent_slots"], [48])
+        self.assertEqual(grid["duration_by_slot"], {36: 8, 48: 8, 60: 24})
+        self.assertEqual(grid["stride_bars"], 12)
+
     def test_duration_probe_falls_back_to_ffmpeg(self):
         class Result:
             returncode = 0

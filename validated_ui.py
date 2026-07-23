@@ -1,4 +1,4 @@
-"""Native PySide6 port of the validated Stem Slicer 1.6B HTML prototype.
+"""Native PySide6 port of the validated Stem Slicer 1.7B HTML prototype.
 
 The HTML prototype remains the visual specification only.  This module builds
 the same fixed 1024 x 691 working surface with native Qt widgets and reuses the
@@ -8,7 +8,6 @@ validated audio workers from :mod:`functional_core`.
 from __future__ import annotations
 
 import os
-import sys
 
 from PySide6.QtCore import QEvent, QMimeData, QPoint, QPointF, QRect, QRectF, QThread, QTimer, Qt, QUrl, Signal, Slot
 from PySide6.QtGui import QActionGroup, QColor, QDrag, QFontMetrics, QIcon, QPainter, QPainterPath, QPen, QTransform
@@ -119,6 +118,9 @@ def validated_stylesheet() -> str:
     QLabel[role="preview"] {{ background: #171222; border: 1px solid #7653a8; border-radius: 4px; color: #dcc2ff; padding: 0 9px; font-size: 8px; font-weight: 750; }}
     QLabel[role="counter"] {{ color: #9ba8af; font-family: "SF Mono"; font-size: 9px; font-weight: 700; }}
     QLabel[role="ready"] {{ color: #cdd7dc; font-size: 10px; font-weight: 700; }}
+    QLabel[role="targetLabel"] {{
+        color: #e3e9ec; font-size: 9px; font-weight: 700;
+    }}
     QPushButton {{
         background: #0c1419; border: 1px solid #30414b; border-radius: 5px;
         color: #dbe4e8; padding: 5px 9px; font-size: 8px; font-weight: 800;
@@ -149,9 +151,18 @@ def validated_stylesheet() -> str:
         font-size: 11px; font-weight: 850; border-radius: 7px;
     }}
     QPushButton[role="process"]:disabled {{ background: #17191c; border-color: #343b40; color: #667078; }}
+    QPushButton[role="convertAction"] {{
+        background: {ORANGE_DARK}; border: 1px solid #d89432; color: #ffdca5;
+        padding: 0; font-size: 9px; font-weight: 850; border-radius: 6px;
+    }}
+    QPushButton[role="convertAction"]:hover {{ background: #65431a; border-color: #f0ab45; }}
+    QPushButton[role="convertAction"]:disabled {{ background: #17191c; border-color: #343b40; color: #667078; }}
     QLineEdit, QComboBox {{
         background: #0d151a; border: 1px solid #2b3b44; border-radius: 5px;
         color: #e3e9ec; padding: 5px 7px; font-size: 9px;
+    }}
+    QLineEdit[role="targetValue"] {{
+        color: #eef4f7; padding: 0 5px; font-size: 10px; font-weight: 700;
     }}
     QComboBox::drop-down {{ border: none; width: 18px; }}
     QComboBox QAbstractItemView {{ background: #0d151a; color: #e3e9ec; selection-background-color: #2c203c; }}
@@ -167,6 +178,10 @@ def validated_stylesheet() -> str:
     }}
     QPushButton[role="choiceSelector"]:hover {{ background: #151e23; border-color: #4b606b; }}
     QPushButton[role="choiceSelector"]:disabled {{ background: #0a1013; border-color: #253139; color: #59656c; }}
+    QPushButton[role="choiceSelector"][targetField="true"] {{
+        color: #eef4f7; padding-top: 1px; padding-bottom: 1px;
+        font-size: 10px; font-weight: 700;
+    }}
     QProgressBar {{ background: #071015; border: 1px solid #263a45; border-radius: 4px; color: transparent; height: 8px; }}
     QProgressBar::chunk {{ background: #ef5963; }}
     QScrollArea[role="layers"], QScrollArea[role="layers"] > QWidget > QWidget {{ background: #0e1215; border: 1px solid #30373d; border-radius: 6px; }}
@@ -247,15 +262,21 @@ class V16Toggle(QFrame):
         p.setPen(QPen(QColor(border), 1))
         p.setBrush(QColor(off_fill))
         p.drawRoundedRect(QRectF(0.5, 0.5, self.width() - 1, self.height() - 1), 10, 10)
-        diameter = 15
+        # Keep the white thumb optically centred in both the regular 21 px
+        # switch and the compact 19 px Quick Tools variant.  The previous
+        # fixed 15 px thumb touched the compact track's lower edge.
+        diameter = min(15, max(9, self.height() - 6))
         x = self.width() - diameter - 3 if self._checked else 3
+        knob_y = (self.height() - diameter) / 2
         if self._checked:
             p.setPen(Qt.NoPen)
             halo = QColor(glow); halo.setAlpha(60)
-            p.setBrush(halo); p.drawEllipse(QRectF(x - 2, 1, diameter + 4, diameter + 4))
+            halo_diameter = diameter + 4
+            halo_y = (self.height() - halo_diameter) / 2
+            p.setBrush(halo); p.drawEllipse(QRectF(x - 2, halo_y, halo_diameter, halo_diameter))
         p.setBrush(QColor("#effaff" if self._checked else "#718089"))
         p.setPen(Qt.NoPen)
-        p.drawEllipse(QRectF(x, 3, diameter, diameter))
+        p.drawEllipse(QRectF(x, knob_y, diameter, diameter))
 
 
 class Chevron(QWidget):
@@ -437,7 +458,12 @@ class AnchoredChoiceSelector(QPushButton):
         self._current_text = values[0] if values else ""
         self._accent = accent
         self._exact_popup_width = bool(exact_popup_width)
-        self._popup = QFrame(self, Qt.Popup | Qt.FramelessWindowHint)
+        # Keep the popup outside the QGraphicsProxyWidget hierarchy.  A popup
+        # parented to ``self`` is automatically embedded by Qt and therefore
+        # receives the canvas transform in addition to the explicit visual
+        # scale below.  That double scaling progressively cropped the scale
+        # choices at 110–150%.
+        self._popup = QFrame(None, Qt.Popup | Qt.FramelessWindowHint)
         self._popup.setObjectName("anchoredChoicePopup")
         self._popup.setStyleSheet(
             "QFrame#anchoredChoicePopup{background:#0d151a;border:1px solid #384953;border-radius:5px}"
@@ -456,6 +482,7 @@ class AnchoredChoiceSelector(QPushButton):
         # Compatibility for the previous scale-menu tests and diagnostics.
         self._menu = self._popup
         self.clicked.connect(self._show_menu)
+        self.destroyed.connect(self._popup.deleteLater)
 
     def count(self):
         return len(self._items)
@@ -492,7 +519,10 @@ class AnchoredChoiceSelector(QPushButton):
         for row in self._rows.values():
             row.setVisualScale(factor)
         margins = round(3 * factor)
-        self._popup.layout().setContentsMargins(margins, margins, margins, margins)
+        popup_layout = self._popup.layout()
+        popup_layout.setContentsMargins(margins, margins, margins, margins)
+        popup_layout.invalidate()
+        popup_layout.activate()
         global_left = self.mapToGlobal(QPoint(0, 0))
         global_right = self.mapToGlobal(QPoint(self.width(), 0))
         visible_width = max(1, abs(global_right.x() - global_left.x()))
@@ -504,6 +534,15 @@ class AnchoredChoiceSelector(QPushButton):
             longest = max((QFontMetrics(font).horizontalAdvance(item) for item in self._items), default=0)
             width = max(visible_width, longest + round(38 * factor))
         height = margins * 2 + sum(row.height() for row in self._rows.values())
+        # Cocoa includes the popup frame in its native size hint.  The former
+        # arithmetic omitted that frame (two logical pixels), which clipped
+        # the last scale choice.  The width guard also absorbs native font
+        # rounding while preserving the selector's deliberately compact field.
+        popup_hint = self._popup.sizeHint()
+        width = max(width, popup_hint.width())
+        height = max(height, popup_hint.height())
+        if self._exact_popup_width:
+            width += max(2, round(2 * factor))
         return width, height
 
     def _show_menu(self):
@@ -517,9 +556,10 @@ class AnchoredChoiceSelector(QPushButton):
         gap = max(3, round(3 * factor))
 
         # Popup widgets are native top-level surfaces and are not clipped by
-        # the QGraphicsView that scales the interface.  Keep them inside the
-        # visible Stem Slicer canvas (and the current screen) so selectors near
-        # the bottom always open upwards instead of disappearing on the desktop.
+        # the QGraphicsView that scales the interface.  Constrain them to the
+        # current screen, not to the window: at 110–150% the fixed application
+        # window can legitimately extend past the screen, while the popup must
+        # remain completely visible.
         host = self.window()
         host_top_left = host.mapToGlobal(QPoint(0, 0))
         host_bottom_right = host.mapToGlobal(QPoint(host.width(), host.height()))
@@ -529,11 +569,10 @@ class AnchoredChoiceSelector(QPushButton):
             max(1, abs(host_bottom_right.x() - host_top_left.x())),
             max(1, abs(host_bottom_right.y() - host_top_left.y())),
         )
-        screen = self.screen()
+        anchor_center = self.mapToGlobal(self.rect().center())
+        screen = QApplication.screenAt(anchor_center) or self.screen()
         available = screen.availableGeometry() if screen is not None else None
-        bounds = host_rect.intersected(available) if available is not None else host_rect
-        if bounds.isEmpty():
-            bounds = available if available is not None else host_rect
+        bounds = available if available is not None else host_rect
 
         x = bottom_right.x() - width
         below_y = bottom_right.y() + gap
@@ -598,6 +637,7 @@ class ScaleSelector(AnchoredChoiceSelector):
 class TargetKeySelector(AnchoredChoiceSelector):
     def __init__(self, parent=None):
         super().__init__(TARGET_KEYS, accent=ORANGE, parent=parent)
+        self.setProperty("targetField", True)
         # Keep target labels on the same 10 px visual metric on every Qt
         # backend.  In particular, the Windows offscreen/native backends can
         # otherwise inherit a DPI-scaled fallback font and inflate the whole
@@ -850,6 +890,9 @@ class ValidatedMainWindow(FunctionalMainWindow):
 
     def _build(self):
         self.pending_quick_extract = ""
+        # Quick Convert deliberately keeps one selected source loaded between
+        # runs so the user can convert it repeatedly with different targets.
+        self.quick_convert_path = ""
         self.setWindowTitle(f"{APP_NAME} {APP_VERSION}")
         self.setWindowIcon(QIcon(resource_path("assets", "app-icon.png")))
         self.setStyleSheet(validated_stylesheet())
@@ -882,6 +925,7 @@ class ValidatedMainWindow(FunctionalMainWindow):
         self.quick_extract_key_switch.toggled.connect(self._sync_quick_target_fields)
         self.quick_convert_bpm_switch.toggled.connect(self._sync_quick_target_fields)
         self.quick_convert_key_switch.toggled.connect(self._sync_quick_target_fields)
+        self.quick_convert_bpm.textChanged.connect(self._sync_quick_target_fields)
         self._sync_quick_target_fields()
         self._set_destination_mode(self.destination_mode)
         self._set_ui_scale(100)
@@ -897,7 +941,7 @@ class ValidatedMainWindow(FunctionalMainWindow):
         copy.addWidget(made); copy.addWidget(anti); copy.addStretch(); bl.addLayout(copy); bl.addStretch(); row.addWidget(brand)
         row.addStretch(); row.addWidget(image(resource_path("assets", "stem-slicer-wordmark.png"), 235, 50)); row.addStretch()
         build = QWidget(); build.setFixedWidth(280); br = QHBoxLayout(build); br.setContentsMargins(0, 0, 0, 0); br.setSpacing(12); br.addStretch()
-        bc = QVBoxLayout(); bc.setSpacing(2); title = QLabel("LOOP LAYER EXTRACTION SYSTEM"); version = QLabel("1.6B")
+        bc = QVBoxLayout(); bc.setSpacing(2); title = QLabel("LOOP LAYER EXTRACTION SYSTEM"); version = QLabel("1.7B")
         title.setStyleSheet("color:#7e8a92;font-size:9px;font-weight:700"); version.setStyleSheet("color:#7e8a92;font-family:'SF Mono';font-size:9px;font-weight:700")
         title.setAlignment(Qt.AlignRight); version.setAlignment(Qt.AlignRight); bc.addWidget(title); bc.addWidget(version); br.addLayout(bc)
         self.scale_select = ScaleSelector()
@@ -999,7 +1043,7 @@ class ValidatedMainWindow(FunctionalMainWindow):
         self.target_panel.setFixedHeight(63)
         self.convert_switch = target_head.toggle
         target_layout = QHBoxLayout(self.target_panel); target_layout.setContentsMargins(0, 7, 0, 7); target_layout.setSpacing(16); target_layout.addStretch()
-        self.target_bpm_switch = V16Toggle(True, "orange"); self.target_bpm_input = QLineEdit("120"); self.target_bpm_input.setMaxLength(3); self.target_bpm_input.setFixedWidth(82); self.target_bpm_input.setAlignment(Qt.AlignCenter)
+        self.target_bpm_switch = V16Toggle(True, "orange"); self.target_bpm_input = QLineEdit("120"); self.target_bpm_input.setProperty("role", "targetValue"); self.target_bpm_input.setMaxLength(3); self.target_bpm_input.setFixedSize(82, 29); self.target_bpm_input.setAlignment(Qt.AlignCenter)
         bpm_option = self._target_option(self.target_bpm_switch, "TARGET BPM", self.target_bpm_input, 250); target_layout.addWidget(bpm_option)
         self.target_key_switch = V16Toggle(True, "orange"); self.target_key_combo = TargetKeySelector(); self.target_key_combo.setFixedWidth(240)
         key_option = self._target_option(self.target_key_switch, "TARGET KEY", self.target_key_combo, 390); target_layout.addWidget(key_option); target_layout.addStretch()
@@ -1082,22 +1126,22 @@ class ValidatedMainWindow(FunctionalMainWindow):
         extract_layout = QGridLayout(extract_body); extract_layout.setContentsMargins(12, 0, 12, 7); extract_layout.setHorizontalSpacing(8); extract_layout.setVerticalSpacing(4)
         left = QWidget(); left.setFixedWidth(322); left_layout = QVBoxLayout(left); left_layout.setContentsMargins(0, 0, 0, 0); left_layout.setSpacing(7)
         self.quick_extract_drop = V16DropZone("audio", "Drop one loop here", RED, allowed_extensions={".mp3"}, vertical=True, dialog_parent=self); left_layout.addWidget(self.quick_extract_drop, 1)
-        target = QFrame(); target.setProperty("role", "inset"); target.setFixedHeight(68); tl = QGridLayout(target); tl.setContentsMargins(8, 5, 8, 6); tl.setHorizontalSpacing(5); tl.setVerticalSpacing(4)
+        target = QFrame(); self.quick_extract_target_settings = target; target.setProperty("role", "inset"); target.setFixedHeight(68); tl = QGridLayout(target); tl.setContentsMargins(8, 5, 8, 6); tl.setHorizontalSpacing(5); tl.setVerticalSpacing(4)
         tl.addWidget(self._caps("OPTIONAL TARGET"), 0, 0, 1, 2)
-        self.quick_extract_bpm_switch = V16Toggle(True, "orange"); self.quick_extract_bpm_switch.setFixedWidth(34)
-        self.quick_extract_bpm = QLineEdit("120"); self.quick_extract_bpm.setMaxLength(3); self.quick_extract_bpm.setFixedSize(50, 29); self.quick_extract_bpm.setAlignment(Qt.AlignCenter)
+        self.quick_extract_bpm_switch = V16Toggle(False, "orange"); self.quick_extract_bpm_switch.setFixedSize(31, 20)
+        self.quick_extract_bpm = QLineEdit("120"); self.quick_extract_bpm.setProperty("role", "targetValue"); self.quick_extract_bpm.setMaxLength(3); self.quick_extract_bpm.setFixedSize(50, 18); self.quick_extract_bpm.setAlignment(Qt.AlignCenter)
         bpm_line = QWidget(); bpmrow = QHBoxLayout(bpm_line); bpmrow.setContentsMargins(0, 0, 3, 0); bpmrow.setSpacing(4)
-        bpm_label = QLabel("BPM"); bpmrow.addWidget(bpm_label); bpmrow.addWidget(self.quick_extract_bpm_switch); bpmrow.addWidget(self.quick_extract_bpm)
+        bpm_label = QLabel("BPM"); self.quick_extract_bpm_label = bpm_label; bpm_label.setProperty("role", "targetLabel"); bpm_label.setFixedSize(24, 20); bpm_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter); bpmrow.addWidget(bpm_label); bpmrow.addWidget(self.quick_extract_bpm_switch); bpmrow.addWidget(self.quick_extract_bpm)
         # Keep three real pixels after the BPM field.  The extra allowance is
         # intentional: Qt's layout spacing otherwise consumes the nominal
         # right margin on Windows and visibly crops the field border.
-        bpm_line_width = max(115, bpm_label.sizeHint().width() + 34 + 50 + 11)
+        bpm_line_width = 116
         bpm_line.setFixedWidth(bpm_line_width); tl.addWidget(bpm_line, 1, 0)
-        self.quick_extract_key_switch = V16Toggle(True, "orange"); self.quick_extract_key_switch.setFixedWidth(34)
-        self.quick_extract_key = TargetKeySelector(); quick_extract_key_width = 110; self.quick_extract_key.setCompactWidth(quick_extract_key_width)
+        self.quick_extract_key_switch = V16Toggle(False, "orange"); self.quick_extract_key_switch.setFixedSize(31, 20)
+        self.quick_extract_key = TargetKeySelector(); quick_extract_key_width = 119; self.quick_extract_key.setCompactWidth(quick_extract_key_width); self.quick_extract_key.setFixedHeight(18)
         key_line = QWidget(); keyrow = QHBoxLayout(key_line); keyrow.setContentsMargins(0, 0, 3, 0); keyrow.setSpacing(4)
-        key_label = QLabel("KEY"); keyrow.addWidget(key_label); keyrow.addWidget(self.quick_extract_key_switch); keyrow.addWidget(self.quick_extract_key, 1)
-        key_line_width = max(168, key_label.sizeHint().width() + 34 + quick_extract_key_width + 11)
+        key_label = QLabel("KEY"); self.quick_extract_key_label = key_label; key_label.setProperty("role", "targetLabel"); key_label.setFixedSize(24, 20); key_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter); keyrow.addWidget(key_label); keyrow.addWidget(self.quick_extract_key_switch); keyrow.addWidget(self.quick_extract_key, 1)
+        key_line_width = 185
         key_line.setFixedWidth(key_line_width); tl.addWidget(key_line, 1, 1)
         tl.setColumnStretch(1, 1)
         left_layout.addWidget(target); extract_layout.addWidget(left, 0, 0)
@@ -1143,16 +1187,27 @@ class ValidatedMainWindow(FunctionalMainWindow):
         convert, convert_body = self._section("orange", "retarget", "QUICK CONVERT", "Convert one loop to a selected BPM and key.")
         convert.setFixedHeight(118); cg = QGridLayout(convert_body); cg.setContentsMargins(12, 0, 12, 6); cg.setHorizontalSpacing(8); cg.setVerticalSpacing(4)
         self.quick_convert_drop = V16DropZone("audio", "Drop one loop here", ORANGE, allowed_extensions={".mp3", ".wav", ".flac"}, dialog_parent=self); self.quick_convert_drop.setFixedWidth(270); cg.addWidget(self.quick_convert_drop, 0, 0)
-        settings = QFrame(); self.quick_convert_settings = settings; settings.setProperty("role", "inset"); setl = QHBoxLayout(settings); setl.setContentsMargins(8, 5, 8, 5); setl.setSpacing(5)
-        convert_bpm_label = QLabel("BPM"); setl.addWidget(convert_bpm_label); self.quick_convert_bpm_switch = V16Toggle(True, "orange"); self.quick_convert_bpm_switch.setFixedWidth(34); setl.addWidget(self.quick_convert_bpm_switch); self.quick_convert_bpm = QLineEdit("120"); self.quick_convert_bpm.setMaxLength(3); self.quick_convert_bpm.setFixedSize(50, 29); self.quick_convert_bpm.setAlignment(Qt.AlignCenter); setl.addWidget(self.quick_convert_bpm)
-        convert_key_label = QLabel("KEY"); setl.addWidget(convert_key_label); self.quick_convert_key_switch = V16Toggle(True, "orange"); self.quick_convert_key_switch.setFixedWidth(34); setl.addWidget(self.quick_convert_key_switch); self.quick_convert_key = TargetKeySelector(); self.quick_convert_key.setCompactWidth(116); setl.addWidget(self.quick_convert_key)
-        settings.setFixedWidth(318); cg.addWidget(settings, 0, 1)
-        result = QFrame(); result.setProperty("role", "resultLine"); rl = QHBoxLayout(result); rl.setContentsMargins(10, 4, 8, 4); rl.setSpacing(6)
+        settings = QFrame(); self.quick_convert_settings = settings; settings.setProperty("role", "inset"); settings.setFixedHeight(36); setl = QHBoxLayout(settings); setl.setContentsMargins(5, 7, 5, 7); setl.setSpacing(3)
+        convert_bpm_label = QLabel("BPM"); self.quick_convert_bpm_label = convert_bpm_label; convert_bpm_label.setProperty("role", "targetLabel"); convert_bpm_label.setFixedSize(24, 20); convert_bpm_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter); setl.addWidget(convert_bpm_label)
+        self.quick_convert_bpm_switch = V16Toggle(True, "orange"); self.quick_convert_bpm_switch.setFixedSize(31, 20); setl.addWidget(self.quick_convert_bpm_switch)
+        self.quick_convert_bpm = QLineEdit("120"); self.quick_convert_bpm.setProperty("role", "targetValue"); self.quick_convert_bpm.setMaxLength(3); self.quick_convert_bpm.setFixedSize(48, 18); self.quick_convert_bpm.setAlignment(Qt.AlignCenter); setl.addWidget(self.quick_convert_bpm)
+        convert_key_label = QLabel("KEY"); self.quick_convert_key_label = convert_key_label; convert_key_label.setProperty("role", "targetLabel"); convert_key_label.setFixedSize(24, 20); convert_key_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter); setl.addWidget(convert_key_label)
+        self.quick_convert_key_switch = V16Toggle(True, "orange"); self.quick_convert_key_switch.setFixedSize(31, 20); setl.addWidget(self.quick_convert_key_switch)
+        self.quick_convert_key = TargetKeySelector(); self.quick_convert_key.setCompactWidth(118); self.quick_convert_key.setFixedHeight(18); setl.addWidget(self.quick_convert_key)
+        settings.setFixedWidth(306); cg.addWidget(settings, 0, 1)
+        self.quick_convert_button = QPushButton("CONVERT")
+        self.quick_convert_button.setProperty("role", "convertAction")
+        self.quick_convert_button.setFixedSize(70, 36)
+        self.quick_convert_button.setEnabled(False)
+        self.quick_convert_button.clicked.connect(self._start_quick_convert)
+        cg.addWidget(self.quick_convert_button, 0, 2, Qt.AlignVCenter)
+        result = QFrame(); self.quick_convert_result = result; result.setProperty("role", "resultLine"); result.setFixedHeight(36); rl = QHBoxLayout(result); rl.setContentsMargins(10, 4, 8, 4); rl.setSpacing(6)
+        result.setMinimumWidth(310)
         self.quick_convert_check = LineIcon("check", GREEN, 15); self.quick_convert_check.setVisible(False); rl.addWidget(self.quick_convert_check)
         result_copy = QWidget(); result_copy_layout = QVBoxLayout(result_copy); result_copy_layout.setContentsMargins(0, 0, 0, 0); result_copy_layout.setSpacing(0); result_copy_layout.addStretch()
-        self.quick_convert_filename = QLabel(""); self.quick_convert_filename.setProperty("role", "statusFile"); result_copy_layout.addWidget(self.quick_convert_filename)
+        self.quick_convert_filename = MiddleElideLabel(""); self.quick_convert_filename.setProperty("role", "statusFile"); result_copy_layout.addWidget(self.quick_convert_filename)
         self.quick_convert_status = QLabel(""); self.quick_convert_status.setProperty("role", "statusDetail"); result_copy_layout.addWidget(self.quick_convert_status); result_copy_layout.addStretch(); rl.addWidget(result_copy, 1)
-        self.quick_convert_drag = FileDragHandle(""); self.quick_convert_drag.setEnabled(False); rl.addWidget(self.quick_convert_drag); cg.addWidget(result, 0, 2)
+        self.quick_convert_drag = FileDragHandle(""); self.quick_convert_drag.setEnabled(False); rl.addWidget(self.quick_convert_drag); cg.addWidget(result, 0, 3)
         convert_storage_footer = QWidget(); self.quick_convert_storage_footer = convert_storage_footer; convert_storage_footer.setFixedHeight(32); csfl = QHBoxLayout(convert_storage_footer); csfl.setContentsMargins(7, 2, 0, 1); csfl.setSpacing(7)
         csfl.addWidget(LineIcon("drive", "#9da5ac", 20)); self.quick_convert_storage_label = QLabel("0 conversions · 0 o"); self.quick_convert_storage_label.setProperty("role", "storage"); csfl.addWidget(self.quick_convert_storage_label); csfl.addStretch()
         convert_status_footer = QWidget(); self.quick_convert_status_footer = convert_status_footer; convert_status_footer.setFixedHeight(32); cstfl = QHBoxLayout(convert_status_footer); cstfl.setContentsMargins(7, 2, 0, 1); cstfl.setSpacing(7)
@@ -1163,9 +1218,9 @@ class ValidatedMainWindow(FunctionalMainWindow):
         open_convert = QPushButton("OPEN OUTPUT FOLDER"); open_convert.setProperty("accent", "orange"); open_convert.clicked.connect(self._open_quick_convert_root)
         manage_convert = QPushButton("MANAGE"); manage_convert.setProperty("accent", "orange"); manage_convert.clicked.connect(self._manage_quick_convert_storage); cfl.addWidget(open_convert); cfl.addWidget(manage_convert)
         cg.addWidget(convert_storage_footer, 1, 0)
-        cg.addWidget(convert_status_footer, 1, 1)
-        cg.addWidget(convert_actions_footer, 1, 2)
-        cg.setColumnStretch(2, 1); layout.addWidget(convert); self.quick_convert_drop.pathChanged.connect(self._quick_convert_requested)
+        cg.addWidget(convert_status_footer, 1, 1, 1, 2)
+        cg.addWidget(convert_actions_footer, 1, 3)
+        cg.setColumnStretch(3, 1); layout.addWidget(convert); self.quick_convert_drop.pathChanged.connect(self._quick_convert_source_changed)
 
         self._refresh_quick_storage(); self._refresh_quick_convert_storage()
         return page
@@ -1293,6 +1348,29 @@ class ValidatedMainWindow(FunctionalMainWindow):
         self.quick_extract_key_switch.setEnabled(not extract_busy)
         self.quick_convert_bpm_switch.setEnabled(not convert_busy)
         self.quick_convert_key_switch.setEnabled(not convert_busy)
+        if hasattr(self, "quick_convert_button"):
+            bpm_enabled = self.quick_convert_bpm_switch.isChecked()
+            key_enabled = self.quick_convert_key_switch.isChecked()
+            bpm_valid = not bpm_enabled or self._valid_bpm(self.quick_convert_bpm.text()) is not None
+            source_ready = bool(self.quick_convert_path and os.path.isfile(self.quick_convert_path))
+            another_operation_busy = bool(
+                extract_busy
+                or getattr(self, "quick_scan_busy", False)
+                or getattr(self, "busy", False)
+            )
+            self.quick_convert_button.setEnabled(
+                source_ready
+                and (bpm_enabled or key_enabled)
+                and bpm_valid
+                and not convert_busy
+                and not another_operation_busy
+            )
+            if convert_busy:
+                self.quick_convert_button.setText(
+                    "LOADING…" if self.key_engine_state != "ready" else "CONVERTING…"
+                )
+            else:
+                self.quick_convert_button.setText("CONVERT")
 
     def _update_name_preview(self):
         super()._update_name_preview()
@@ -1413,7 +1491,11 @@ class ValidatedMainWindow(FunctionalMainWindow):
             self._run_quick_extract(path)
         if self.pending_quick_convert:
             path, self.pending_quick_convert = self.pending_quick_convert, ""
-            self._run_quick_convert(path)
+            try:
+                self._run_quick_convert(path)
+            except Exception as exc:
+                self._quick_convert_failed(str(exc))
+                self._quick_convert_finished()
         QTimer.singleShot(0, self._start_midi_engine)
 
     @Slot(str)
@@ -1437,6 +1519,7 @@ class ValidatedMainWindow(FunctionalMainWindow):
     def _quick_extract_requested(self, path):
         if not path or self.quick_extract_busy or self.quick_scan_busy or self.quick_convert_busy or self.busy:
             return
+        self.quick_extract_elapsed = 0.0
         bpm_enabled = self.quick_extract_bpm_switch.isChecked()
         key_enabled = self.quick_extract_key_switch.isChecked()
         bpm = self._valid_bpm(self.quick_extract_bpm.text())
@@ -1476,6 +1559,12 @@ class ValidatedMainWindow(FunctionalMainWindow):
         if self.quick_extract_busy or self.quick_convert_busy or self.busy:
             return
         super()._quick_scan_requested(path)
+        self._sync_quick_target_fields()
+
+    @Slot()
+    def _quick_scan_finished(self):
+        super()._quick_scan_finished()
+        self._sync_quick_target_fields()
 
     def _run_quick_extract(self, path):
         session_name = os.path.splitext(os.path.basename(path))[0]
@@ -1511,8 +1600,38 @@ class ValidatedMainWindow(FunctionalMainWindow):
         self.quick_extract_worker = None
         self._sync_quick_target_fields()
 
-    def _quick_convert_requested(self, path):
+    def _quick_convert_source_changed(self, path):
+        """Stage one source without starting analysis or conversion."""
+        if self.quick_convert_busy:
+            return
+        self.quick_convert_path = path if path and os.path.isfile(path) else ""
+        self.pending_quick_convert = ""
+        self.quick_convert_drag.set_path("")
+        self.quick_convert_check.setVisible(False)
+        self.quick_convert_footer_check.setVisible(False)
+        self.quick_convert_filename.setFullText("")
+        self.quick_convert_filename.setToolTip("")
+        if self.quick_convert_path:
+            source_name = os.path.basename(self.quick_convert_path)
+            source_size = format_decimal_size(os.path.getsize(self.quick_convert_path))
+            self.quick_convert_status.setText("Ready to convert.")
+            self.quick_convert_footer_filename.setText(source_name)
+            self.quick_convert_footer_filename.setToolTip(self.quick_convert_path)
+            self.quick_convert_footer_status.setText(f"Loaded · {source_size}")
+        else:
+            self.quick_convert_status.setText("")
+            self.quick_convert_footer_filename.setText("Ready for one loop.")
+            self.quick_convert_footer_filename.setToolTip("")
+            self.quick_convert_footer_status.setText("")
+        self._sync_quick_target_fields()
+
+    def _start_quick_convert(self):
+        path = self.quick_convert_path
         if not path or self.quick_convert_busy or self.quick_extract_busy or self.quick_scan_busy or self.busy:
+            return
+        if not os.path.isfile(path):
+            self.quick_convert_status.setText("The loaded source is no longer available.")
+            self._sync_quick_target_fields()
             return
         bpm_enabled = self.quick_convert_bpm_switch.isChecked()
         key_enabled = self.quick_convert_key_switch.isChecked()
@@ -1524,9 +1643,8 @@ class ValidatedMainWindow(FunctionalMainWindow):
             self.quick_convert_status.setText("Enter a valid target BPM.")
             return
         self.quick_convert_busy = True
-        self.quick_convert_path = path
         self.quick_convert_drag.set_path("")
-        self.quick_convert_filename.setText(os.path.basename(path))
+        self.quick_convert_filename.setFullText(os.path.basename(path))
         self.quick_convert_footer_filename.setText(os.path.basename(path))
         self.quick_convert_check.setVisible(False)
         self.quick_convert_footer_check.setVisible(False)
@@ -1536,16 +1654,24 @@ class ValidatedMainWindow(FunctionalMainWindow):
         self.quick_convert_drop.setEnabled(False)
         self._sync_quick_target_fields()
         if self.key_engine_state == "ready":
-            self._run_quick_convert(path)
-        elif self.key_engine_state == "failed":
-            self._quick_convert_failed("Key engine unavailable.")
-            self._quick_convert_finished()
+            try:
+                self._run_quick_convert(path)
+            except Exception as exc:
+                self._quick_convert_failed(str(exc))
+                self._quick_convert_finished()
         else:
             self.pending_quick_convert = path
-            if self.key_engine_state == "unloaded":
+            # A previous engine-load failure can be transient (for example a
+            # file lock during startup).  A deliberate second CONVERT click is
+            # therefore a real retry instead of immediately replaying the old
+            # error state.
+            if self.key_engine_state in ("unloaded", "failed"):
                 self._start_key_engine()
 
     def _run_quick_convert(self, path):
+        self.quick_convert_button.setText("CONVERTING…")
+        self.quick_convert_status.setText("Converting…")
+        self.quick_convert_footer_status.setText("Converting…")
         session_name = os.path.splitext(os.path.basename(path))[0]
         self.quick_convert_session = self.storage.unique_session_folder("convert", session_name)
         self.quick_convert_thread = QThread(self)
@@ -1572,7 +1698,7 @@ class ValidatedMainWindow(FunctionalMainWindow):
     def _quick_convert_completed(self, result, elapsed):
         self.quick_convert_check.setVisible(True)
         self.quick_convert_footer_check.setVisible(True)
-        self.quick_convert_filename.setText(os.path.basename(result["path"]))
+        self.quick_convert_filename.setFullText(os.path.basename(result["path"]))
         self.quick_convert_filename.setToolTip(result["path"])
         self.quick_convert_footer_filename.setText(os.path.basename(result["path"]))
         self.quick_convert_footer_filename.setToolTip(result["path"])
@@ -1596,6 +1722,13 @@ class ValidatedMainWindow(FunctionalMainWindow):
         self.quick_convert_drop.setEnabled(True)
         self.quick_convert_thread = None
         self.quick_convert_worker = None
+        self._sync_quick_target_fields()
+
+    @Slot()
+    def _batch_finished(self):
+        super()._batch_finished()
+        # Starting a batch disables every Quick Convert action.  Restore the
+        # cached source's CONVERT button as soon as the batch releases the app.
         self._sync_quick_target_fields()
 
     def _start_batch(self):
@@ -1635,17 +1768,12 @@ class ValidatedMainWindow(FunctionalMainWindow):
 
         self.busy = True
         self.progress_bar.setValue(0)
-        self._batch_source_total = sum(
-            name.lower().endswith(".mp3") for name in os.listdir(self.source_path)
-        )
-        if sys.platform == "win32":
-            self.progress_counter.setText(f"0 / {self._batch_source_total}")
-        else:
-            self.progress_counter.setText("0 / 0")
+        self.progress_counter.setText("0 / 0")
         self.success_stat.setText("0 SUCCESSFUL")
         self.error_stat.setText("0 ERRORS")
         self.process_status.setText("Preparing audio engine…")
         self._sync_stem_state()
+        self._sync_quick_target_fields()
 
         self.batch_thread = QThread(self)
         self.batch_worker = BatchWorkflowWorker(
@@ -1665,18 +1793,6 @@ class ValidatedMainWindow(FunctionalMainWindow):
         self.batch_thread.finished.connect(self._batch_finished)
         self.batch_thread.start()
 
-    @Slot(int, int, str)
-    def _batch_progress(self, current, total, status):
-        if sys.platform != "win32":
-            super()._batch_progress(current, total, status)
-            return
-        fraction = min(1.0, max(0.0, float(current) / total)) if total else 0.0
-        source_total = getattr(self, "_batch_source_total", 0)
-        source_current = min(source_total, round(fraction * source_total))
-        self.progress_bar.setValue(round(fraction * 100))
-        self.progress_counter.setText(f"{source_current} / {source_total}")
-        self.process_status.setText(status)
-
     @Slot(object, object)
     def _batch_completed(self, failures, manifest):
         self.progress_bar.setValue(100)
@@ -1684,8 +1800,6 @@ class ValidatedMainWindow(FunctionalMainWindow):
         total = 0
         if self.source_path and os.path.isdir(self.source_path):
             total = sum(name.lower().endswith(".mp3") for name in os.listdir(self.source_path))
-        if sys.platform == "win32":
-            self.progress_counter.setText(f"{total} / {total}")
         failed_files = {item[0] for item in failures}
         self.success_stat.setText(f"{max(0, total - len(failed_files))} SUCCESSFUL")
         self.error_stat.setText(f"{len(failed_files)} ERRORS")
