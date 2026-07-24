@@ -22,25 +22,18 @@ jobs:
       - name: Check out Stem Slicer
         uses: actions/checkout@v7
 
-      - name: Build official CPython 3.12.13 x64
-        shell: pwsh
-        run: |
-          git clone --branch v3.12.13 --depth 1 https://github.com/python/cpython.git cpython-source
-          Push-Location cpython-source
-          if ((git rev-parse HEAD).Trim() -ne "3bb231a6a5dc02b95658877318bf61501a7209e9") {
-            throw "CPython source is not at the pinned 3.12.13 commit."
-          }
-          Set-Content -Path "PCbuild/msbuild.rsp" -Value "/p:PlatformToolset=v143"
-          & "PCbuild/build.bat" -e -p x64
-          if ($LASTEXITCODE -ne 0) { throw "CPython 3.12.13 x64 build failed." }
-          $python = (Resolve-Path "PCbuild/amd64/python.exe").Path
-          & $python -m ensurepip --upgrade
-          if ($LASTEXITCODE -ne 0) { throw "Could not bootstrap pip in CPython 3.12.13." }
-          $pythonDirectory = Split-Path $python
-          $env:Path = "$pythonDirectory;$env:Path"
-          Add-Content -Path $env:GITHUB_PATH -Value $pythonDirectory
-          Pop-Location
-          python -c "import platform, sys; assert sys.version_info[:3] == (3, 12, 13), sys.version; assert platform.architecture()[0] == '64bit', platform.architecture()"
+      - name: Set up official CPython 3.12.10 x64
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12.10"
+          architecture: "x64"
+          check-latest: false
+
+      - name: Verify official Windows runtime
+        run: >-
+          python -c "import platform, sys;
+          assert sys.version_info[:3] == (3, 12, 10), sys.version;
+          assert platform.architecture()[0] == '64bit', platform.architecture()"
 
       - name: Set up MinGW for the pinned Bungee build
         uses: msys2/setup-msys2@v2
@@ -74,7 +67,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
           python -m pip check
-          python -c "import platform, sys, PySide6; assert sys.version_info[:3] == (3, 12, 13), sys.version; assert PySide6.__version__ == '6.11.1', PySide6.__version__; assert platform.architecture()[0] == '64bit', platform.architecture()"
+          python -c "import platform, sys, PySide6; assert sys.version_info[:3] == (3, 12, 10), sys.version; assert PySide6.__version__ == '6.11.1', PySide6.__version__; assert platform.architecture()[0] == '64bit', platform.architecture()"
 
       - name: Build the validated custom key and BPM analyzer
         shell: pwsh
@@ -158,6 +151,12 @@ jobs:
           tests.test_qt_interface.QtInterfaceTests.test_validated_drop_zones_accept_copy_through_graphics_view
           tests.test_qt_interface.QtInterfaceTests.test_windows_browse_dialog_uses_stable_top_level_owner
           -v
+
+      - name: Run native Windows Quick Extract MIDI lifecycle regression
+        env:
+          QT_QPA_PLATFORM: windows
+          STEM_SLICER_DISABLE_ENGINE_AUTOSTART: "1"
+        run: python scripts/smoke_midi_lifecycle.py
 
       - name: Build Windows application
         shell: pwsh

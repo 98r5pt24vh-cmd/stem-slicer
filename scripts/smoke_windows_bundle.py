@@ -105,7 +105,7 @@ def main():
             runtime = json.load(result_file)
         expected_runtime = {
             "app_version": "1.8.2B",
-            "python": "3.12.13",
+            "python": "3.12.10",
             "pyside6": "6.11.1",
             "frozen": True,
         }
