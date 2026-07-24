@@ -30,7 +30,7 @@ class WindowsReleaseConfigTests(unittest.TestCase):
         self.assertIn("Build Stem Slicer 1.8.2B for Windows", workflow)
         self.assertIn("Build official CPython 3.12.13 x64", workflow)
         self.assertIn("3bb231a6a5dc02b95658877318bf61501a7209e9", workflow)
-        self.assertIn('PCbuild/build.bat" -e -p x64', workflow)
+        self.assertIn('PCbuild/build.bat" -e -p x64 "/p:PlatformToolset=v143"', workflow)
         self.assertIn("PySide6==6.11.1", self._read("requirements.txt"))
         self.assertIn("746833f68a574d997ec50443e7cfd2d37b026302", workflow)
         self.assertIn("-DBUNGEE_VERSION=2.4.24", workflow)
