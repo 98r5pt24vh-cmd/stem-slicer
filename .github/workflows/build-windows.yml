@@ -2,6 +2,15 @@ name: Build Stem Slicer 1.8.2B for Windows
 
 on:
   workflow_dispatch:
+    inputs:
+      mode:
+        description: Select a full build or the isolated MIDI startup diagnostic
+        required: true
+        default: build
+        type: choice
+        options:
+          - build
+          - diagnose-midi
   push:
     branches:
       - main
@@ -10,7 +19,62 @@ permissions:
   contents: read
 
 jobs:
+  diagnose-midi:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'diagnose-midi' }}
+    name: ${{ matrix.label }}
+    runs-on: windows-2025
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: 1.5S validated · main thread
+            source_ref: 97694c2ce096dfa866fd797766dec20073a6a67e
+            mode: main
+          - label: 1.5S validated · background thread
+            source_ref: 97694c2ce096dfa866fd797766dec20073a6a67e
+            mode: background
+          - label: 1.8.2B current · main thread
+            source_ref: codex/windows-1.8.2b
+            mode: main
+          - label: 1.8.2B current · background thread
+            source_ref: codex/windows-1.8.2b
+            mode: background
+
+    steps:
+      - name: Check out diagnostic tools
+        uses: actions/checkout@v7
+        with:
+          path: diagnostic-tools
+
+      - name: Check out comparison source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ matrix.source_ref }}
+          path: source
+
+      - name: Set up validated Windows runtime
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12.10"
+          architecture: "x64"
+          check-latest: false
+
+      - name: Install MIDI dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r source/requirements.txt
+          python -m pip check
+
+      - name: Measure cold MIDI startup with a strict 30-second limit
+        run: >-
+          python diagnostic-tools/scripts/diagnose_midi_startup.py
+          --source-root source
+          --mode ${{ matrix.mode }}
+          --timeout 30
+
   build-windows:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode != 'diagnose-midi' }}
     runs-on: windows-2025
     timeout-minutes: 120
 
