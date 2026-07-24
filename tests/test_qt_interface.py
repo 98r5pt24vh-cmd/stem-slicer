@@ -872,7 +872,7 @@ class QtInterfaceTests(unittest.TestCase):
         paths = [f"/private/tmp/layer-{index}.mp3" for index in range(1, 4)]
         window.quick_drag_all.set_paths(paths)
         self.assertTrue(window.quick_drag_all.isEnabled())
-        self.assertEqual(window.quick_drag_all.paths, paths)
+        self.assertEqual(window.quick_drag_all.paths, [os.path.abspath(path) for path in paths])
         self.assertIn("3 layers", window.quick_drag_all.toolTip())
         window.quick_drag_all.set_paths([])
         self.assertFalse(window.quick_drag_all.isEnabled())
