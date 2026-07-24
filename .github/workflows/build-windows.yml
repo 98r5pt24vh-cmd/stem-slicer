@@ -28,18 +28,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - label: 1.5S validated · main thread
+          - label: 1.5S validated · QApplication + MIDI thread
             source_ref: 97694c2ce096dfa866fd797766dec20073a6a67e
-            mode: main
-          - label: 1.5S validated · background thread
+            mode: qt-background
+          - label: 1.5S validated · real MainWindow lifecycle
             source_ref: 97694c2ce096dfa866fd797766dec20073a6a67e
-            mode: background
-          - label: 1.8.2B current · main thread
+            mode: window-lifecycle
+          - label: 1.8.2B current · QApplication + MIDI thread
             source_ref: codex/windows-1.8.2b
-            mode: main
-          - label: 1.8.2B current · background thread
+            mode: qt-background
+          - label: 1.8.2B current · real MainWindow lifecycle
             source_ref: codex/windows-1.8.2b
-            mode: background
+            mode: window-lifecycle
 
     steps:
       - name: Check out diagnostic tools

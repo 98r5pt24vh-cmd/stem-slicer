@@ -64,10 +64,45 @@ def worker(source_root: Path, mode: str) -> int:
 
     if mode == "main":
         target()
-    else:
+    elif mode == "background":
         thread = threading.Thread(target=target, name="StemSlicerMidiLoader", daemon=True)
         thread.start()
         thread.join()
+    elif mode == "qt-background":
+        os.environ["STEM_SLICER_DISABLE_ENGINE_AUTOSTART"] = "1"
+        os.chdir(source_root)
+        sys.path.insert(0, str(source_root))
+        from PySide6.QtWidgets import QApplication
+
+        application = QApplication.instance() or QApplication([])
+        report("QApplication ready")
+        thread = threading.Thread(target=target, name="StemSlicerMidiLoader", daemon=True)
+        thread.start()
+        while thread.is_alive():
+            application.processEvents()
+            thread.join(0.01)
+        application.processEvents()
+        report("QApplication + MIDI thread complete")
+    else:
+        os.environ["STEM_SLICER_DISABLE_ENGINE_AUTOSTART"] = "1"
+        os.chdir(source_root)
+        sys.path.insert(0, str(source_root))
+        threading.setprofile(profile)
+        from PySide6.QtWidgets import QApplication
+        from app import MainWindow
+
+        application = QApplication.instance() or QApplication([])
+        report("QApplication ready")
+        window = MainWindow()
+        report("MainWindow ready")
+        window._start_midi_engine()
+        report("MainWindow MIDI start requested")
+        while window.midi_engine_state not in {"ready", "failed"}:
+            application.processEvents()
+            time.sleep(0.01)
+        report(f"MainWindow MIDI state={window.midi_engine_state}")
+        window.close()
+        application.processEvents()
     if failure:
         return 1
     report("worker:complete")
@@ -106,7 +141,11 @@ def supervise(arguments) -> int:
 def parse_arguments():
     parser = argparse.ArgumentParser()
     parser.add_argument("--source-root", type=Path, required=True)
-    parser.add_argument("--mode", choices=("main", "background"), required=True)
+    parser.add_argument(
+        "--mode",
+        choices=("main", "background", "qt-background", "window-lifecycle"),
+        required=True,
+    )
     parser.add_argument("--timeout", type=int, default=30)
     parser.add_argument("--worker", action="store_true")
     return parser.parse_args()
