@@ -1,4 +1,4 @@
-"""Validated 1.8B orchestration shared by the native interface.
+"""Validated 1.8.2B orchestration shared by the native interface.
 
 This module keeps UI code away from the audio pipeline.  A loop is analyzed at
 most once per operation, extraction always precedes conversion, and converted

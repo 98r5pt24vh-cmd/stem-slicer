@@ -1,4 +1,4 @@
-"""Native PySide6 port of the validated Stem Slicer 1.8B interface.
+"""Native PySide6 port of the validated Stem Slicer 1.8.2B interface.
 
 The HTML prototype remains the visual specification only.  This module builds
 the same fixed 1024 x 691 working surface with native Qt widgets and reuses the
@@ -42,6 +42,7 @@ from functional_core import (
     TARGET_KEYS,
     canonical_loop_bpm,
     FileDragHandle,
+    MultiFileDragHandle,
     LayerCard,
     LineIcon,
     MainWindow as FunctionalMainWindow,
@@ -187,6 +188,9 @@ def validated_stylesheet() -> str:
     QScrollArea[role="layers"], QScrollArea[role="layers"] > QWidget > QWidget {{ background: #0e1215; border: 1px solid #30373d; border-radius: 6px; }}
     QScrollArea[role="layers"] > QWidget > QWidget {{ border: none; }}
     QFrame[role="layerCard"] {{ background: #12171a; border: 1px solid #323a41; border-radius: 6px; }}
+    QFrame[role="dragAll"] {{ background: #11191e; border: 1px solid #3c4850; border-radius: 8px; }}
+    QFrame[role="dragAll"]:disabled {{ background: #0d1317; border-color: #273138; }}
+    QLabel[role="dragAllLabel"] {{ color: #e9eef1; font-size: 9px; font-weight: 900; }}
     QLabel[role="layerName"] {{ color: #e0e6e9; font-size: 9px; font-weight: 750; }}
     QLabel[role="cardMeta"] {{ color: #87959e; font-family: "SF Mono"; font-size: 7px; }}
     QPushButton[role="layerPlay"] {{ padding: 0; border-radius: 12px; color: #57d84e; font-size: 10px; }}
@@ -941,7 +945,7 @@ class ValidatedMainWindow(FunctionalMainWindow):
         copy.addWidget(made); copy.addWidget(anti); copy.addStretch(); bl.addLayout(copy); bl.addStretch(); row.addWidget(brand)
         row.addStretch(); row.addWidget(image(resource_path("assets", "stem-slicer-wordmark.png"), 235, 50)); row.addStretch()
         build = QWidget(); build.setFixedWidth(280); br = QHBoxLayout(build); br.setContentsMargins(0, 0, 0, 0); br.setSpacing(12); br.addStretch()
-        bc = QVBoxLayout(); bc.setSpacing(2); title = QLabel("LOOP LAYER EXTRACTION SYSTEM"); version = QLabel("1.8B")
+        bc = QVBoxLayout(); bc.setSpacing(2); title = QLabel("LOOP LAYER EXTRACTION SYSTEM"); version = QLabel("1.8.2B")
         title.setStyleSheet("color:#7e8a92;font-size:9px;font-weight:700"); version.setStyleSheet("color:#7e8a92;font-family:'SF Mono';font-size:9px;font-weight:700")
         title.setAlignment(Qt.AlignRight); version.setAlignment(Qt.AlignRight); bc.addWidget(title); bc.addWidget(version); br.addLayout(bc)
         self.scale_select = ScaleSelector()
@@ -1123,6 +1127,8 @@ class ValidatedMainWindow(FunctionalMainWindow):
     def _quick_page(self):
         page = QWidget(); layout = QVBoxLayout(page); layout.setContentsMargins(9, 9, 9, 9); layout.setSpacing(9)
         extract, extract_body = self._section("red", "layers", "QUICK EXTRACT", "Extract layers from one loop, with optional target transformation.")
+        self.quick_drag_all = MultiFileDragHandle()
+        extract.layout().itemAt(0).widget().layout().addWidget(self.quick_drag_all, 0, Qt.AlignVCenter)
         extract_layout = QGridLayout(extract_body); extract_layout.setContentsMargins(12, 0, 12, 7); extract_layout.setHorizontalSpacing(8); extract_layout.setVerticalSpacing(4)
         left = QWidget(); left.setFixedWidth(322); left_layout = QVBoxLayout(left); left_layout.setContentsMargins(0, 0, 0, 0); left_layout.setSpacing(7)
         self.quick_extract_drop = V16DropZone("audio", "Drop one loop here", RED, allowed_extensions={".mp3"}, vertical=True, dialog_parent=self); left_layout.addWidget(self.quick_extract_drop, 1)
@@ -1260,7 +1266,8 @@ class ValidatedMainWindow(FunctionalMainWindow):
         self._layer_card_generation = getattr(self, "_layer_card_generation", 0) + 1
         generation = self._layer_card_generation
         self._layer_cards_rendering = False
-        self._deferred_midi_layers = None
+        if hasattr(self, "quick_drag_all"):
+            self.quick_drag_all.set_paths([layer["path"] for layer in layers])
         while self.quick_layer_grid.count():
             item = self.quick_layer_grid.takeAt(0)
             if item.widget():
@@ -1270,13 +1277,14 @@ class ValidatedMainWindow(FunctionalMainWindow):
         self.layer_cards = []
         self.quick_layers_empty_state = None; self.quick_layers_empty_icon = None
         if layers:
+            self._layer_cards_rendering = True
             rows = (len(layers) + 2) // 3
             self.quick_layer_content.setMinimumHeight(8 + rows * 86)
             self.quick_layer_grid.setRowStretch(rows, 1)
-            self._layer_cards_rendering = True
-            # Render one visual row per event-loop turn. The extraction is
-            # already complete; this prevents native card construction and
-            # waveform setup from freezing either macOS or Windows.
+
+            # Creating many native Qt cards in one slot blocks the event loop
+            # long enough for the interface to appear unresponsive. Render one
+            # visual row per event-loop turn while MIDI runs independently.
             pending_layers = list(layers)
 
             def render_next_row(start_index=0):
@@ -1290,14 +1298,13 @@ class ValidatedMainWindow(FunctionalMainWindow):
                     card.seekRequested.connect(self._seek_layer)
                     self.quick_layer_grid.addWidget(card, index // 3, index % 3)
                     self.layer_cards.append(card)
+                    pending_midi = self.pending_midi_paths.pop(layer["path"], None)
+                    if pending_midi is not None:
+                        card.setMidiPath(pending_midi)
                 if stop_index < len(pending_layers):
                     QTimer.singleShot(0, lambda next_index=stop_index: render_next_row(next_index))
                 else:
                     self._layer_cards_rendering = False
-                    deferred_layers = self._deferred_midi_layers
-                    self._deferred_midi_layers = None
-                    if deferred_layers is not None:
-                        FunctionalMainWindow._queue_midi_conversion(self, deferred_layers)
 
             QTimer.singleShot(0, render_next_row)
             return
@@ -1309,10 +1316,7 @@ class ValidatedMainWindow(FunctionalMainWindow):
         self.quick_layers_empty_state = state; self.quick_layer_grid.addWidget(state, 0, 0, 1, 3); self.quick_layer_grid.setRowStretch(0, 1)
 
     def _queue_midi_conversion(self, layers):
-        """Start MIDI only after every incrementally rendered card exists."""
-        if getattr(self, "_layer_cards_rendering", False):
-            self._deferred_midi_layers = list(layers)
-            return
+        """Run MIDI independently while cards render cooperatively."""
         super()._queue_midi_conversion(layers)
 
     def _connect_stem_controls(self):

@@ -1,4 +1,4 @@
-name: Build Stem Slicer 1.8B for Windows
+name: Build Stem Slicer 1.8.2B for Windows
 
 on:
   workflow_dispatch:
@@ -22,10 +22,10 @@ jobs:
       - name: Check out Stem Slicer
         uses: actions/checkout@v7
 
-      - name: Set up Python 3.12
+      - name: Set up Python 3.12.13 x64
         uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          python-version: "3.12.13"
           architecture: "x64"
 
       - name: Set up MinGW for the pinned Bungee build
@@ -60,6 +60,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
           python -m pip check
+          python -c "import platform, sys, PySide6; assert sys.version_info[:3] == (3, 12, 13), sys.version; assert PySide6.__version__ == '6.11.1', PySide6.__version__; assert platform.architecture()[0] == '64bit', platform.architecture()"
 
       - name: Build the validated custom key and BPM analyzer
         shell: pwsh
@@ -152,14 +153,14 @@ jobs:
           # build prevents PyInstaller from collecting its Torch DLLs twice.
           Copy-Item -Recurse -Force `
             "vendor-windows/openkeyscan-analyzer" `
-            "dist/Stem Slicer 1.8B/_internal/openkeyscan-analyzer"
+            "dist/Stem Slicer 1.8.2B/_internal/openkeyscan-analyzer"
 
       - name: Smoke-test the packaged Windows application
         shell: pwsh
         env:
           STEM_SLICER_KEY_DEBUG: "1"
         run: |
-          python scripts/smoke_windows_bundle.py "dist/Stem Slicer 1.8B" 2>&1 | Tee-Object -FilePath smoke-test.log
+          python scripts/smoke_windows_bundle.py "dist/Stem Slicer 1.8.2B" 2>&1 | Tee-Object -FilePath smoke-test.log
           if ($LASTEXITCODE -ne 0) {
             $message = (Get-Content smoke-test.log -Raw).Replace("%", "%25").Replace("`r", "").Replace("`n", "%0A")
             Write-Output "::error title=Windows bundle smoke test::$message"
@@ -167,12 +168,12 @@ jobs:
           }
 
       - name: Audit Windows bundle
-        run: python scripts/audit_windows_bundle.py "dist/Stem Slicer 1.8B"
+        run: python scripts/audit_windows_bundle.py "dist/Stem Slicer 1.8.2B"
 
       - name: Upload Windows build
         uses: actions/upload-artifact@v7
         with:
-          name: Stem-Slicer-1.8B-Windows
-          path: dist/Stem Slicer 1.8B
+          name: Stem-Slicer-1.8.2B-Windows
+          path: dist/Stem Slicer 1.8.2B
           compression-level: 6
           if-no-files-found: error

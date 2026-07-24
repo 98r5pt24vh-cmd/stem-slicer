@@ -75,7 +75,7 @@ def _ensure_directory(path: Path, fallback_name: str) -> Path:
         return fallback
 
 
-def configure_runtime_environment(app_name: str = "Stem Slicer", version: str = "1.8B") -> dict:
+def configure_runtime_environment(app_name: str = "Stem Slicer", version: str = "1.8.2B") -> dict:
     """Redirect mutable caches to user-writable locations outside the bundle.
 
     The returned mapping contains string paths and the environment variables
@@ -413,7 +413,7 @@ class RuntimeDiagnostics:
     def __init__(
         self,
         app_name: str = "Stem Slicer",
-        version: str = "1.8B",
+        version: str = "1.8.2B",
         *,
         environment: dict | None = None,
         log_root: str | os.PathLike[str] | None = None,
@@ -1004,7 +1004,7 @@ _NOOP_DIAGNOSTICS: RuntimeDiagnostics = _NoopRuntimeDiagnostics()
 
 def initialize_diagnostics(
     app_name: str = "Stem Slicer",
-    version: str = "1.8B",
+    version: str = "1.8.2B",
     *,
     environment: dict | None = None,
     log_root: str | os.PathLike[str] | None = None,

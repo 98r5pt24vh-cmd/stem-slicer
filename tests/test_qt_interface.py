@@ -809,34 +809,73 @@ class QtInterfaceTests(unittest.TestCase):
         self.assertIn("1 MIDI file ready", window.quick_extract_status.text())
         window.close()
 
-    def test_layer_cards_render_incrementally_before_midi_starts(self):
+    def test_midi_starts_while_layer_cards_render_incrementally(self):
         window = MainWindow()
         layers = [
             {
-                "path": f"/private/tmp/layer-{index}.mp3",
-                "name": f"layer-{index}.mp3",
+                "path": f"/private/tmp/parallel-layer-{index}.mp3",
+                "name": f"parallel-layer-{index}.mp3",
                 "bpm": 140,
                 "duration": 1.0,
                 "bytes": 32,
                 "peaks": [0.0] * 72,
             }
-            for index in range(17)
+            for index in range(7)
         ]
+        window.midi_engine_state = "ready"
+        window.midi_worker = type("Worker", (), {"latest_job_id": 0})()
+        requests = []
+        window.midiRequested.connect(lambda *args: requests.append(args))
+        window._populate_layer_cards(layers)
+        self.assertEqual(window.layer_cards, [])
+        window._queue_midi_conversion(layers)
+        self.assertEqual(len(requests), 1)
+        self.assertTrue(window._layer_cards_rendering)
+        deadline = time.monotonic() + 2.0
+        while len(window.layer_cards) < len(layers) and time.monotonic() < deadline:
+            QTest.qWait(10)
+        self.assertEqual(len(window.layer_cards), len(layers))
+        window.close()
 
-        with patch.object(validated_ui.FunctionalMainWindow, "_queue_midi_conversion") as start_midi:
-            window._populate_layer_cards(layers)
-            self.assertEqual(window.layer_cards, [])
-            window._queue_midi_conversion(layers)
-            start_midi.assert_not_called()
-            # Native widget creation is substantially slower on a Windows CI
-            # runner than on macOS. Process short event-loop slices until the
-            # cooperative render completes, while retaining a strict timeout.
-            deadline = time.monotonic() + 2.0
-            while len(window.layer_cards) < len(layers) and time.monotonic() < deadline:
-                QTest.qWait(10)
+    def test_midi_result_waits_for_its_incremental_card(self):
+        window = MainWindow()
+        layer = {
+            "path": "/private/tmp/early-midi-layer.mp3",
+            "name": "early-midi-layer.mp3",
+            "bpm": 140,
+            "duration": 1.0,
+            "bytes": 32,
+            "peaks": [0.0] * 72,
+        }
+        window.midi_job_id = 4
+        window._populate_layer_cards([layer])
+        window._midi_progress(4, layer["path"], "/private/tmp/early.mid", 1, 1)
+        self.assertEqual(window.pending_midi_paths[layer["path"]], "/private/tmp/early.mid")
+        deadline = time.monotonic() + 2.0
+        while not window.layer_cards and time.monotonic() < deadline:
+            QTest.qWait(10)
+        self.assertEqual(window.layer_cards[0].midi_handle.path, "/private/tmp/early.mid")
+        self.assertNotIn(layer["path"], window.pending_midi_paths)
+        window.close()
 
-        self.assertEqual(len(window.layer_cards), 17)
-        start_midi.assert_called_once()
+    def test_midi_completion_uses_job_total_before_all_cards_exist(self):
+        window = MainWindow()
+        window.midi_job_id = 5
+        window.midi_job_total = 7
+        window._midi_completed(5, 7, 0.1)
+        self.assertIn("7 layers extracted", window.quick_extract_status.text())
+        self.assertIn("7 MIDI files ready", window.quick_extract_status.text())
+        window.close()
+
+    def test_drag_all_tracks_every_layer_in_order(self):
+        window = MainWindow()
+        paths = [f"/private/tmp/layer-{index}.mp3" for index in range(1, 4)]
+        window.quick_drag_all.set_paths(paths)
+        self.assertTrue(window.quick_drag_all.isEnabled())
+        self.assertEqual(window.quick_drag_all.paths, paths)
+        self.assertIn("3 layers", window.quick_drag_all.toolTip())
+        window.quick_drag_all.set_paths([])
+        self.assertFalse(window.quick_drag_all.isEnabled())
         window.close()
 
     def test_quick_audio_drop_contents_never_overlap(self):

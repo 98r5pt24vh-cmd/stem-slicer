@@ -11,7 +11,7 @@ class WindowsReleaseConfigTests(unittest.TestCase):
 
     def test_parent_application_is_a_non_elevated_gui_executable(self):
         spec = self._read("StemSlicerWindows.spec")
-        self.assertIn('name="Stem Slicer 1.8B"', spec)
+        self.assertIn('name="Stem Slicer 1.8.2B"', spec)
         self.assertIn("console=False", spec)
         self.assertIn("uac_admin=False", spec)
         self.assertIn('("bin/bungee.exe", "bin")', spec)
@@ -27,7 +27,9 @@ class WindowsReleaseConfigTests(unittest.TestCase):
 
     def test_workflow_builds_the_pinned_custom_engines_and_runs_release_gates(self):
         workflow = self._read(".github/workflows/build-windows.yml")
-        self.assertIn("Build Stem Slicer 1.8B for Windows", workflow)
+        self.assertIn("Build Stem Slicer 1.8.2B for Windows", workflow)
+        self.assertIn('python-version: "3.12.13"', workflow)
+        self.assertIn("PySide6==6.11.1", self._read("requirements.txt"))
         self.assertIn("746833f68a574d997ec50443e7cfd2d37b026302", workflow)
         self.assertIn("-DBUNGEE_VERSION=2.4.24", workflow)
         self.assertIn("-DBUNGEE_BUILD_SHARED_LIBRARY=OFF", workflow)
@@ -36,7 +38,7 @@ class WindowsReleaseConfigTests(unittest.TestCase):
         self.assertIn("msys-2\\.0", workflow)
         self.assertIn("scripts/smoke_windows_bundle.py", workflow)
         self.assertIn("scripts/audit_windows_bundle.py", workflow)
-        self.assertIn("Stem-Slicer-1.8B-Windows", workflow)
+        self.assertIn("Stem-Slicer-1.8.2B-Windows", workflow)
 
     def test_bungee_patch_supports_ffmpeg_extensible_float_wav(self):
         patch_source = self._read("patches/bungee-waveformatextensible.patch")

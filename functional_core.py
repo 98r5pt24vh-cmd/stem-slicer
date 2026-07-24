@@ -27,7 +27,7 @@ from widgets import StudioRoot, TokenStrip
 
 
 APP_NAME = "Stem Slicer"
-APP_VERSION = "1.8B"
+APP_VERSION = "1.8.2B"
 ROMAN = ("I", "II", "III", "IV", "V", "VI", "VII")
 MODE_NAMES = ("Ionian", "Dorian", "Phrygian", "Lydian", "Mixolydian", "Aeolian", "Locrian")
 MAJOR_INTERVALS = (0, 2, 4, 5, 7, 9, 11)
@@ -394,6 +394,58 @@ class FileDragHandle(QWidget):
         if (event.position().toPoint() - self._press).manhattanLength() < QApplication.startDragDistance(): return
         mime = QMimeData(); mime.setUrls([QUrl.fromLocalFile(self.path)])
         drag = QDrag(self); drag.setMimeData(mime); self.setCursor(Qt.ClosedHandCursor); drag.exec(Qt.CopyAction); self.setCursor(Qt.OpenHandCursor); self._press = None
+
+
+class MultiFileDragHandle(QFrame):
+    """Compact drag source that exposes several exported layers at once."""
+
+    def __init__(self, text="DRAG ALL", parent=None):
+        super().__init__(parent)
+        self.paths = []
+        self._press = None
+        self.setProperty("role", "dragAll")
+        self.setFixedSize(116, 26)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(10, 0, 7, 0)
+        row.setSpacing(7)
+        title = QLabel(text)
+        title.setProperty("role", "dragAllLabel")
+        row.addWidget(title)
+        row.addStretch()
+        self.dots = FileDragHandle("")
+        self.dots.setEnabled(False)
+        self.dots.setAttribute(Qt.WA_TransparentForMouseEvents)
+        row.addWidget(self.dots)
+        self.set_paths([])
+
+    def set_paths(self, paths):
+        self.paths = [os.path.abspath(path) for path in paths if path]
+        ready = bool(self.paths)
+        self.setEnabled(ready)
+        self.dots.setEnabled(ready)
+        self.setCursor(Qt.OpenHandCursor if ready else Qt.ArrowCursor)
+        self.setToolTip(
+            f"Drag all {len(self.paths)} layers to your DAW"
+            if ready else "Extract layers to enable Drag All"
+        )
+
+    def mousePressEvent(self, event):
+        if self.isEnabled() and event.button() == Qt.LeftButton:
+            self._press = event.position().toPoint()
+
+    def mouseMoveEvent(self, event):
+        if not self.isEnabled() or self._press is None or not (event.buttons() & Qt.LeftButton):
+            return
+        if (event.position().toPoint() - self._press).manhattanLength() < QApplication.startDragDistance():
+            return
+        mime = QMimeData()
+        mime.setUrls([QUrl.fromLocalFile(path) for path in self.paths])
+        drag = QDrag(self)
+        drag.setMimeData(mime)
+        self.setCursor(Qt.ClosedHandCursor)
+        drag.exec(Qt.CopyAction)
+        self.setCursor(Qt.OpenHandCursor)
+        self._press = None
 
 
 class MidiDragHandle(QWidget):
@@ -1170,7 +1222,9 @@ class MainWindow(QMainWindow):
         self.midi_thread = None
         self.midi_worker = None
         self.midi_job_id = 0
+        self.midi_job_total = 0
         self.pending_midi_job = None
+        self.pending_midi_paths = {}
         self.midi_cache = tempfile.mkdtemp(
             prefix="stem-slicer-quick-midi-",
             dir=QStandardPaths.writableLocation(QStandardPaths.TempLocation),
@@ -1866,6 +1920,7 @@ class MainWindow(QMainWindow):
         if self.midi_worker is not None:
             self.midi_worker.latest_job_id = job_id
         requests = [{"path": layer["path"], "bpm": int(layer.get("bpm") or 140)} for layer in layers]
+        self.midi_job_total = len(requests)
         self.pending_midi_job = (job_id, requests)
         if not requests:
             self.pending_midi_job = None
@@ -1877,7 +1932,9 @@ class MainWindow(QMainWindow):
 
     def _invalidate_midi_jobs(self):
         self.midi_job_id += 1
+        self.midi_job_total = 0
         self.pending_midi_job = None
+        self.pending_midi_paths = {}
         if self.midi_worker is not None:
             # Plain Python state guarded by the GIL lets the active conversion
             # stop before processing another obsolete layer.
@@ -1896,10 +1953,16 @@ class MainWindow(QMainWindow):
     def _midi_progress(self, job_id, audio_path, midi_path, current, total):
         if job_id != self.midi_job_id:
             return
+        matched = False
         for card in self.layer_cards:
             if card.layer["path"] == audio_path:
                 card.setMidiPath(midi_path)
+                matched = True
                 break
+        if not matched:
+            # MIDI and cooperative card rendering intentionally run in
+            # parallel. Preserve an early result until its card exists.
+            self.pending_midi_paths[audio_path] = midi_path
         timing = f" in {self.quick_extract_elapsed:.1f}s" if self.quick_extract_elapsed > 0 else ""
         self.quick_extract_status.setText(f"{total} layers extracted{timing}  ·  Generating MIDI {current}/{total}…")
 
@@ -1907,7 +1970,7 @@ class MainWindow(QMainWindow):
     def _midi_completed(self, job_id, ready_count, elapsed):
         if job_id != self.midi_job_id:
             return
-        total = len(self.layer_cards)
+        total = self.midi_job_total
         timing = f" in {self.quick_extract_elapsed:.1f}s" if self.quick_extract_elapsed > 0 else ""
         layers_text = f"{total} layer{'s' if total != 1 else ''} extracted{timing}"
         midi_text = f"{ready_count} MIDI file{'s' if ready_count != 1 else ''} ready"
@@ -1917,7 +1980,10 @@ class MainWindow(QMainWindow):
             self.quick_extract_status.setText(f"{layers_text}  ·  {midi_text}  ·  {total - ready_count} unavailable")
 
     def _mark_pending_midi_unavailable(self, _message=""):
+        pending_layers = self.pending_midi_job[1] if self.pending_midi_job else []
         self.pending_midi_job = None
+        for layer in pending_layers:
+            self.pending_midi_paths[layer["path"]] = ""
         for card in self.layer_cards:
             if card.midi_handle.state == "processing":
                 card.setMidiPath("")

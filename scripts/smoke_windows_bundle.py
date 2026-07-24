@@ -1,3 +1,4 @@
+import json
 import math
 import os
 import struct
@@ -49,7 +50,7 @@ def main():
     if not os.path.isdir(internal):
         raise RuntimeError(f"PyInstaller internal folder was not found: {internal}")
 
-    application = os.path.join(bundle, "Stem Slicer 1.8B.exe")
+    application = os.path.join(bundle, "Stem Slicer 1.8.2B.exe")
     if not os.path.isfile(application):
         raise RuntimeError(f"Application executable was not found: {application}")
     # IMAGE_SUBSYSTEM_WINDOWS_GUI == 2. A console build would be 3 and could
@@ -89,6 +90,38 @@ def main():
         raise RuntimeError(f"Application analyzer lookup resolved {resolved_analyzer!r}, expected {analyzer!r}.")
 
     with tempfile.TemporaryDirectory() as temporary:
+        runtime_smoke_result = os.path.join(temporary, "runtime-smoke-result.json")
+        runtime_environment = os.environ.copy()
+        runtime_environment["STEM_SLICER_SMOKE_RESULT"] = runtime_smoke_result
+        completed = run_subprocess(
+            [application, "--smoke-runtime"],
+            env=runtime_environment,
+            timeout=60,
+            check=False,
+        )
+        if completed.returncode != 0 or not os.path.isfile(runtime_smoke_result):
+            raise RuntimeError("The packaged application did not report its embedded runtime.")
+        with open(runtime_smoke_result, "r", encoding="utf-8") as result_file:
+            runtime = json.load(result_file)
+        expected_runtime = {
+            "app_version": "1.8.2B",
+            "python": "3.12.13",
+            "pyside6": "6.11.1",
+            "frozen": True,
+        }
+        for field, expected in expected_runtime.items():
+            if runtime.get(field) != expected:
+                raise RuntimeError(
+                    f"Unexpected packaged runtime {field}: {runtime.get(field)!r}, expected {expected!r}."
+                )
+        if runtime.get("architecture", "").lower() not in {"amd64", "x86_64"}:
+            raise RuntimeError(f"Unexpected packaged architecture: {runtime.get('architecture')!r}.")
+        print(
+            "Embedded runtime verified: "
+            f"Python {runtime['python']} x64, PySide6 {runtime['pyside6']}.",
+            flush=True,
+        )
+
         sample = os.path.join(temporary, "A-minor-smoke.wav")
         completed = run_subprocess([ffmpeg, "-version"], capture_output=True, text=True, timeout=30)
         if completed.returncode != 0:
@@ -109,8 +142,30 @@ def main():
         if not math.isclose(measured_duration, duration, abs_tol=0.1):
             raise RuntimeError(f"Bundled FFmpeg duration fallback returned {measured_duration}, expected {duration}.")
         print(f"Bundled FFmpeg duration fallback ready: {measured_duration:.2f}s", flush=True)
+        sample_mp3 = os.path.join(temporary, "L Smoke 140 C minor.mp3")
+        completed = run_subprocess(
+            [
+                ffmpeg,
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                sample,
+                "-c:a",
+                "libmp3lame",
+                "-q:a",
+                "2",
+                sample_mp3,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if completed.returncode != 0 or not os.path.isfile(sample_mp3):
+            raise RuntimeError(f"Bundled FFmpeg could not create the MP3 smoke input: {completed.stderr}")
         with KeyAnalyzer(workers=1, startup_timeout=90, request_timeout=180) as key_analyzer:
-            result = key_analyzer.analyze(sample)
+            result = key_analyzer.analyze(sample_mp3)
         if not result.get("camelot"):
             raise RuntimeError(f"Bundled key analyzer returned no key: {result}")
         print(f"Bundled Windows key analyzer ready: {result['camelot']}")
@@ -118,7 +173,7 @@ def main():
         midi_smoke_result = os.path.join(temporary, "midi-smoke-result.txt")
         smoke_environment = os.environ.copy()
         smoke_environment["STEM_SLICER_SMOKE_RESULT"] = midi_smoke_result
-        smoke_environment["STEM_SLICER_SMOKE_AUDIO"] = sample
+        smoke_environment["STEM_SLICER_SMOKE_AUDIO"] = sample_mp3
         midi_output = os.path.join(temporary, "basic-pitch-smoke.mid")
         smoke_environment["STEM_SLICER_SMOKE_MIDI"] = midi_output
         completed = run_subprocess(
@@ -134,6 +189,51 @@ def main():
         if completed.returncode != 0 or message != "ok" or not os.path.isfile(midi_output) or os.path.getsize(midi_output) == 0:
             raise RuntimeError(f"Bundled Basic Pitch engine failed its packaged smoke test: {message}")
         print("Bundled Windows Basic Pitch engine ready.", flush=True)
+
+        convert_smoke_result = os.path.join(temporary, "convert-smoke-result.txt")
+        converted_output = os.path.join(temporary, "converted-smoke.mp3")
+        convert_environment = os.environ.copy()
+        convert_environment["STEM_SLICER_SMOKE_RESULT"] = convert_smoke_result
+        convert_environment["STEM_SLICER_SMOKE_AUDIO"] = sample_mp3
+        convert_environment["STEM_SLICER_SMOKE_CONVERTED"] = converted_output
+        completed = run_subprocess(
+            [application, "--smoke-convert-engine"],
+            env=convert_environment,
+            timeout=180,
+            check=False,
+        )
+        convert_message = "No result file was produced."
+        if os.path.isfile(convert_smoke_result):
+            with open(convert_smoke_result, "r", encoding="utf-8") as result_file:
+                convert_message = result_file.read().strip()
+        if (
+            completed.returncode != 0
+            or convert_message != "ok"
+            or not os.path.isfile(converted_output)
+            or os.path.getsize(converted_output) == 0
+        ):
+            raise RuntimeError(f"Bundled Bungee conversion engine failed its packaged smoke test: {convert_message}")
+        print("Bundled Windows Bungee conversion engine ready.", flush=True)
+
+        optional_target_result = os.path.join(temporary, "optional-target-smoke-result.txt")
+        optional_target_environment = os.environ.copy()
+        optional_target_environment["STEM_SLICER_SMOKE_RESULT"] = optional_target_result
+        completed = run_subprocess(
+            [application, "--smoke-quick-extract-optional-target"],
+            env=optional_target_environment,
+            timeout=60,
+            check=False,
+        )
+        optional_target_message = "No result file was produced."
+        if os.path.isfile(optional_target_result):
+            with open(optional_target_result, "r", encoding="utf-8") as result_file:
+                optional_target_message = result_file.read().strip()
+        if completed.returncode != 0 or optional_target_message != "ok":
+            raise RuntimeError(
+                "Packaged Quick Extract Optional Target workflow failed its smoke test: "
+                f"{optional_target_message}"
+            )
+        print("Packaged Windows Quick Extract Optional Target workflow ready.", flush=True)
 
         ui_smoke_result = os.path.join(temporary, "ui-smoke-result.txt")
         ui_environment = os.environ.copy()
