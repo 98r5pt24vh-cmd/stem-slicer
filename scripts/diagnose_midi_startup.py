@@ -83,7 +83,7 @@ def worker(source_root: Path, mode: str) -> int:
             thread.join(0.01)
         application.processEvents()
         report("QApplication + MIDI thread complete")
-    else:
+    elif mode == "window-lifecycle":
         os.environ["STEM_SLICER_DISABLE_ENGINE_AUTOSTART"] = "1"
         os.chdir(source_root)
         sys.path.insert(0, str(source_root))
@@ -101,6 +101,60 @@ def worker(source_root: Path, mode: str) -> int:
             application.processEvents()
             time.sleep(0.01)
         report(f"MainWindow MIDI state={window.midi_engine_state}")
+        window.close()
+        application.processEvents()
+    else:
+        os.environ["STEM_SLICER_DISABLE_ENGINE_AUTOSTART"] = "1"
+        os.chdir(source_root)
+        sys.path.insert(0, str(source_root))
+        threading.setprofile(profile)
+        from PySide6.QtWidgets import QApplication
+        from app import MainWindow
+
+        application = QApplication.instance() or QApplication([])
+        report("QApplication ready")
+        window = MainWindow()
+        report("MainWindow ready")
+        warmup_candidates = (
+            source_root / "assets" / "key-and-bpm-engine-warmup.wav",
+            source_root / "assets" / "key-engine-warmup.wav",
+        )
+        warmup_audio = next((path for path in warmup_candidates if path.is_file()), None)
+        if warmup_audio is None:
+            raise RuntimeError("No bundled warm-up audio was found.")
+        layer = {
+            "path": str(warmup_audio),
+            "name": "Lifecycle Smoke 140 C minor.wav",
+            "display_name": "Lifecycle Smoke 140 C minor.wav",
+            "key": "5A",
+            "bpm": 140,
+            "duration": 1.0,
+            "bytes": warmup_audio.stat().st_size,
+            "peaks": [0.0] * 72,
+        }
+        window._start_midi_engine()
+        window._populate_layer_cards([layer])
+        window._queue_midi_conversion([layer])
+        report("Quick Extract MIDI queued while engine loads")
+        while not window.layer_cards:
+            application.processEvents()
+            time.sleep(0.01)
+        card = window.layer_cards[0]
+        while card.midi_handle.state == "processing":
+            application.processEvents()
+            if window.midi_engine_state == "failed":
+                raise RuntimeError("The MainWindow MIDI engine reported failure.")
+            time.sleep(0.01)
+        midi_path = Path(card.midi_handle.path)
+        if card.midi_handle.state != "ready" or not midi_path.is_file() or midi_path.stat().st_size <= 0:
+            raise RuntimeError(
+                f"MIDI card ended in state={card.midi_handle.state!r}, "
+                f"path={str(midi_path)!r}."
+            )
+        report(
+            f"Quick Extract MIDI ready file={midi_path.name} "
+            f"bytes={midi_path.stat().st_size}"
+        )
         window.close()
         application.processEvents()
     if failure:
@@ -143,7 +197,13 @@ def parse_arguments():
     parser.add_argument("--source-root", type=Path, required=True)
     parser.add_argument(
         "--mode",
-        choices=("main", "background", "qt-background", "window-lifecycle"),
+        choices=(
+            "main",
+            "background",
+            "qt-background",
+            "window-lifecycle",
+            "quick-extract-midi",
+        ),
         required=True,
     )
     parser.add_argument("--timeout", type=int, default=30)

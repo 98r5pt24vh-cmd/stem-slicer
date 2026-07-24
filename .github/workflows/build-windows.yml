@@ -28,18 +28,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - label: 1.5S validated · QApplication + MIDI thread
+          - label: 1.5S validated · complete Quick Extract MIDI
             source_ref: 97694c2ce096dfa866fd797766dec20073a6a67e
-            mode: qt-background
-          - label: 1.5S validated · real MainWindow lifecycle
-            source_ref: 97694c2ce096dfa866fd797766dec20073a6a67e
-            mode: window-lifecycle
-          - label: 1.8.2B current · QApplication + MIDI thread
+            mode: quick-extract-midi
+          - label: 1.8.2B current · complete Quick Extract MIDI
             source_ref: codex/windows-1.8.2b
-            mode: qt-background
-          - label: 1.8.2B current · real MainWindow lifecycle
-            source_ref: codex/windows-1.8.2b
-            mode: window-lifecycle
+            mode: quick-extract-midi
 
     steps:
       - name: Check out diagnostic tools
