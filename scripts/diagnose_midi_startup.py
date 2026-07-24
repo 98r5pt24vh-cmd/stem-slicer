@@ -184,12 +184,12 @@ def supervise(arguments) -> int:
         process.kill()
         process.wait()
         report(f"RESULT timeout after {arguments.timeout}s")
-        return 0
+        return 1 if arguments.require_ready else 0
     if return_code == 0:
         report("RESULT ready within limit")
     else:
         report(f"RESULT error returncode={return_code}")
-    return 0
+    return return_code if arguments.require_ready else 0
 
 
 def parse_arguments():
@@ -207,6 +207,7 @@ def parse_arguments():
         required=True,
     )
     parser.add_argument("--timeout", type=int, default=30)
+    parser.add_argument("--require-ready", action="store_true")
     parser.add_argument("--worker", action="store_true")
     return parser.parse_args()
 

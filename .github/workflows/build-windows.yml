@@ -127,6 +127,17 @@ jobs:
           python -m pip check
           python -c "import platform, sys, PySide6; assert sys.version_info[:3] == (3, 12, 10), sys.version; assert PySide6.__version__ == '6.11.1', PySide6.__version__; assert platform.architecture()[0] == '64bit', platform.architecture()"
 
+      - name: Validate complete Quick Extract MIDI on a clean Windows runtime
+        env:
+          QT_QPA_PLATFORM: windows
+          STEM_SLICER_DISABLE_ENGINE_AUTOSTART: "1"
+        run: >-
+          python scripts/diagnose_midi_startup.py
+          --source-root .
+          --mode quick-extract-midi
+          --timeout 30
+          --require-ready
+
       - name: Build the validated custom key and BPM analyzer
         shell: pwsh
         run: |
@@ -209,12 +220,6 @@ jobs:
           tests.test_qt_interface.QtInterfaceTests.test_validated_drop_zones_accept_copy_through_graphics_view
           tests.test_qt_interface.QtInterfaceTests.test_windows_browse_dialog_uses_stable_top_level_owner
           -v
-
-      - name: Run native Windows Quick Extract MIDI lifecycle regression
-        env:
-          QT_QPA_PLATFORM: windows
-          STEM_SLICER_DISABLE_ENGINE_AUTOSTART: "1"
-        run: python scripts/smoke_midi_lifecycle.py
 
       - name: Build Windows application
         shell: pwsh
