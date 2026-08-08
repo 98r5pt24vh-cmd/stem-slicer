@@ -1,0 +1,11 @@
+* text=auto
+*.png binary
+*.icns binary
+*.ico binary
+*.wav binary
+*.onnx binary
+*.joblib binary
+*.dylib binary
+*.so binary
+*.exe binary
+

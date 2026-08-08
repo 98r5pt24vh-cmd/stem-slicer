@@ -1,0 +1,281 @@
+import json
+import os
+import queue
+import re
+import subprocess
+import sys
+import threading
+import time
+import uuid
+
+from diagnostics_runtime import configure_runtime_environment, get_diagnostics
+
+SHARP_KEYS = {
+    "1A": "G#m", "2A": "D#m", "3A": "A#m", "4A": "Fm",
+    "5A": "Cm", "6A": "Gm", "7A": "Dm", "8A": "Am",
+    "9A": "Em", "10A": "Bm", "11A": "F#m", "12A": "C#m",
+    "1B": "B", "2B": "F#", "3B": "C#", "4B": "G#",
+    "5B": "D#", "6B": "A#", "7B": "F", "8B": "C",
+    "9B": "G", "10B": "D", "11B": "A", "12B": "E",
+}
+
+FLAT_KEYS = {
+    "1A": "Abm", "2A": "Ebm", "3A": "Bbm", "4A": "Fm",
+    "5A": "Cm", "6A": "Gm", "7A": "Dm", "8A": "Am",
+    "9A": "Em", "10A": "Bm", "11A": "Gbm", "12A": "Dbm",
+    "1B": "B", "2B": "Gb", "3B": "Db", "4B": "Ab",
+    "5B": "Eb", "6B": "Bb", "7B": "F", "8B": "C",
+    "9B": "G", "10B": "D", "11B": "A", "12B": "E",
+}
+
+KEY_AFTER_BPM_RE = re.compile(
+    r"(?i)(?<![A-Za-z])(?:[A-G](?:#|b)?m|[A-G](?:#|b)?\s+(?:major|minor)|[A-G](?:#|b)?)(?![A-Za-z])"
+)
+BPM_RE = re.compile(r"\b(?:[6-9]\d|1\d{2}|2[0-4]\d)\b")
+
+
+def hidden_process_options():
+    """Return Windows-only flags that keep the analyzer console invisible."""
+    if sys.platform != "win32":
+        return {}
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startupinfo.wShowWindow = subprocess.SW_HIDE
+    return {
+        "startupinfo": startupinfo,
+        "creationflags": subprocess.CREATE_NO_WINDOW,
+    }
+
+
+def analyzer_executable():
+    configured = os.environ.get("STEM_SLICER_ANALYZER")
+    if configured and os.path.isfile(configured):
+        return os.path.abspath(configured)
+    roots = []
+    bundled_root = getattr(sys, "_MEIPASS", None)
+    if bundled_root:
+        roots.append(bundled_root)
+        # The optimized macOS bundle keeps the analyzer as an opaque payload
+        # in Resources so PyInstaller does not collect its dylibs a second time.
+        roots.append(os.path.abspath(os.path.join(bundled_root, "..", "Resources")))
+    executable_root = os.path.dirname(sys.executable)
+    roots.extend((executable_root, os.path.join(executable_root, "_internal")))
+    roots.append(os.path.dirname(os.path.abspath(__file__)))
+    executable = "openkeyscan-analyzer.exe" if sys.platform == "win32" else "openkeyscan-analyzer"
+    for root in roots:
+        candidates = (
+            os.path.join(root, "openkeyscan-analyzer", executable),
+            os.path.join(root, "vendor-windows", "openkeyscan-analyzer", executable),
+            os.path.join(root, "vendor", "openkeyscan-analyzer", executable),
+        )
+        for candidate in candidates:
+            executable_file = sys.platform == "win32" or os.access(candidate, os.X_OK)
+            if os.path.isfile(candidate) and executable_file:
+                return candidate
+    return None
+
+
+def filename_has_key(filename):
+    stem = os.path.splitext(os.path.basename(filename))[0]
+    bpm = BPM_RE.search(stem)
+    if not bpm:
+        return False
+    return bool(KEY_AFTER_BPM_RE.search(stem, bpm.end()))
+
+
+def format_camelot(camelot, mode="detected", accidentals="sharps"):
+    match = re.fullmatch(r"(1[0-2]|[1-9])([AB])", camelot or "")
+    if not match:
+        raise ValueError(f"Invalid Camelot key: {camelot!r}")
+    number, detected_mode = match.groups()
+    target_mode = detected_mode
+    if mode == "relative_minor":
+        target_mode = "A"
+    elif mode == "relative_major":
+        target_mode = "B"
+    elif mode != "detected":
+        raise ValueError(f"Unknown key mode: {mode}")
+    table = FLAT_KEYS if accidentals == "flats" else SHARP_KEYS
+    return table[f"{number}{target_mode}"]
+
+
+def insert_key_after_bpm(filename, key):
+    stem, extension = os.path.splitext(filename)
+    bpm = BPM_RE.search(stem)
+    if bpm:
+        stem = f"{stem[:bpm.end()]} {key}{stem[bpm.end():]}"
+    else:
+        stem = f"{stem} {key}"
+    return stem + extension
+
+
+class KeyAnalyzer:
+    def __init__(self, workers=1, startup_timeout=90, request_timeout=120):
+        self.workers = workers
+        self.startup_timeout = startup_timeout
+        self.request_timeout = request_timeout
+        self.process = None
+        self.messages = queue.Queue()
+        self.reader = None
+        self.stderr_handle = None
+        # One analyzer process serves Quick Scan, Quick Extract and Convert.
+        # NDJSON replies are request-scoped but the client queue is shared, so
+        # serialize complete request/reply cycles instead of allowing one UI
+        # worker to consume another worker's response.
+        self.request_lock = threading.Lock()
+
+    def start(self):
+        configure_runtime_environment()
+        diagnostics = get_diagnostics()
+        path = analyzer_executable()
+        if not path:
+            raise RuntimeError("The embedded key analyzer was not found.")
+        if os.environ.get("STEM_SLICER_KEY_DEBUG"):
+            analyzer_stderr = None
+        else:
+            try:
+                os.makedirs(diagnostics.log_root, exist_ok=True)
+                self.stderr_handle = open(
+                    os.path.join(diagnostics.log_root, "openkeyscan-stderr.log"),
+                    "a",
+                    encoding="utf-8",
+                    buffering=1,
+                )
+                analyzer_stderr = self.stderr_handle
+            except OSError:
+                analyzer_stderr = subprocess.DEVNULL
+        command = [path, "--workers", str(self.workers)]
+        started = time.perf_counter()
+        try:
+            self.process = subprocess.Popen(
+                command,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=analyzer_stderr,
+                text=True,
+                encoding="utf-8",
+                bufsize=1,
+                cwd=os.path.join(os.path.dirname(path), "_internal")
+                if os.path.isdir(os.path.join(os.path.dirname(path), "_internal")) else None,
+                env=os.environ.copy(),
+                **hidden_process_options(),
+            )
+        except Exception as exc:
+            diagnostics.exception("openkeyscan_start", exc, command=command)
+            raise
+        self.reader = threading.Thread(target=self._read_stdout, daemon=True)
+        self.reader.start()
+        message = self._next_message(self.startup_timeout)
+        if message.get("type") != "ready":
+            self.stop()
+            raise RuntimeError("The key analyzer did not become ready.")
+        diagnostics.event(
+            "openkeyscan_ready",
+            executable=path,
+            pid=self.process.pid,
+            duration_seconds=time.perf_counter() - started,
+        )
+
+    def _read_stdout(self):
+        try:
+            for line in self.process.stdout:
+                try:
+                    self.messages.put(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+        finally:
+            self.messages.put({"type": "closed"})
+
+    def _next_message(self, timeout):
+        try:
+            return self.messages.get(timeout=timeout)
+        except queue.Empty as exc:
+            raise TimeoutError("Key analysis timed out.") from exc
+
+    def analyze(self, audio_path, *, bpm_mode=None, structure_ffmpeg_path=None):
+        with self.request_lock:
+            diagnostics = get_diagnostics()
+            started = time.perf_counter()
+            if not self.process or self.process.poll() is not None:
+                raise RuntimeError("The key analyzer is not running.")
+            request_id = str(uuid.uuid4())
+            request = {"id": request_id, "path": os.path.abspath(audio_path)}
+            if bpm_mode is not None:
+                request["bpm_mode"] = bpm_mode
+            if structure_ffmpeg_path is not None:
+                request["structure_ffmpeg_path"] = os.path.abspath(structure_ffmpeg_path)
+            self.process.stdin.write(json.dumps(request, ensure_ascii=False) + "\n")
+            self.process.stdin.flush()
+            while True:
+                message = self._next_message(self.request_timeout)
+                if message.get("type") in {"heartbeat", "ready"}:
+                    continue
+                if message.get("type") == "closed":
+                    raise RuntimeError("The key analyzer stopped unexpectedly.")
+                if message.get("id") != request_id:
+                    continue
+                if message.get("status") != "success":
+                    error = RuntimeError(message.get("error", "Key analysis failed."))
+                    diagnostics.exception(
+                        "openkeyscan_analysis",
+                        error,
+                        file=os.path.abspath(audio_path),
+                        duration_seconds=time.perf_counter() - started,
+                    )
+                    raise error
+                diagnostics.event(
+                    "openkeyscan_analysis_complete",
+                    file=os.path.abspath(audio_path),
+                    bpm_mode=bpm_mode,
+                    duration_seconds=time.perf_counter() - started,
+                    bpm=message.get("bpm"),
+                    camelot=message.get("camelot"),
+                )
+                return message
+
+    def stop(self):
+        process, self.process = self.process, None
+        if not process:
+            return
+        try:
+            if process.stdin:
+                process.stdin.close()
+        except OSError:
+            pass
+        if self.reader is not None:
+            self.reader.join(timeout=1)
+        for stream in (process.stdout, process.stderr):
+            if stream is not None:
+                try:
+                    stream.close()
+                except OSError:
+                    pass
+        try:
+            # The analyzer exits cleanly when its NDJSON input reaches EOF.
+            # Its PyInstaller bootloader manages a child process, so a normal
+            # EOF avoids signal propagation through that process tree.
+            process.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            try:
+                process.terminate()
+                process.wait(timeout=4)
+            except subprocess.TimeoutExpired:
+                process.kill()
+            except OSError:
+                pass
+        except OSError:
+            pass
+        finally:
+            if self.stderr_handle is not None:
+                try:
+                    self.stderr_handle.close()
+                except OSError:
+                    pass
+                self.stderr_handle = None
+
+    def __enter__(self):
+        self.start()
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        self.stop()

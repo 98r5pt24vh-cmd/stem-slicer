@@ -1,0 +1,42 @@
+# macOS and Python noise
+.DS_Store
+__pycache__/
+*.py[cod]
+*.nbi
+*.nbc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Build environments and generated packages
+.venv*/
+venv*/
+/build/
+/dist/
+/release/
+/Build_Work/
+/Release/
+*.app/
+*.zip
+*.dmg
+*.pkg
+
+# Local runtime state and user libraries
+*.sqlite
+*.sqlite3
+*.db
+*.log
+generated/
+outputs/
+diagnostics/
+library-cache/
+
+# Large validated binary payloads. They stay available locally and are
+# verified by scripts/verify_external_payloads.py, but are not committed to
+# ordinary Git history.
+vendor/
+models/huggingface/
+
+# Local release evidence
+artifacts/
+validation-output/
