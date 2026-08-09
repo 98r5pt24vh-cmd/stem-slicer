@@ -1291,6 +1291,9 @@ class MainWindow(QMainWindow):
         self.midi_engine_state = "unloaded"
         self.midi_service = None
         self.midi_worker = None
+        self.midi_event_timer = QTimer(self)
+        self.midi_event_timer.setInterval(10)
+        self.midi_event_timer.timeout.connect(self._poll_midi_service_events)
         self.midi_job_id = 0
         self.midi_job_total = 0
         self.pending_midi_job = None
@@ -1952,7 +1955,8 @@ class MainWindow(QMainWindow):
         self.midi_worker = self.midi_service
         self.midi_service.latest_job_id = self.midi_job_id
         self.midi_service.start()
-        QTimer.singleShot(0, self._poll_midi_service_events)
+        self.midi_event_timer.start()
+        self._poll_midi_service_events()
 
     def _poll_midi_service_events(self):
         """Dispatch native-thread MIDI events only from the Qt UI thread."""
@@ -1978,8 +1982,8 @@ class MainWindow(QMainWindow):
             elif kind == "completed":
                 self._midi_completed(*values)
                 service.signals.completed.emit(*values)
-        if service is self.midi_service and service.is_alive():
-            QTimer.singleShot(10, self._poll_midi_service_events)
+        if service is not self.midi_service or not service.is_alive():
+            self.midi_event_timer.stop()
 
     @Slot(object, str, int)
     def _submit_midi_job(self, layers, cache_path, job_id):
@@ -2157,6 +2161,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self.media_player.stop()
+        self.midi_event_timer.stop()
         if self.midi_service is not None and self.midi_service.is_alive():
             self.midi_service.request_stop()
             self.midi_service.join(30)
