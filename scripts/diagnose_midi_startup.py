@@ -167,6 +167,7 @@ def worker(source_root: Path, mode: str) -> int:
         # this is also the exact condition under which the real app runs.
         event_loop = QEventLoop()
         terminal = {"card": None, "failure": ""}
+        diagnostic_dumped = {"value": False}
         timer = QTimer()
         timer.setInterval(10)
 
@@ -180,6 +181,24 @@ def worker(source_root: Path, mode: str) -> int:
                 if candidate.midi_handle.state != "processing":
                     terminal["card"] = candidate
                     event_loop.quit()
+                    return
+            if not diagnostic_dumped["value"] and time.perf_counter() - STARTED >= 15.0:
+                diagnostic_dumped["value"] = True
+                service = window.midi_service
+                report(
+                    "MIDI service snapshot "
+                    f"state={window.midi_engine_state!r} "
+                    f"alive={bool(service and service.is_alive())} "
+                    f"stop={bool(service and service._stop_requested.is_set())} "
+                    f"events={service.events.qsize() if service else -1} "
+                    f"jobs={service.jobs.qsize() if service else -1}"
+                )
+                if service is not None and service.ident is not None:
+                    frame = sys._current_frames().get(service.ident)
+                    if frame is not None:
+                        print("MIDI_DIAGNOSTIC worker stack:", flush=True)
+                        traceback.print_stack(frame, file=sys.stdout)
+                        sys.stdout.flush()
 
         timer.timeout.connect(inspect_midi_state)
         timer.start()
