@@ -15,6 +15,8 @@ onnxruntime==1.19.2
 pretty_midi==0.2.11
 resampy==0.4.2
 scipy==1.13.1
+soundfile==0.14.0
+soxr==1.1.0
 setuptools==80.9.0
 # Generate classifier runtime.  These pins match the MERT corpus artifact and
 # are required inside the packaged app for first-time library scans.

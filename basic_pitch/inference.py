@@ -51,6 +51,8 @@ import numpy as np
 import numpy.typing as npt
 import librosa
 import pretty_midi
+import soundfile as sf
+import soxr
 
 from basic_pitch.constants import (
     AUDIO_SAMPLE_RATE,
@@ -226,7 +228,28 @@ def get_audio_input(
     """
     assert overlap_len % 2 == 0, f"overlap_length must be even, got {overlap_len}"
 
-    audio_original, _ = librosa.load(str(audio_path), sr=AUDIO_SAMPLE_RATE, mono=True)
+    # ``librosa.load`` lazily imports ``librosa.core.audio``. On a clean
+    # Windows runtime that import JIT-compiles several Numba helpers and can
+    # delay the very first MIDI file by more than 20 seconds. SoundFile and
+    # libsoxr are already Librosa's decoding/resampling backends, so use them
+    # directly and preserve the same float32 mono/HQ-resampling contract.
+    audio_frames, sample_rate = sf.read(
+        str(audio_path),
+        dtype="float32",
+        always_2d=True,
+    )
+    if audio_frames.shape[1] == 1:
+        audio_original = audio_frames[:, 0]
+    else:
+        audio_original = np.mean(audio_frames, axis=1, dtype=np.float32)
+    if int(sample_rate) != AUDIO_SAMPLE_RATE:
+        audio_original = soxr.resample(
+            audio_original,
+            int(sample_rate),
+            AUDIO_SAMPLE_RATE,
+            quality="HQ",
+        )
+    audio_original = np.asarray(audio_original, dtype=np.float32)
 
     original_length = audio_original.shape[0]
     audio_original = np.concatenate([np.zeros((int(overlap_len / 2),), dtype=np.float32), audio_original])
