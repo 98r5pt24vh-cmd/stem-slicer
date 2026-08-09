@@ -1,6 +1,7 @@
 import os
 import sys
 from pathlib import Path
+import tempfile
 import unittest
 
 
@@ -212,7 +213,6 @@ class CardsAsSlotsUITests(unittest.TestCase):
         self.assertEqual(len(visible_plus_cards), 1)
 
     def test_library_summary_is_compact_and_has_no_duplicate_total(self):
-        self.page.restore_library_path("/tmp/+NRGY ALL LAYERS 2")
         counts = {
             "Bass": 432,
             "Chords": 538,
@@ -231,7 +231,10 @@ class CardsAsSlotsUITests(unittest.TestCase):
         }
         # The third summary argument is the manual-review count.  Actual key
         # uncertainty is delivered separately by the controller status.
-        self.page.set_library_summary(3889, counts, 0)
+        with tempfile.TemporaryDirectory(prefix="stem-slicer-library-") as library:
+            self.assertTrue(self.page.restore_library_path(library))
+            self.page.set_library_summary(3889, counts, 0)
+            expected_folder = Path(library).name
         self.page.set_scan_busy(
             False,
             100,
@@ -247,7 +250,7 @@ class CardsAsSlotsUITests(unittest.TestCase):
         )
         self.assertEqual(
             self.page.scan_status.toolTip(),
-            "LIBRARY · LIBRARY READY",
+            f"{expected_folder} · LIBRARY READY",
         )
         self.assertFalse(self.page.library_total_unit.isVisible())
         self.assertEqual(

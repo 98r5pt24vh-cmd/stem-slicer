@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from pathlib import Path
 import re
 
 from PySide6.QtCore import QPointF, Qt, Signal, Slot
