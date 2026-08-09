@@ -728,6 +728,15 @@ def _ffprobe_duration(path: Path) -> float | None:
     executable = shutil.which("ffprobe")
     if executable is None:
         return None
+    process_options = {}
+    if os.name == "nt":
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = subprocess.SW_HIDE
+        process_options = {
+            "startupinfo": startupinfo,
+            "creationflags": subprocess.CREATE_NO_WINDOW,
+        }
     completed = subprocess.run(
         [
             executable,
@@ -743,6 +752,7 @@ def _ffprobe_duration(path: Path) -> float | None:
         capture_output=True,
         text=True,
         timeout=20,
+        **process_options,
     )
     if completed.returncode != 0:
         return None

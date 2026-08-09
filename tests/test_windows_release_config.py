@@ -28,9 +28,11 @@ class WindowsReleaseConfigTests(unittest.TestCase):
 
     def test_all_external_process_launchers_hide_windows_consoles(self):
         for relative_path in (
+            "analyzer/loop_bpm.py",
             "audio_convert.py",
             "engine.py",
             "key_detection.py",
+            "layer_library.py",
             "mert_client.py",
         ):
             with self.subTest(path=relative_path):

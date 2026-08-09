@@ -7,9 +7,11 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import traceback
+import wave
 
 
 STARTED = time.perf_counter()
@@ -48,6 +50,27 @@ def load_converter(source_root: Path) -> None:
     report("midi_conversion import:complete")
     converter = MidiConverter()
     report(f"MidiConverter ready type={type(converter).__name__}")
+
+
+def short_midi_fixture(source: Path) -> Path:
+    """Create a real two-second PCM fixture for the strict lifecycle gate.
+
+    The shared warm-up tone is ten seconds long because the key/BPM engine
+    needs that duration. Quick Extract MIDI only needs a genuine, non-silent
+    layer to exercise its complete loader -> worker -> card -> drag path. A
+    dedicated two-second view keeps that release gate deterministic on the
+    two-core Windows runner without weakening any part of the lifecycle.
+    """
+
+    destination = Path(tempfile.gettempdir()) / "stem-slicer-midi-lifecycle-140.wav"
+    with wave.open(str(source), "rb") as reader:
+        parameters = reader.getparams()
+        frame_count = min(reader.getnframes(), reader.getframerate() * 2)
+        frames = reader.readframes(frame_count)
+    with wave.open(str(destination), "wb") as writer:
+        writer.setparams(parameters)
+        writer.writeframes(frames)
+    return destination
 
 
 def worker(source_root: Path, mode: str) -> int:
@@ -119,9 +142,10 @@ def worker(source_root: Path, mode: str) -> int:
             source_root / "assets" / "key-and-bpm-engine-warmup.wav",
             source_root / "assets" / "key-engine-warmup.wav",
         )
-        warmup_audio = next((path for path in warmup_candidates if path.is_file()), None)
-        if warmup_audio is None:
+        warmup_source = next((path for path in warmup_candidates if path.is_file()), None)
+        if warmup_source is None:
             raise RuntimeError("No bundled warm-up audio was found.")
+        warmup_audio = short_midi_fixture(warmup_source)
         layer = {
             "path": str(warmup_audio),
             "name": "Lifecycle Smoke 140 C minor.wav",

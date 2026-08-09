@@ -14,6 +14,7 @@ can be displayed exactly while a materially wrong title is ignored.
 from __future__ import annotations
 
 import math
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -295,6 +296,15 @@ def refine_from_onsets(
 
 def detect_long_silences(audio_path: Path, ffmpeg_path: Path) -> list[tuple[float, float, float]]:
     """Return full-file silence runs used only by the conflict slow path."""
+    process_options = {}
+    if os.name == "nt":
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = subprocess.SW_HIDE
+        process_options = {
+            "startupinfo": startupinfo,
+            "creationflags": subprocess.CREATE_NO_WINDOW,
+        }
     completed = subprocess.run(
         [
             str(ffmpeg_path),
@@ -312,6 +322,7 @@ def detect_long_silences(audio_path: Path, ffmpeg_path: Path) -> list[tuple[floa
         text=True,
         check=False,
         timeout=120,
+        **process_options,
     )
     if completed.returncode != 0:
         detail = completed.stderr.strip().splitlines()
