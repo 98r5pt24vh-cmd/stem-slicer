@@ -99,6 +99,25 @@ class GeneratorHistoryControllerTests(unittest.TestCase):
                 payload["total_size"],
             )
 
+    def test_generate_manager_uses_explicit_native_dialog_parent(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary, "Generated Loops")
+            controller, _window = self._controller(root)
+            native_parent = object()
+            controller.dialog_parent = native_parent
+
+            with patch.object(
+                generator_controller, "GenerateHistoryManagerDialog"
+            ) as dialog_type:
+                controller.show_generation_manager()
+
+            dialog_type.assert_called_once_with(
+                root,
+                changed_callback=controller._history_manager_changed,
+                parent=native_parent,
+            )
+            dialog_type.return_value.exec.assert_called_once_with()
+
     def test_open_is_restricted_to_root_and_direct_generations(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary, "Generated Loops")

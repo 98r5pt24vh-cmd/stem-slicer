@@ -6,7 +6,7 @@ import math
 from pathlib import Path
 import re
 
-from PySide6.QtCore import QPointF, Qt, Signal, Slot
+from PySide6.QtCore import QPointF, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QColor, QPainter, QPen, QPolygonF
 from PySide6.QtWidgets import (
     QFrame,
@@ -477,6 +477,7 @@ class GeneratePage(_base.GeneratePage):
 
     def __init__(self, parent=None) -> None:
         self._sync_mode = False
+        self._pending_slot_removals: set[int] = set()
         super().__init__(parent)
         for description in self.findChildren(QLabel):
             if description.text() == (
@@ -870,7 +871,27 @@ class GeneratePage(_base.GeneratePage):
 
     @Slot(int)
     def _card_remove_requested(self, slot_index: int) -> None:
-        self._remove_slot(int(slot_index))
+        index = int(slot_index)
+        if not 0 <= index < len(self._slot_widgets):
+            return
+        slot = self._slot_widgets[index]
+        removal_key = id(slot)
+        if removal_key in self._pending_slot_removals:
+            return
+        self._pending_slot_removals.add(removal_key)
+        # Do not rebuild the card grid or the synchronized audio device while
+        # the remove button is still emitting its native clicked signal.  A
+        # queued removal also makes rapid double-clicks deterministic.
+        QTimer.singleShot(
+            0,
+            lambda slot=slot, key=removal_key: self._finish_card_removal(
+                slot, key
+            ),
+        )
+
+    def _finish_card_removal(self, slot, removal_key: int) -> None:
+        self._pending_slot_removals.discard(int(removal_key))
+        self._remove_slot(slot)
 
     def _mark_recipe_changed(self) -> None:
         self.drag_all.setEnabled(False)

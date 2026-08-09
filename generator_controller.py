@@ -450,9 +450,16 @@ class GeneratorController(QObject):
     generationHistoryChanged = Signal(object)
     generationHistoryFailed = Signal(str)
 
-    def __init__(self, window: QObject) -> None:
+    def __init__(self, window: QObject, *, dialog_parent: QObject | None = None) -> None:
         super().__init__(window)
         self.window = window
+        # GeneratePage lives inside a QGraphicsProxyWidget.  Its ``window()``
+        # is therefore the embedded StudioRoot canvas, not the native
+        # QMainWindow.  Native modal dialogs parented to that proxy can leave
+        # the Windows viewport partially black or clipped.  Keep the genuine
+        # application window supplied by app.py, matching both Quick Tools
+        # history managers.
+        self.dialog_parent = dialog_parent
         self.scan_result: ScanResult | None = None
         self.last_output: Path | None = None
         self._scan_thread: QThread | None = None
@@ -1479,15 +1486,10 @@ class GeneratorController(QObject):
                 True, "Finish the current generation before managing history."
             )
             return
-        # GeneratePage is embedded inside the QGraphics-backed main window.
-        # Parenting a native dialog to that internal page lets macOS constrain
-        # it to the proxy widget's geometry.  Use the genuine top-level window,
-        # exactly like the two Quick Tools managers.
-        dialog_parent = self.window.window()
         dialog = GenerateHistoryManagerDialog(
             default_output_root(),
             changed_callback=self._history_manager_changed,
-            parent=dialog_parent,
+            parent=self.dialog_parent,
         )
         dialog.exec()
 

@@ -127,6 +127,19 @@ class CardsAsSlotsUITests(unittest.TestCase):
         APP.processEvents()
         self.assertEqual(len(self.page._slot_widgets), 4)
 
+    def test_card_remove_is_queued_once_for_rapid_repeat_clicks(self):
+        self.page._add_slot("Texture")
+        APP.processEvents()
+        self.assertEqual(len(self.page._slot_widgets), 5)
+
+        self.page._card_remove_requested(4)
+        self.page._card_remove_requested(4)
+        self.assertEqual(len(self.page._slot_widgets), 5)
+
+        APP.processEvents()
+        self.assertEqual(len(self.page._slot_widgets), 4)
+        self.assertFalse(self.page._pending_slot_removals)
+
     def test_card_category_is_the_generation_recipe(self):
         self.page._card_category_changed(1, "Pad")
         request = self.page.generation_request()

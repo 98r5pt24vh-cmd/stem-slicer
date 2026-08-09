@@ -295,7 +295,13 @@ def main():
     application.setApplicationDisplayName(f"{APP_NAME} {APP_VERSION}")
     application.setStyleSheet(validated_stylesheet())
     window = MainWindow()
-    generator_controller = GeneratorController(window.generate_page)
+    # GeneratePage is embedded in the scaled QGraphics scene.  Pass the real
+    # native window explicitly so Generate History behaves like the two Quick
+    # Tools managers instead of becoming a proxy-owned modal on Windows.
+    generator_controller = GeneratorController(
+        window.generate_page,
+        dialog_parent=window,
+    )
     # Generate reuses the persistent Quick Extract MIDI engine.  This keeps
     # one Basic Pitch model in memory and guarantees that each generated card
     # receives MIDI for its current transformed audio revision.
