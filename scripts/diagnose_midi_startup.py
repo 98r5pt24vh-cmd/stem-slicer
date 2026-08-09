@@ -167,7 +167,7 @@ def worker(source_root: Path, mode: str) -> int:
         # this is also the exact condition under which the real app runs.
         event_loop = QEventLoop()
         terminal = {"card": None, "failure": ""}
-        diagnostic_dumped = {"value": False}
+        diagnostic_thresholds = [15.0, 22.0, 27.0]
         timer = QTimer()
         timer.setInterval(10)
 
@@ -182,8 +182,9 @@ def worker(source_root: Path, mode: str) -> int:
                     terminal["card"] = candidate
                     event_loop.quit()
                     return
-            if not diagnostic_dumped["value"] and time.perf_counter() - STARTED >= 15.0:
-                diagnostic_dumped["value"] = True
+            elapsed = time.perf_counter() - STARTED
+            if diagnostic_thresholds and elapsed >= diagnostic_thresholds[0]:
+                diagnostic_thresholds.pop(0)
                 service = window.midi_service
                 report(
                     "MIDI service snapshot "
@@ -191,7 +192,9 @@ def worker(source_root: Path, mode: str) -> int:
                     f"alive={bool(service and service.is_alive())} "
                     f"stop={bool(service and service._stop_requested.is_set())} "
                     f"events={service.events.qsize() if service else -1} "
-                    f"jobs={service.jobs.qsize() if service else -1}"
+                    f"jobs={service.jobs.qsize() if service else -1} "
+                    f"poll_active={window.midi_event_timer.isActive()} "
+                    f"poll_remaining_ms={window.midi_event_timer.remainingTime()}"
                 )
                 if service is not None and service.ident is not None:
                     frame = sys._current_frames().get(service.ident)
