@@ -27,7 +27,10 @@ def tree_digest(root: Path) -> tuple[int, int, str]:
     digest = hashlib.sha256()
     count = 0
     total = 0
-    for path in sorted(item for item in root.rglob("*") if item.is_file()):
+    files = [item for item in root.rglob("*") if item.is_file()]
+    for path in sorted(
+        files, key=lambda item: item.relative_to(root).as_posix()
+    ):
         relative = path.relative_to(root).as_posix().encode()
         file_digest = hashlib.sha256()
         with path.open("rb") as handle:
@@ -70,4 +73,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

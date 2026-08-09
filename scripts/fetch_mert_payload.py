@@ -86,7 +86,10 @@ def tree_digest(root: Path) -> dict[str, int | str]:
     digest = hashlib.sha256()
     count = 0
     total = 0
-    for path in sorted(item for item in root.rglob("*") if item.is_file()):
+    files = [item for item in root.rglob("*") if item.is_file()]
+    for path in sorted(
+        files, key=lambda item: item.relative_to(root).as_posix()
+    ):
         relative = path.relative_to(root).as_posix().encode()
         size = path.stat().st_size
         file_digest = sha256(path)
