@@ -39,6 +39,11 @@ class MertClientIdentityTests(unittest.TestCase):
         expected = f"{version}:{hashlib.sha256(artifact.read_bytes()).hexdigest()[:16]}"
         return client, expected
 
+    def test_cold_packaged_worker_has_a_realistic_startup_ceiling(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            client, _ = self._client(Path(temporary))
+            self.assertEqual(client.startup_timeout, 300.0)
+
     def test_worker_start_does_not_change_cache_identity(self):
         with tempfile.TemporaryDirectory() as temporary:
             client, expected = self._client(Path(temporary))

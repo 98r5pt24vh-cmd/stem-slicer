@@ -341,7 +341,10 @@ def main():
             hf_cache_dir=hf_cache,
             feature_cache_path=os.path.join(temporary, "mert-features.sqlite3"),
             device="cpu",
-            startup_timeout=120,
+            # On a freshly extracted, unsigned beta ZIP, Windows Defender may
+            # scan Torch and its large model payload during the worker's first
+            # import.  This is a maximum wait, not an artificial delay.
+            startup_timeout=300,
             request_timeout=900,
             batch_size=1,
             window_batch_size=1,

@@ -41,7 +41,7 @@ class MertLayerClassifier:
         # never used as the feature-vector SQLite location.
         cache_dir: str | os.PathLike[str] | None = None,
         device: str = "cpu",
-        startup_timeout: float = 45.0,
+        startup_timeout: float = 300.0,
         request_timeout: float = 180.0,
         batch_size: int | None = None,
         window_batch_size: int | None = None,
@@ -157,7 +157,17 @@ class MertLayerClassifier:
         try:
             line = self._stdout_queue.get(timeout=timeout)
         except queue.Empty:
-            raise TimeoutError("Timed out waiting for the MERT worker.")
+            status = (
+                f"exit code {process.poll()}"
+                if process.poll() is not None
+                else "process still running"
+            )
+            detail = "\n".join(self._stderr_lines[-20:]).strip()
+            raise TimeoutError(
+                "Timed out waiting for the MERT worker "
+                f"after {timeout:.1f}s ({status})."
+                + (f" {detail}" if detail else "")
+            )
         if line is not None:
             return line
         detail = "\n".join(self._stderr_lines[-20:]).strip()
