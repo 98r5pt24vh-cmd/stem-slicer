@@ -298,6 +298,11 @@ class MidiEngineService(threading.Thread):
         super().__init__(name="StemSlicerMidiEngine", daemon=True)
         self.signals = MidiEngineSignals()
         self.jobs = queue.Queue()
+        # PySide queued signals emitted by a native ``threading.Thread`` are
+        # not delivered reliably by the Windows event dispatcher. Keep the
+        # public signals for Qt observers; the real window consumes this
+        # thread-safe queue and re-emits those signals from its Qt thread.
+        self.events = queue.Queue()
         self.latest_job_id = 0
         self._stop_requested = threading.Event()
 
@@ -331,7 +336,7 @@ class MidiEngineService(threading.Thread):
                         job_id=job_id,
                         duration_seconds=time.perf_counter() - started,
                     )
-                self.signals.progress.emit(job_id, path, midi_path, index, total)
+                self.events.put(("progress", job_id, path, midi_path, index, total))
             except Exception as exc:
                 logging.exception("MIDI conversion failed for %s", path)
                 diagnostics.exception(
@@ -341,7 +346,7 @@ class MidiEngineService(threading.Thread):
                     output=midi_path,
                 )
                 if job_id == self.latest_job_id:
-                    self.signals.progress.emit(job_id, path, "", index, total)
+                    self.events.put(("progress", job_id, path, "", index, total))
         elapsed = time.perf_counter() - started
         diagnostics.event(
             "midi_job_complete",
@@ -350,7 +355,7 @@ class MidiEngineService(threading.Thread):
             ready=ready_count,
             duration_seconds=elapsed,
         )
-        self.signals.completed.emit(job_id, ready_count, elapsed)
+        self.events.put(("completed", job_id, ready_count, elapsed))
 
     def run(self):
         started = time.perf_counter()
@@ -371,7 +376,7 @@ class MidiEngineService(threading.Thread):
                 exc,
                 duration_seconds=time.perf_counter() - started,
             )
-            self.signals.failed.emit(str(exc))
+            self.events.put(("failed", str(exc)))
             return
 
         if self._stop_requested.is_set():
@@ -380,7 +385,7 @@ class MidiEngineService(threading.Thread):
             "midi_engine_load_complete",
             duration_seconds=time.perf_counter() - started,
         )
-        self.signals.ready.emit()
+        self.events.put(("ready",))
         while not self._stop_requested.is_set():
             job = self.jobs.get()
             if job is None:
@@ -1946,11 +1951,35 @@ class MainWindow(QMainWindow):
         self.midi_service = MidiEngineService()
         self.midi_worker = self.midi_service
         self.midi_service.latest_job_id = self.midi_job_id
-        self.midi_service.signals.ready.connect(self._midi_engine_ready)
-        self.midi_service.signals.failed.connect(self._midi_loader_failed)
-        self.midi_service.signals.progress.connect(self._midi_progress)
-        self.midi_service.signals.completed.connect(self._midi_completed)
         self.midi_service.start()
+        QTimer.singleShot(0, self._poll_midi_service_events)
+
+    def _poll_midi_service_events(self):
+        """Dispatch native-thread MIDI events only from the Qt UI thread."""
+
+        service = self.midi_service
+        if service is None:
+            return
+        while True:
+            try:
+                event = service.events.get_nowait()
+            except queue.Empty:
+                break
+            kind, *values = event
+            if kind == "ready":
+                self._midi_engine_ready()
+                service.signals.ready.emit()
+            elif kind == "failed":
+                self._midi_loader_failed(*values)
+                service.signals.failed.emit(*values)
+            elif kind == "progress":
+                self._midi_progress(*values)
+                service.signals.progress.emit(*values)
+            elif kind == "completed":
+                self._midi_completed(*values)
+                service.signals.completed.emit(*values)
+        if service is self.midi_service and service.is_alive():
+            QTimer.singleShot(10, self._poll_midi_service_events)
 
     @Slot(object, str, int)
     def _submit_midi_job(self, layers, cache_path, job_id):

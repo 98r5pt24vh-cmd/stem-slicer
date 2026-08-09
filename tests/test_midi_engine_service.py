@@ -4,8 +4,6 @@ import threading
 import unittest
 from unittest.mock import patch
 
-from PySide6.QtCore import Qt
-
 from functional_core import MidiEngineService
 
 
@@ -57,6 +55,15 @@ class MidiEngineServiceTests(unittest.TestCase):
         self.assertEqual(len(instances), 1)
         self.assertEqual(thread_ids["convert"], [thread_ids["init"], thread_ids["init"]])
         self.assertNotEqual(thread_ids["init"], threading.get_ident())
+        event_kinds = []
+        while not service.events.empty():
+            event_kinds.append(service.events.get_nowait()[0])
+        self.assertEqual(event_kinds[0], "ready")
+        self.assertEqual(event_kinds.count("completed"), 2)
+        # The first result may be suppressed when job 2 supersedes it between
+        # converter return and publication; the current job must still report.
+        self.assertGreaterEqual(event_kinds.count("progress"), 1)
+        self.assertEqual(event_kinds[-1], "completed")
 
     def test_stale_job_is_skipped(self):
         converted = threading.Event()
@@ -81,26 +88,18 @@ class MidiEngineServiceTests(unittest.TestCase):
 
         self.assertEqual(converted_paths, ["current.mp3"])
 
-    def test_constructor_failure_emits_failed_and_stops(self):
-        failed = threading.Event()
-        messages = []
-
+    def test_constructor_failure_reports_failed_event_and_stops(self):
         class BrokenConverter:
             def __init__(self):
                 raise RuntimeError("broken converter")
 
         service = MidiEngineService()
-        service.signals.failed.connect(
-            lambda message: (messages.append(message), failed.set()),
-            Qt.DirectConnection,
-        )
         with patch("midi_conversion.MidiConverter", BrokenConverter):
             service.start()
-            self.assertTrue(failed.wait(2))
             service.join(2)
 
         self.assertFalse(service.is_alive())
-        self.assertEqual(messages, ["broken converter"])
+        self.assertEqual(service.events.get_nowait(), ("failed", "broken converter"))
 
 
 if __name__ == "__main__":
