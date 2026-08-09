@@ -44,6 +44,30 @@ class MertClientIdentityTests(unittest.TestCase):
             client, _ = self._client(Path(temporary))
             self.assertEqual(client.startup_timeout, 300.0)
 
+    def test_packaged_worker_mode_reenters_the_application_executable(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            client, _ = self._client(root)
+            client.frozen_worker_mode = True
+            process = MagicMock()
+            process.poll.return_value = None
+            ready = {
+                "event": "ready",
+                "model_version": "model-v1",
+                "feature_extractor_id": client.feature_extractor_id,
+                "feature_dimension": 3,
+                "head_id": client.head_id,
+            }
+            with (
+                patch("mert_client.subprocess.Popen", return_value=process) as popen,
+                patch.object(client, "_readline", return_value=json.dumps(ready)),
+            ):
+                client.start()
+                command = popen.call_args.args[0]
+                self.assertEqual(command[:2], ["python-test", "--mert-worker"])
+                self.assertNotIn("-u", command)
+                client.stop(force=True)
+
     def test_worker_start_does_not_change_cache_identity(self):
         with tempfile.TemporaryDirectory() as temporary:
             client, expected = self._client(Path(temporary))

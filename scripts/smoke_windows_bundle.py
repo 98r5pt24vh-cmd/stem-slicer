@@ -348,6 +348,10 @@ def main():
             request_timeout=900,
             batch_size=1,
             window_batch_size=1,
+            # This smoke script itself runs under the source interpreter, but
+            # the worker must re-enter the extracted PyInstaller executable in
+            # exactly the same mode used by the packaged application.
+            frozen_worker_mode=True,
         )
         try:
             worker_metadata = classifier.metadata()

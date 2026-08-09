@@ -45,6 +45,7 @@ class MertLayerClassifier:
         request_timeout: float = 180.0,
         batch_size: int | None = None,
         window_batch_size: int | None = None,
+        frozen_worker_mode: bool | None = None,
     ) -> None:
         source_root = Path(__file__).resolve().parent
         root = Path(getattr(sys, "_MEIPASS", source_root))
@@ -97,6 +98,15 @@ class MertLayerClassifier:
         )
         if self.batch_size < 1 or self.window_batch_size < 1:
             raise ValueError("MERT batch sizes must be at least one")
+        # Production discovers this from the PyInstaller runtime.  Packaging
+        # smoke tests run from the source interpreter while deliberately
+        # launching the extracted GUI executable, so they must be able to
+        # select the same re-entry protocol explicitly.
+        self.frozen_worker_mode = (
+            bool(getattr(sys, "frozen", False))
+            if frozen_worker_mode is None
+            else bool(frozen_worker_mode)
+        )
         self._process: subprocess.Popen[str] | None = None
         self._stdout_queue: queue.Queue[str | None] = queue.Queue()
         self._stdout_thread: threading.Thread | None = None
@@ -211,7 +221,7 @@ class MertLayerClassifier:
     def start(self) -> None:
         if self._process is not None and self._process.poll() is None:
             return
-        if getattr(sys, "frozen", False):
+        if self.frozen_worker_mode:
             command = [self.python_executable, "--mert-worker"]
         else:
             command = [
