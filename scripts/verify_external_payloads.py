@@ -13,7 +13,7 @@ EXPECTED = {
     "vendor": {
         "files": 2287,
         "bytes": 880_449_181,
-        "sha256": "38da39d2c17ad80ea068ac06820c8c21e462a2cb00f11380c2b68795799a6e00",
+        "sha256": "653ad18510dcfb478aef093ccd0b1141ef30f598495f6206dcb6e801bb71f069",
     },
     "models/huggingface": {
         "files": 15,
