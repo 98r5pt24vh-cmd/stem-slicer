@@ -85,6 +85,22 @@ jobs:
           --timeout 30
           --require-ready
 
+      - name: Run cross-platform tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+          STEM_SLICER_DISABLE_ENGINE_AUTOSTART: "1"
+        run: python -m unittest discover -s tests -v
+
+      - name: Run native Windows drag-and-drop and Browse regressions
+        env:
+          QT_QPA_PLATFORM: windows
+          STEM_SLICER_DISABLE_ENGINE_AUTOSTART: "1"
+        run: >-
+          python -m unittest
+          tests.test_qt_interface.QtInterfaceTests.test_validated_drop_zones_accept_copy_through_graphics_view
+          tests.test_qt_interface.QtInterfaceTests.test_windows_browse_dialog_uses_stable_top_level_owner
+          -v
+
       - name: Build the validated custom key and BPM analyzer
         shell: pwsh
         run: |
@@ -151,22 +167,6 @@ jobs:
           $expected = "4b3a7a7c41a4064a8738536da6a304371c1fdc567c599ccb768bebd49ccdb9fb"
           $actual = (Get-FileHash "vendor-windows/ffmpeg-bin/ffmpeg.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
           if ($actual -ne $expected) { throw "Unexpected FFmpeg SHA-256: $actual" }
-
-      - name: Run cross-platform tests
-        env:
-          QT_QPA_PLATFORM: offscreen
-          STEM_SLICER_DISABLE_ENGINE_AUTOSTART: "1"
-        run: python -m unittest discover -s tests -v
-
-      - name: Run native Windows drag-and-drop and Browse regressions
-        env:
-          QT_QPA_PLATFORM: windows
-          STEM_SLICER_DISABLE_ENGINE_AUTOSTART: "1"
-        run: >-
-          python -m unittest
-          tests.test_qt_interface.QtInterfaceTests.test_validated_drop_zones_accept_copy_through_graphics_view
-          tests.test_qt_interface.QtInterfaceTests.test_windows_browse_dialog_uses_stable_top_level_owner
-          -v
 
       - name: Build Windows application
         shell: pwsh

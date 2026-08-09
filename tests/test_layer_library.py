@@ -1,4 +1,5 @@
 import csv
+from contextlib import closing
 import hashlib
 import json
 import shutil
@@ -250,7 +251,7 @@ class LayerLibraryTests(unittest.TestCase):
         self.assertTrue(result.cancelled)
         self.assertEqual(result.records, ())
         self.assertEqual(result.classified_count, 0)
-        with sqlite3.connect(self.state / "cache.sqlite") as connection:
+        with closing(sqlite3.connect(self.state / "cache.sqlite")) as connection, connection:
             self.assertEqual(
                 connection.execute("SELECT COUNT(*) FROM layer_cache").fetchone()[0],
                 0,
@@ -388,7 +389,7 @@ class LayerLibraryTests(unittest.TestCase):
         self.assertEqual(restored.classified_count, 0)
         self.assertEqual(restored.records[0].predicted_label, "Lead")
         self.assertEqual(restored.records[0].prediction_confidence, 0.8)
-        with sqlite3.connect(cache) as connection:
+        with closing(sqlite3.connect(cache)) as connection, connection:
             row = connection.execute(
                 "SELECT predicted_label, classifier_id FROM layer_cache"
             ).fetchone()
@@ -399,7 +400,7 @@ class LayerLibraryTests(unittest.TestCase):
         _write_wave(audio)
         cache = self.state / "cache.sqlite"
         LayerLibrary(self.library, cache).scan()
-        with sqlite3.connect(cache) as connection:
+        with closing(sqlite3.connect(cache)) as connection, connection:
             connection.execute(
                 """UPDATE layer_cache
                    SET scanned_key = 'A#', scanned_mode = 'minor',
@@ -704,7 +705,7 @@ class LayerLibraryTests(unittest.TestCase):
         _write_wave(self.library / "loop.wav")
         cache = self.state / "cache.sqlite"
         LayerLibrary(self.library, cache).scan()
-        with sqlite3.connect(cache) as connection:
+        with closing(sqlite3.connect(cache)) as connection, connection:
             version = connection.execute("PRAGMA user_version").fetchone()[0]
             self.assertEqual(version, 3)
 
@@ -771,7 +772,7 @@ class LayerLibraryTests(unittest.TestCase):
             ("D", "minor"),
         )
         self.assertAlmostEqual(record.key_top2_probability, 0.18)
-        with sqlite3.connect(cache) as connection:
+        with closing(sqlite3.connect(cache)) as connection, connection:
             row = connection.execute(
                 """
                 SELECT alternate_scanned_key, alternate_scanned_mode,
@@ -785,7 +786,7 @@ class LayerLibraryTests(unittest.TestCase):
     def test_schema_one_cache_is_migrated_without_losing_rows(self):
         self.state.mkdir(exist_ok=True)
         cache = self.state / "cache.sqlite"
-        with sqlite3.connect(cache) as connection:
+        with closing(sqlite3.connect(cache)) as connection, connection:
             connection.execute(
                 """
                 CREATE TABLE layer_cache (

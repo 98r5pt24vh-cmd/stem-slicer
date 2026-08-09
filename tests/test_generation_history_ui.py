@@ -177,7 +177,10 @@ class GenerateHistoryManagerDialogTests(unittest.TestCase):
                     fake.state,
                     QMediaPlayer.PlaybackState.PlayingState,
                 )
-                self.assertEqual(fake.source.toLocalFile(), master)
+                self.assertEqual(
+                    os.path.normcase(str(Path(fake.source.toLocalFile()).resolve())),
+                    os.path.normcase(str(Path(master).resolve())),
+                )
 
                 dialog._play_path(master)
                 self.assertEqual(

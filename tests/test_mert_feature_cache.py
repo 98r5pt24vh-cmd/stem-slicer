@@ -1,5 +1,6 @@
 import hashlib
 import json
+from contextlib import closing
 from pathlib import Path
 import sqlite3
 import tempfile
@@ -130,7 +131,7 @@ class MertFeatureCacheTests(unittest.TestCase):
             [("e" * 64, runtime.feature_extractor_id, original)],
             expected_dimension=3,
         )
-        with sqlite3.connect(self.cache_path) as connection:
+        with closing(sqlite3.connect(self.cache_path)) as connection, connection:
             connection.execute(
                 "UPDATE feature_vectors SET vector_sha256 = ?",
                 ("0" * 64,),
@@ -213,7 +214,7 @@ class MertFeatureCacheTests(unittest.TestCase):
             [("3" * 64, "extractor", vector)],
             expected_dimension=3,
         )
-        with sqlite3.connect(self.cache_path) as connection:
+        with closing(sqlite3.connect(self.cache_path)) as connection, connection:
             dtype, blob, checksum = connection.execute(
                 "SELECT dtype, vector_blob, vector_sha256 FROM feature_vectors"
             ).fetchone()

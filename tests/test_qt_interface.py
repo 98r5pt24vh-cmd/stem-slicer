@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -864,7 +865,7 @@ class QtInterfaceTests(unittest.TestCase):
         window._queue_midi_conversion(layers)
         self.assertEqual(len(requests), 1)
         self.assertTrue(window._layer_cards_rendering)
-        QTest.qWait(30)
+        QTest.qWait(300)
         self.assertEqual(len(window.layer_cards), len(layers))
         window.close()
 
@@ -928,7 +929,13 @@ class QtInterfaceTests(unittest.TestCase):
         paths = [f"/private/tmp/layer-{index}.mp3" for index in range(1, 4)]
         window.quick_drag_all.set_paths(paths)
         self.assertTrue(window.quick_drag_all.isEnabled())
-        self.assertEqual(window.quick_drag_all.paths, paths)
+        self.assertEqual(
+            [
+                os.path.normcase(str(Path(path).resolve()))
+                for path in window.quick_drag_all.paths
+            ],
+            [os.path.normcase(str(Path(path).resolve())) for path in paths],
+        )
         self.assertIn("3 layers", window.quick_drag_all.toolTip())
         window.quick_drag_all.set_paths([])
         self.assertFalse(window.quick_drag_all.isEnabled())

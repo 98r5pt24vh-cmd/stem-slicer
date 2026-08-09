@@ -675,7 +675,14 @@ class ScaleSelector(AnchoredChoiceSelector):
     def __init__(self, parent=None):
         super().__init__(("100%", "110%", "120%", "130%", "140%", "150%"), accent=PURPLE, exact_popup_width=True, parent=parent)
         self.setProperty("role", "scaleSelector")
-        self.setFixedWidth(68)
+        # Keep the exact-width popup readable with both Cocoa and Windows
+        # native font metrics.  The former fixed 68 px field clipped a row on
+        # clean Windows runners even though it was correct on macOS.
+        row_width = max(
+            (row.minimumSizeHint().width() for row in self._rows.values()),
+            default=60,
+        )
+        self.setFixedWidth(max(68, row_width + 8))
         self._value = 100
         self._actions = {percent: self._rows[f"{percent}%"] for percent in (100, 110, 120, 130, 140, 150)}
 

@@ -1,4 +1,5 @@
 import os
+from contextlib import closing
 from pathlib import Path
 import sqlite3
 import tempfile
@@ -112,7 +113,7 @@ class RuntimeTruthIsolationTests(unittest.TestCase):
         self.assertEqual(result.classified_count, 1)
         self.assertEqual(result.records[0].effective_label, "Lead")
         self.assertEqual(result.records[0].label_source, "prediction")
-        with sqlite3.connect(production_cache) as connection:
+        with closing(sqlite3.connect(production_cache)) as connection, connection:
             cached = connection.execute(
                 "SELECT manual_label, predicted_label, classifier_id "
                 "FROM layer_cache"
@@ -143,7 +144,7 @@ class RuntimeTruthIsolationTests(unittest.TestCase):
         self.assertEqual(result.classified_count, 0)
         self.assertEqual(result.records[0].effective_label, "Bass")
         self.assertEqual(result.records[0].label_source, "manual")
-        with sqlite3.connect(development_cache) as connection:
+        with closing(sqlite3.connect(development_cache)) as connection, connection:
             cached = connection.execute(
                 "SELECT manual_label, predicted_label, manual_origin "
                 "FROM layer_cache"
@@ -188,7 +189,7 @@ class RuntimeTruthIsolationTests(unittest.TestCase):
         self.assertEqual(production_classifier.calls, [CORPUS_FILENAME])
         self.assertEqual(result.records[0].effective_label, "Lead")
         self.assertEqual(result.records[0].label_source, "prediction")
-        with sqlite3.connect(cache) as connection:
+        with closing(sqlite3.connect(cache)) as connection, connection:
             cached = connection.execute(
                 "SELECT manual_label, manual_origin, predicted_label "
                 "FROM layer_cache"
