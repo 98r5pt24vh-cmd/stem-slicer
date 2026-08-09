@@ -51,7 +51,13 @@ class ConversionResult:
 def _hidden_process_kwargs() -> dict:
     if os.name != "nt":
         return {}
-    return {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startupinfo.wShowWindow = subprocess.SW_HIDE
+    return {
+        "startupinfo": startupinfo,
+        "creationflags": subprocess.CREATE_NO_WINDOW,
+    }
 
 
 def _run(command: list[str], *, capture: bool = False) -> subprocess.CompletedProcess:

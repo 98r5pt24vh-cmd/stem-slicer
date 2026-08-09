@@ -6,7 +6,7 @@ import json
 import hashlib
 import os
 from pathlib import Path
-import select
+import queue
 import subprocess
 import sys
 import threading
@@ -98,6 +98,10 @@ class MertLayerClassifier:
         if self.batch_size < 1 or self.window_batch_size < 1:
             raise ValueError("MERT batch sizes must be at least one")
         self._process: subprocess.Popen[str] | None = None
+        self._stdout_queue: queue.Queue[str | None] = queue.Queue()
+        self._stdout_thread: threading.Thread | None = None
+        self._stderr_thread: threading.Thread | None = None
+        self._stderr_lines: list[str] = []
         self._lock = threading.Lock()
         self._request_id = 0
         self._model_version: str | None = None
@@ -150,22 +154,49 @@ class MertLayerClassifier:
         process = self._process
         if process is None or process.stdout is None:
             raise MertClientError("MERT worker is not running.")
-        ready, _, _ = select.select([process.stdout], [], [], timeout)
-        if not ready:
+        try:
+            line = self._stdout_queue.get(timeout=timeout)
+        except queue.Empty:
             raise TimeoutError("Timed out waiting for the MERT worker.")
-        line = process.stdout.readline()
-        if line:
+        if line is not None:
             return line
-        detail = ""
-        if process.stderr is not None:
-            try:
-                detail = process.stderr.read().strip()
-            except Exception:
-                detail = ""
+        detail = "\n".join(self._stderr_lines[-20:]).strip()
         raise MertClientError(
             "MERT worker stopped unexpectedly."
             + (f" {detail}" if detail else "")
         )
+
+    def _read_stdout(self) -> None:
+        process = self._process
+        if process is None or process.stdout is None:
+            self._stdout_queue.put(None)
+            return
+        try:
+            for line in process.stdout:
+                self._stdout_queue.put(line)
+        finally:
+            self._stdout_queue.put(None)
+
+    def _read_stderr(self) -> None:
+        process = self._process
+        if process is None or process.stderr is None:
+            return
+        for line in process.stderr:
+            self._stderr_lines.append(line.rstrip())
+            if len(self._stderr_lines) > 200:
+                del self._stderr_lines[:100]
+
+    @staticmethod
+    def _hidden_windows_process_options() -> dict[str, object]:
+        if os.name != "nt":
+            return {}
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = subprocess.SW_HIDE
+        return {
+            "startupinfo": startupinfo,
+            "creationflags": subprocess.CREATE_NO_WINDOW,
+        }
 
     def start(self) -> None:
         if self._process is not None and self._process.poll() is None:
@@ -192,6 +223,8 @@ class MertLayerClassifier:
         ])
         environment = os.environ.copy()
         environment["PYTHONUNBUFFERED"] = "1"
+        self._stdout_queue = queue.Queue()
+        self._stderr_lines = []
         self._process = subprocess.Popen(
             command,
             cwd=str(self.worker_path.parent),
@@ -201,7 +234,20 @@ class MertLayerClassifier:
             text=True,
             bufsize=1,
             env=environment,
+            **self._hidden_windows_process_options(),
         )
+        self._stdout_thread = threading.Thread(
+            target=self._read_stdout,
+            name="StemSlicerMertStdout",
+            daemon=True,
+        )
+        self._stderr_thread = threading.Thread(
+            target=self._read_stderr,
+            name="StemSlicerMertStderr",
+            daemon=True,
+        )
+        self._stdout_thread.start()
+        self._stderr_thread.start()
         try:
             payload = json.loads(self._readline(self.startup_timeout))
         except Exception:

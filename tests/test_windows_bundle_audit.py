@@ -13,54 +13,66 @@ class WindowsBundleAuditTests(unittest.TestCase):
             output.write(contents)
         return path
 
-    def test_accepts_one_isolated_key_engine_and_one_midi_model(self):
-        with tempfile.TemporaryDirectory() as bundle:
-            self.make_file(bundle, "Stem Slicer 1.5S Beta.exe")
-            engine = "_internal/openkeyscan-analyzer"
-            self.make_file(bundle, f"{engine}/openkeyscan-analyzer.exe")
-            self.make_file(bundle, f"{engine}/_internal/checkpoints/openkeyscan3.pt")
-            self.make_file(bundle, f"{engine}/_internal/torch/lib/torch_cpu.dll")
-            self.make_file(bundle, "_internal/basic_pitch/saved_models/icassp_2022/nmp.onnx")
+    def make_valid_bundle(self, bundle, *, include_mert=True):
+        self.make_file(bundle, "Stem Slicer 1.9B.exe")
+        engine = "_internal/openkeyscan-analyzer"
+        self.make_file(bundle, f"{engine}/openkeyscan-analyzer.exe")
+        self.make_file(bundle, f"{engine}/_internal/checkpoints/openkeyscan3.pt")
+        self.make_file(
+            bundle, f"{engine}/_internal/checkpoints/deeprhythm-0.7.pth"
+        )
+        self.make_file(bundle, f"{engine}/_internal/torch/lib/torch_cpu.dll")
+        self.make_file(bundle, "_internal/torch/lib/torch_cpu.dll")
+        self.make_file(
+            bundle, "_internal/basic_pitch/saved_models/icassp_2022/nmp.onnx"
+        )
+        if include_mert:
+            self.make_file(
+                bundle,
+                "_internal/models/huggingface/models--m-a-p--MERT-v1-95M/"
+                "snapshots/12af15fef9d0ac838c3f475bfbbf26d2060dd4f5/"
+                "pytorch_model.bin",
+            )
 
+    def test_accepts_isolated_analysis_and_parent_mert_runtimes(self):
+        with tempfile.TemporaryDirectory() as bundle:
+            self.make_valid_bundle(bundle)
             result = audit_bundle(bundle)
 
-            self.assertEqual(len(result["models"]), 2)
+            self.assertEqual(len(result["models"]), 4)
             self.assertEqual(len(result["openkey_models"]), 1)
+            self.assertEqual(len(result["deeprhythm_models"]), 1)
             self.assertEqual(len(result["basic_pitch_models"]), 1)
-            self.assertEqual(len(result["torch_cpu"]), 1)
+            self.assertEqual(len(result["mert_models"]), 1)
+            self.assertEqual(len(result["torch_cpu"]), 2)
 
-    def test_rejects_parent_bundle_torch_duplicate(self):
+    def test_rejects_a_third_torch_duplicate(self):
         with tempfile.TemporaryDirectory() as bundle:
-            engine = "_internal/openkeyscan-analyzer"
-            self.make_file(bundle, f"{engine}/openkeyscan-analyzer.exe")
-            self.make_file(bundle, f"{engine}/_internal/checkpoints/openkeyscan3.pt")
-            self.make_file(bundle, f"{engine}/_internal/torch/lib/torch_cpu.dll")
-            self.make_file(bundle, "_internal/basic_pitch/saved_models/icassp_2022/nmp.onnx")
-            self.make_file(bundle, "_internal/torch/lib/torch_cpu.dll")
-
-            with self.assertRaisesRegex(RuntimeError, "found 2"):
+            self.make_valid_bundle(bundle)
+            self.make_file(bundle, "_internal/duplicate/torch_cpu.dll")
+            with self.assertRaisesRegex(RuntimeError, "parent MERT Torch runtime"):
                 audit_bundle(bundle)
 
-    def test_rejects_missing_basic_pitch_model(self):
+    def test_rejects_missing_mert_model(self):
         with tempfile.TemporaryDirectory() as bundle:
-            engine = "_internal/openkeyscan-analyzer"
-            self.make_file(bundle, f"{engine}/openkeyscan-analyzer.exe")
-            self.make_file(bundle, f"{engine}/_internal/checkpoints/openkeyscan3.pt")
-            self.make_file(bundle, f"{engine}/_internal/torch/lib/torch_cpu.dll")
-
-            with self.assertRaisesRegex(RuntimeError, "Basic Pitch model, found 0"):
+            self.make_valid_bundle(bundle, include_mert=False)
+            with self.assertRaisesRegex(RuntimeError, "mert_models, found 0"):
                 audit_bundle(bundle)
 
     def test_rejects_extensionless_openkeyscan_ffmpeg(self):
         with tempfile.TemporaryDirectory() as bundle:
-            engine = "_internal/openkeyscan-analyzer"
-            self.make_file(bundle, f"{engine}/openkeyscan-analyzer.exe")
-            self.make_file(bundle, f"{engine}/_internal/checkpoints/openkeyscan3.pt")
-            self.make_file(bundle, f"{engine}/_internal/torch/lib/torch_cpu.dll")
-            self.make_file(bundle, f"{engine}/_internal/ffmpeg")
-            self.make_file(bundle, "_internal/basic_pitch/saved_models/icassp_2022/nmp.onnx")
-
+            self.make_valid_bundle(bundle)
+            self.make_file(
+                bundle, "_internal/openkeyscan-analyzer/_internal/ffmpeg"
+            )
             with self.assertRaisesRegex(RuntimeError, "extensionless FFmpeg"):
+                audit_bundle(bundle)
+
+    def test_rejects_macos_binary_in_windows_bundle(self):
+        with tempfile.TemporaryDirectory() as bundle:
+            self.make_valid_bundle(bundle)
+            self.make_file(bundle, "_internal/libforeign.dylib")
+            with self.assertRaisesRegex(RuntimeError, "non-Windows binaries"):
                 audit_bundle(bundle)
 
 

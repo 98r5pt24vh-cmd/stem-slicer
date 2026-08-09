@@ -1,0 +1,25 @@
+diff --git a/bungee/CommandLine.h b/bungee/CommandLine.h
+index 207ad50..de1a1ac 100644
+--- a/bungee/CommandLine.h
++++ b/bungee/CommandLine.h
+@@ -316,6 +316,20 @@ struct Processor
+ 				sampleFormat = read<uint16_t>(&wavHeader[20]);
+ 				channelCount = read<uint16_t>(&wavHeader[22]);
+ 				bitsPerSample = read<uint16_t>(&wavHeader[34]);
++				if (sampleFormat == 0xfffe)
++				{
++					const bool supportedGuid =
++						read<uint32_t>(&wavHeader[16]) >= 40 &&
++						read<uint16_t>(&wavHeader[36]) >= 22 &&
++						read<uint16_t>(&wavHeader[38]) == bitsPerSample &&
++						read<uint16_t>(&wavHeader[46]) == 0 &&
++						read<uint32_t>(&wavHeader[48]) == 0x00100000 &&
++						read<uint32_t>(&wavHeader[52]) == 0xaa000080 &&
++						read<uint32_t>(&wavHeader[56]) == 0x719b3800;
++					if (!supportedGuid)
++						fail("Please check your input file: its extensible sample format is not supported");
++					sampleFormat = read<uint16_t>(&wavHeader[44]);
++				}
+ 				if (!channelCount)
+ 					fail("Please check your input file: it seems not to be a compatible WAV file (zero channels)");
+ 				if (read<int32_t>(&wavHeader[28]) != sampleRates.input * channelCount * bitsPerSample / 8)

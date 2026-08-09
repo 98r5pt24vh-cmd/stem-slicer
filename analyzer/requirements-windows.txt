@@ -1,0 +1,10 @@
+# The Torch CPU wheels are installed separately from the official PyTorch CPU
+# index in the Windows workflow. Keep every other analyzer dependency pinned so
+# the validated BPM/key engine is reproducible.
+av==16.1.0
+librosa==0.11.0
+nnAudio==0.3.3
+numpy==1.26.4
+requests==2.32.5
+scipy==1.13.1
+tqdm==4.67.3
