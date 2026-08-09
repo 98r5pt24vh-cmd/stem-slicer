@@ -41,6 +41,11 @@ class WindowsReleaseConfigTests(unittest.TestCase):
                 self.assertIn("SW_HIDE", source)
                 self.assertIn("CREATE_NO_WINDOW", source)
 
+    def test_first_windows_midi_conversion_skips_numba_jit_compilation(self):
+        source = self._read("midi_conversion.py")
+        self.assertIn('if sys.platform == "win32":', source)
+        self.assertIn('os.environ.setdefault("NUMBA_DISABLE_JIT", "1")', source)
+
     def test_workflow_uses_exact_runtime_and_release_gates(self):
         workflow = self._read(".github/workflows/build-windows.yml")
         self.assertIn("Build Stem Slicer 1.9B for Windows", workflow)

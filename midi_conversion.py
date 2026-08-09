@@ -4,6 +4,16 @@ import sys
 import time
 
 
+# On a clean Windows installation, Librosa's first lazy import otherwise
+# spends well over 20 seconds compiling Numba helpers before the first MIDI
+# file can be produced. Basic Pitch does not rely on those helpers being JIT
+# compiled for correctness; disabling that compilation keeps its pure
+# NumPy/Python path and makes the first Quick Extract lifecycle deterministic.
+# Keep the existing optimized behavior on macOS and other platforms.
+if sys.platform == "win32":
+    os.environ.setdefault("NUMBA_DISABLE_JIT", "1")
+
+
 BPM_PATTERN = re.compile(r"(?<!\d)(\d{2,3})(?!\d)")
 ONSET_THRESHOLD = 0.50
 FRAME_THRESHOLD = 0.30
