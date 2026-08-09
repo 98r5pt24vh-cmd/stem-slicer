@@ -218,6 +218,7 @@ class CardsAsSlotsUITests(unittest.TestCase):
         self.page._add_slot("Texture")
         self.page._card_remove_requested(4)
         APP.processEvents()
+        APP.processEvents()
         visible_plus_cards = [
             card
             for card in self.page.findChildren(AddRecipeCard)
