@@ -131,6 +131,7 @@ def worker(source_root: Path, mode: str) -> int:
         os.chdir(source_root)
         sys.path.insert(0, str(source_root))
         threading.setprofile(profile)
+        from PySide6.QtCore import QEventLoop, QTimer
         from PySide6.QtWidgets import QApplication
         from app import MainWindow
 
@@ -160,15 +161,36 @@ def worker(source_root: Path, mode: str) -> int:
         window._populate_layer_cards([layer])
         window._queue_midi_conversion([layer])
         report("Quick Extract MIDI queued while engine loads")
-        while not window.layer_cards:
-            application.processEvents()
-            time.sleep(0.01)
-        card = window.layer_cards[0]
-        while card.midi_handle.state == "processing":
-            application.processEvents()
+        # Run a genuine Qt loop here instead of manually pumping
+        # ``processEvents``. Windows only advances the nested QTimer chain used
+        # by the native-thread dispatcher while an event loop is executing;
+        # this is also the exact condition under which the real app runs.
+        event_loop = QEventLoop()
+        terminal = {"card": None, "failure": ""}
+        timer = QTimer()
+        timer.setInterval(10)
+
+        def inspect_midi_state():
             if window.midi_engine_state == "failed":
-                raise RuntimeError("The MainWindow MIDI engine reported failure.")
-            time.sleep(0.01)
+                terminal["failure"] = "The MainWindow MIDI engine reported failure."
+                event_loop.quit()
+                return
+            if window.layer_cards:
+                candidate = window.layer_cards[0]
+                if candidate.midi_handle.state != "processing":
+                    terminal["card"] = candidate
+                    event_loop.quit()
+
+        timer.timeout.connect(inspect_midi_state)
+        timer.start()
+        QTimer.singleShot(0, inspect_midi_state)
+        event_loop.exec()
+        timer.stop()
+        if terminal["failure"]:
+            raise RuntimeError(terminal["failure"])
+        card = terminal["card"]
+        if card is None:
+            raise RuntimeError("The Quick Extract MIDI card never reached a terminal state.")
         midi_path = Path(card.midi_handle.path)
         if card.midi_handle.state != "ready" or not midi_path.is_file() or midi_path.stat().st_size <= 0:
             raise RuntimeError(
