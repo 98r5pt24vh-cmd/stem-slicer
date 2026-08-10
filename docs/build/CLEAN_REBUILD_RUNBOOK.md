@@ -1,114 +1,120 @@
-# Clean Rebuild Runbook
+# Clean rebuild runbook — Stem Slicer 1.9B
 
-This is the short operational checklist for producing a beta artifact without
-silently changing its runtime.
+Read `BUILD_INVARIANTS.md` first. The canonical source is the Git repository,
+not a previous release folder.
 
-## Before either build
+## Before either platform
 
-1. Read `BUILD_INVARIANTS.md`.
-2. Select the exact platform source under `06_Source_Current`.
-3. Copy the source to a brand-new working folder; never build inside the
-   canonical handoff snapshot.
-4. Create a brand-new virtual environment with the required exact Python.
-5. Confirm that no `build`, `dist`, `release`, `.venv`, `.venv-build`,
-   `__pycache__` or `.pyc` content came from a previous build.
-6. Do not copy dependencies from an older `.app`, Windows `_internal` folder or
-   virtual environment.
+1. Work from `/Users/nrgy/Documents/Stem Slicer Repository` or a clean checkout
+   of the same Git revision.
+2. Record `git status --short --branch` and `git rev-parse HEAD`.
+3. Refuse to build from a dirty or unidentified source tree.
+4. Create a new build/worktree and a brand-new virtual environment.
+5. Do not import any previous `.venv`, `build`, `dist`, Release, extracted ZIP,
+   `.app`, `_internal` or PyInstaller cache.
+6. Verify the external trees with:
 
-## macOS 1.8.2B
+```bash
+python scripts/verify_external_payloads.py --root /absolute/source/root
+```
 
-Source: `06_Source_Current/Stem_Slicer_1.8.2B_macOS`
+7. If the pinned offline MERT payload is missing, fetch it only with:
+
+```bash
+python scripts/fetch_mert_payload.py
+```
+
+## macOS 1.9B
 
 Required runtime:
 
 ```text
-Python 3.12.13
-Architecture arm64
+CPython 3.12.13 arm64
 PySide6 6.11.1
+PyInstaller 6.18.0
 ```
 
-Pre-build gates:
+Use an explicit CPython 3.12.13 arm64 binary and a new environment outside the
+canonical repository:
 
 ```bash
-/absolute/path/to/python3.12 -c "import platform,sys; assert sys.version_info[:3] == (3,12,13); assert platform.machine() == 'arm64'"
-/absolute/path/to/python3.12 -m venv .venv-build-1.8.2B
-.venv-build-1.8.2B/bin/python -m pip install --upgrade pip
-.venv-build-1.8.2B/bin/python -m pip install -r requirements.txt
-.venv-build-1.8.2B/bin/python -m pip check
-.venv-build-1.8.2B/bin/python -c "import platform,sys,PySide6; assert sys.version_info[:3] == (3,12,13); assert platform.machine() == 'arm64'; assert PySide6.__version__ == '6.11.1'"
-QT_QPA_PLATFORM=offscreen STEM_SLICER_DISABLE_ENGINE_AUTOSTART=1 .venv-build-1.8.2B/bin/python -m unittest discover -s tests -v
-.venv-build-1.8.2B/bin/python -m PyInstaller --clean --noconfirm StemSlicer.spec
+/absolute/python3.12 -c "import platform,sys; assert sys.version_info[:3] == (3,12,13); assert platform.machine() == 'arm64'"
+/absolute/python3.12 -m venv /absolute/new/build/venv-1.9B
+/absolute/new/build/venv-1.9B/bin/python -m pip install --upgrade pip
+/absolute/new/build/venv-1.9B/bin/python -m pip install -r requirements.txt
+/absolute/new/build/venv-1.9B/bin/python -m pip check
+/absolute/new/build/venv-1.9B/bin/python -c "import platform,sys,PySide6; assert sys.version_info[:3] == (3,12,13); assert platform.machine() == 'arm64'; assert PySide6.__version__ == '6.11.1'"
+QT_QPA_PLATFORM=offscreen STEM_SLICER_DISABLE_ENGINE_AUTOSTART=1 /absolute/new/build/venv-1.9B/bin/python -m unittest discover -s tests -v
+/absolute/new/build/venv-1.9B/bin/python -m PyInstaller --clean --noconfirm StemSlicer.spec
 ```
 
 After packaging:
 
 - verify the main executable and `libpython3.12.dylib` are arm64;
-- prove Python `3.12.13` from the packaged library/runtime;
-- locate `libpyside6.abi3.6.11.dylib`;
-- confirm no mutable Numba cache is sealed in the app;
-- sign the final app, then run:
+- verify PySide6 6.11.1 inside the bundle;
+- verify no mutable `.nbi`, `.nbc`, model cache or `.DS_Store` was sealed in;
+- run the UI, key/BPM, MIDI and real MERT+DSP packaged smokes;
+- recursively ad-hoc sign the bundle, then run
+  `codesign --verify --deep --strict --verbose=2`;
+- create the archive with
+  `ditto -c -k --sequesterRsrc --keepParent`;
+- run `unzip -t`, extract to a new folder, repeat deep strict signature
+  verification and rerun the packaged smokes.
 
-```bash
-codesign --verify --deep --strict --verbose=2 "Stem Slicer 1.8.2B.app"
-```
+Last accepted macOS evidence:
 
-Create the ZIP with `ditto -c -k --sequesterRsrc --keepParent`, test it with
-`unzip -t`, extract it into a fresh temporary folder and repeat deep strict
-signature verification on the extracted app.
+- artifact source revision: `5e2e790a747a5ded488f221da79c5704ba859683`;
+- functional scan fix: `fc35a9c143b41ca766b0619585375e719ab9944f`;
+- 313 source tests passed;
+- ZIP SHA-256:
+  `dfb4bf375c95509a1b865685a45fbccf6945bd094284e88b997346b7ff86919b`.
 
-## Windows 1.8.2B
+The current Git head contains later Windows dialog/removal hardening. A future
+macOS release must be rebuilt cleanly from that newer recorded Git revision; do
+not copy files into the accepted old `.app`.
 
-Source: `06_Source_Current/Stem_Slicer_1.8.2B_Windows`
+## Windows 1.9B
 
-Required runtime:
+Do not build Windows locally on macOS. Push the intended Git revision to the
+branch consumed by `.github/workflows/build-windows.yml`, then dispatch that
+workflow.
 
-```text
-Official CPython 3.12.10 x64 from actions/setup-python
-PySide6 6.11.1
-```
+The workflow is the source of truth and performs, in order:
 
-Use `.github/workflows/build-windows.yml`; do not recreate the job manually.
-The accepted workflow already:
+1. official CPython 3.12.10 x64 setup and verification;
+2. exact engine/model hash validation;
+3. dependency installation and `pip check`;
+4. pinned offline MERT fetch/verification;
+5. strict 30-second complete Quick Extract MIDI lifecycle;
+6. full cross-platform tests and native Windows regressions;
+7. clean OpenKeyScan analyzer build;
+8. pinned static Bungee build and pinned FFmpeg download;
+9. clean PyInstaller build using `StemSlicerWindows.spec`;
+10. bundle audit, ZIP creation/extraction and exact extracted-payload smoke;
+11. upload of `Stem-Slicer-1.9B-Windows.zip` and `smoke-test.log`.
 
-1. pins and verifies the official runtime;
-2. verifies engine/model hashes;
-3. installs and checks dependencies;
-4. runs the complete Quick Extract MIDI gate on a fresh runner with a strict
-   30-second limit;
-5. builds the isolated analyzer and pinned Bungee/FFmpeg payloads;
-6. runs the full test suite plus native drag-and-drop/Browse regressions;
-7. performs a clean PyInstaller build;
-8. checks the packaged runtime, engines, Optional Target, Qt, MIDI and hidden
-   console behavior;
-9. audits the bundle before upload.
+Do not weaken the MIDI timeout, skip the native Windows regressions or package
+after any failed test.
 
-Do not upload an artifact unless the packaged runtime smoke reports:
+Last accepted Windows build:
 
-```text
-app_version = 1.8.2B
-python = 3.12.10
-architecture = AMD64/x64
-pyside6 = 6.11.1
-frozen = true
-```
+- branch: `codex/windows-1.9b`;
+- final tested revision: `c0340675a51229c9634f24458f295e840ccd00f7`;
+- CI run: `31313639704`;
+- 315 tests passed;
+- clean MIDI lifecycle: 13.153 seconds;
+- ZIP SHA-256:
+  `b284f144de49d2654f5bdbd087279dec73b84e4cd5c36ff3cdd2517aff932ab9`.
 
-The Windows ZIP name presented to testers must be:
+## Final release record
 
-`Stem-Slicer-1.8.2B-Windows.zip`
+For each platform, record:
 
-Do not add diagnostic/runtime wording to the public filename. Keep the
-executable and `_internal` together.
-
-## Final upload record
-
-Before sending either platform build, record:
-
-- source folder and Git commit when applicable;
-- CI run/job/artifact identifiers when applicable;
-- embedded Python, architecture and PySide6;
-- packaged smoke/audit results;
-- ZIP filename, byte size and SHA-256;
-- ZIP integrity result;
-- beta-tester validation status.
-
-If the runtime differs from the exact values above, stop and rebuild cleanly.
+- source branch and exact commit;
+- Python, architecture, PySide6 and PyInstaller versions;
+- payload verification, source tests and platform regressions;
+- packaged runtime/engine/UI smokes;
+- signature or Windows GUI/hidden-console audit;
+- final ZIP filename, byte size and SHA-256;
+- ZIP integrity, fresh extraction and extracted-payload smoke;
+- real beta-tester status separately from automated validation.

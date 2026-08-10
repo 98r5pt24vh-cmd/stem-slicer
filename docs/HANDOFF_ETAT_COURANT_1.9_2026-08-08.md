@@ -1,5 +1,9 @@
 # Handoff — Stem Slicer 1.9 macOS Beta
 
+> Historique uniquement. Ce document est remplacé par
+> `HANDOFF_ETAT_COURANT_1.9B_2026-08-10.md` et ne doit plus servir de baseline
+> de build.
+
 ## Baseline canonique
 
 Source macOS 1.9 :
