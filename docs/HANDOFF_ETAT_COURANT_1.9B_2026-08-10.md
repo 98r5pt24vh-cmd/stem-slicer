@@ -2,6 +2,9 @@
 
 Date: 2026-08-10
 
+Contexte court pour une nouvelle tâche:
+`docs/PROJECT_STATUS_1.9B_2026-08-10.md`.
+
 ## État accepté
 
 Stem Slicer 1.9B est la baseline courante validée par l'utilisateur sur macOS
