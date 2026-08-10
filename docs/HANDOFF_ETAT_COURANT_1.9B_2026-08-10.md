@@ -41,6 +41,18 @@ Windows:
 - Source de l'artefact: `c0340675a51229c9634f24458f295e840ccd00f7`
 - CI: <https://github.com/98r5pt24vh-cmd/stem-slicer/actions/runs/31313639704>
 
+Filet de sécurité historique conservé:
+
+- `01_Releases/Previous_Stable_1.8.2B`: ZIP macOS et Windows de la dernière
+  baseline validée avant 1.9B;
+- `05_Legacy_Source_History/Windows_Port_1.6B_Git`: dépôt Windows historique
+  de 50 commits absent de l'historique Git 1.9B;
+- `05_Legacy_Source_History/Source_Snapshots`: sources 1.8.2B et 1.8.5
+  allégées, sans environnements, builds ni dépendances lourdes.
+
+Ces éléments servent uniquement au rollback et à l'analyse de régression. Ils
+ne remplacent jamais la source Git canonique actuelle.
+
 ## Fonctions validées
 
 ### Stem Slicer
