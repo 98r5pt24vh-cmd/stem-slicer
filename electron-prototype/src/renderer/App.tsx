@@ -1,5 +1,4 @@
 import {
-  Activity,
   AudioLines,
   Check,
   ChevronLeft,
@@ -7,6 +6,7 @@ import {
   Cloud,
   CloudCog,
   Database,
+  FolderCog,
   FolderOpen,
   Gauge,
   History,
@@ -20,11 +20,15 @@ import {
   Play,
   Plus,
   Radio,
+  Repeat2,
   RotateCcw,
+  ScanLine,
   Search,
   Settings2,
   SkipBack,
+  Sliders,
   SlidersHorizontal,
+  Sparkle,
   Sparkles,
   Square,
   WandSparkles,
@@ -33,7 +37,7 @@ import {
   Zap,
   type LucideIcon,
 } from "lucide-react"
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 
 import { Waveform } from "@/components/waveform"
 import { Badge } from "@/components/ui/badge"
@@ -47,12 +51,7 @@ import {
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { basename, cn, formatCount } from "@/lib/utils"
-import type {
-  AppEnvironment,
-  LibraryOverview,
-  MigrationModule,
-  ViewId,
-} from "@/shared/contracts"
+import type { LibraryOverview, ViewId } from "@/shared/contracts"
 
 interface NavItem {
   id: ViewId
@@ -86,9 +85,10 @@ interface HistoryEntry {
 }
 
 const NAVIGATION: NavItem[] = [
+  { id: "stem-slicer", label: "Stem Slicer", icon: FolderCog, shortcut: "S" },
+  { id: "quick-tools", label: "Quick Tools", icon: Wrench, shortcut: "Q" },
   { id: "generate", label: "Generate", icon: Sparkles, shortcut: "G" },
   { id: "library", label: "Library", icon: Library, shortcut: "L" },
-  { id: "quick-tools", label: "Quick Tools", icon: Wrench, shortcut: "Q" },
   { id: "history", label: "History", icon: History, shortcut: "H" },
 ]
 
@@ -196,6 +196,8 @@ function usePlaybackClock(duration: number) {
 
   return { playing, progress, setProgress, toggle, stop }
 }
+
+type PlaybackClock = ReturnType<typeof usePlaybackClock>
 
 function Select({
   id,
@@ -393,7 +395,7 @@ function LayerCard({
             bars={layer.bars}
           />
           <span className="wave-time tabular">
-            {(progress * layer.duration).toFixed(1)} / {layer.duration.toFixed(1)} s
+            {((isAudible ? progress : 0) * layer.duration).toFixed(1)} / {layer.duration.toFixed(1)} s
           </span>
         </button>
 
@@ -448,11 +450,17 @@ function GenerateView({
   layers,
   setLayers,
   onAddHistory,
+  playback,
+  soloId,
+  setSoloId,
 }: {
   library: LibraryOverview
   layers: GeneratedLayer[]
   setLayers: React.Dispatch<React.SetStateAction<GeneratedLayer[]>>
   onAddHistory: (entry: HistoryEntry) => void
+  playback: PlaybackClock
+  soloId: string | null
+  setSoloId: React.Dispatch<React.SetStateAction<string | null>>
 }) {
   const [bpm, setBpm] = useState(129)
   const [keyName, setKeyName] = useState("F minor")
@@ -460,8 +468,6 @@ function GenerateView({
   const [seed, setSeed] = useState(734291)
   const [isGenerating, setIsGenerating] = useState(false)
   const [status, setStatus] = useState("Visual transport ready")
-  const [soloId, setSoloId] = useState<string | null>(null)
-  const playback = usePlaybackClock(7.44)
   const allPlaying = playback.playing && soloId === null
 
   const handleGenerate = () => {
@@ -492,16 +498,6 @@ function GenerateView({
         layerCount: layers.length,
       })
     }, 850)
-  }
-
-  const toggleMix = () => {
-    if (soloId !== null) {
-      setSoloId(null)
-      playback.stop()
-      window.setTimeout(playback.toggle, 0)
-      return
-    }
-    playback.toggle()
   }
 
   const toggleSolo = (id: string) => {
@@ -575,47 +571,13 @@ function GenerateView({
           </label>
           <div className="generate-action">
             <span className="sr-only" aria-live="polite">{status}</span>
-            <Button size="lg" onClick={handleGenerate} disabled={isGenerating}>
+          <Button className="hardware-button generate-hardware" size="lg" onClick={handleGenerate} disabled={isGenerating}>
               {isGenerating ? <LoaderCircle className="animate-spin" /> : <WandSparkles />}
               {isGenerating ? "Generating…" : "Generate"}
             </Button>
           </div>
         </CardContent>
       </Card>
-
-      <section className="transport" aria-label="Transport synchronisé">
-        <div className="transport-primary">
-          <Button
-            variant={allPlaying ? "success" : "secondary"}
-            size="icon"
-            onClick={toggleMix}
-            aria-label={allPlaying ? "Mettre le mix en pause" : "Lire le mix"}
-          >
-            {allPlaying ? <Pause /> : <Play className="play-glyph" />}
-          </Button>
-          <Button variant="ghost" size="icon" onClick={playback.stop} aria-label="Arrêter la lecture">
-            <Square />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => playback.setProgress(0)}
-            aria-label="Revenir au début"
-          >
-            <SkipBack />
-          </Button>
-          <div className="transport-wave">
-            <Waveform progress={playback.progress} compact label="Forme d’onde du mix" />
-          </div>
-          <span className="transport-time tabular">
-            {(playback.progress * 7.44).toFixed(1)} / 7.4 s
-          </span>
-        </div>
-        <div className="transport-state" aria-live="polite">
-          <Activity aria-hidden="true" />
-          <span>{soloId ? `Visual solo · ${layers.find((layer) => layer.id === soloId)?.role}` : allPlaying ? "Visual playback · all layers" : status}</span>
-        </div>
-      </section>
 
       <div className="layer-grid">
         {layers.map((layer) => (
@@ -732,6 +694,74 @@ function LibraryView({ library }: { library: LibraryOverview }) {
   )
 }
 
+function StemSlicerView() {
+  const [sourceFolder, setSourceFolder] = useState("")
+  const [spaceEnabled, setSpaceEnabled] = useState(true)
+  const [noSpaceEnabled, setNoSpaceEnabled] = useState(true)
+  const [keyAnalysis, setKeyAnalysis] = useState(true)
+  const [conversion, setConversion] = useState(false)
+
+  const pickSourceFolder = async () => {
+    const result = await window.stemSlicer?.pickLibraryFolder()
+    if (!result || result.canceled || result.paths.length === 0) return
+    setSourceFolder(result.paths[0])
+  }
+
+  return (
+    <div className="page-stack">
+      <PageHeader
+        eyebrow="Workspace / Stem Slicer"
+        title="Batch extraction, preserved from 1.9B"
+        description="The Electron workspace keeps the accepted Space and NoSpace paths, key and BPM analysis, Bungee conversion, naming and DAW-ready outputs."
+        actions={<Badge variant="warning">Engine adapter next</Badge>}
+      />
+
+      <div className="workflow-grid">
+        <Card className="glass-panel workflow-card">
+          <CardHeader>
+            <div className="workflow-heading"><span>01</span><div><CardTitle>Source folder</CardTitle><CardDescription>Select the folder containing the MP3 loops to process.</CardDescription></div></div>
+          </CardHeader>
+          <CardContent>
+            <button type="button" className="compact-drop" onClick={pickSourceFolder}>
+              <FolderOpen aria-hidden="true" />
+              <span><strong>{sourceFolder ? basename(sourceFolder) : "Choose a loop folder"}</strong><small>{sourceFolder || "Folder selection is handled natively by Electron."}</small></span>
+            </button>
+          </CardContent>
+        </Card>
+
+        <Card className="glass-panel workflow-card">
+          <CardHeader>
+            <div className="workflow-heading"><span>02</span><div><CardTitle>Extraction paths</CardTitle><CardDescription>Both validated detection paths remain independently selectable.</CardDescription></div></div>
+          </CardHeader>
+          <CardContent className="option-grid">
+            <label className="toggle-tile"><input type="checkbox" checked={spaceEnabled} onChange={(event) => setSpaceEnabled(event.target.checked)} /><span><strong>Space</strong><small>Loops with separated layers</small></span></label>
+            <label className="toggle-tile"><input type="checkbox" checked={noSpaceEnabled} onChange={(event) => setNoSpaceEnabled(event.target.checked)} /><span><strong>NoSpace</strong><small>Contiguous-layer inference</small></span></label>
+            <label className="toggle-tile"><input type="checkbox" checked={keyAnalysis} onChange={(event) => setKeyAnalysis(event.target.checked)} /><span><strong>Key + BPM</strong><small>Accepted musical analysis</small></span></label>
+            <label className="toggle-tile"><input type="checkbox" checked={conversion} onChange={(event) => setConversion(event.target.checked)} /><span><strong>Convert</strong><small>Bungee BPM and key conversion</small></span></label>
+          </CardContent>
+        </Card>
+
+        <Card className="glass-panel workflow-card workflow-output">
+          <CardHeader>
+            <div className="workflow-heading"><span>03</span><div><CardTitle>Output</CardTitle><CardDescription>Naming and destinations remain compatible with the 1.9B workflow.</CardDescription></div></div>
+          </CardHeader>
+          <CardContent>
+            <div className="feature-strip" aria-label="Preserved output features">
+              <Badge variant="secondary">DAW naming</Badge>
+              <Badge variant="secondary">Combined operations</Badge>
+              <Badge variant="secondary">Output folders</Badge>
+            </div>
+            <div className="blocked-action">
+              <Button className="hardware-button" disabled>Start batch</Button>
+              <p>The accepted Python engine will be connected here before this action is enabled.</p>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  )
+}
+
 function EmptyState({ icon: Icon, title, description, action }: { icon: LucideIcon; title: string; description: string; action: React.ReactNode }) {
   return (
     <div className="empty-state">
@@ -743,39 +773,93 @@ function EmptyState({ icon: Icon, title, description, action }: { icon: LucideIc
   )
 }
 
-function QuickToolsView() {
-  const [selectedFiles, setSelectedFiles] = useState<string[]>([])
+function SegmentedChoice({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (value: string) => void }) {
+  return (
+    <div className="segmented-field">
+      <span>{label}</span>
+      <div className="segmented-control" role="group" aria-label={label}>
+        {options.map((option) => <button key={option} type="button" aria-pressed={value === option} onClick={() => onChange(option)}>{option}</button>)}
+      </div>
+    </div>
+  )
+}
 
-  const pickAudio = async () => {
+function QuickToolsView() {
+  const [scanFile, setScanFile] = useState("")
+  const [convertFile, setConvertFile] = useState("")
+  const [extractFile, setExtractFile] = useState("")
+  const [degreeReference, setDegreeReference] = useState("Major")
+  const [notation, setNotation] = useState("Sharps #")
+  const [convertBpm, setConvertBpm] = useState(120)
+  const [convertKey, setConvertKey] = useState("C major / A minor")
+
+  const pickAudio = async (setPath: (path: string) => void) => {
     const result = await window.stemSlicer?.pickAudioFiles()
-    if (result && !result.canceled) setSelectedFiles(result.paths)
+    if (!result || result.canceled || result.paths.length === 0) return
+    setPath(result.paths[0])
   }
 
-  const tools = [
-    { icon: AudioLines, name: "Stem Splitter", detail: "Separate vocals, drums, bass and instruments.", state: "Python adapter" },
-    { icon: SlidersHorizontal, name: "Loop Slicer", detail: "Extract synchronized sections and named layers.", state: "Port queued" },
-    { icon: Music2, name: "Audio to MIDI", detail: "Convert a complete monophonic audio file to MIDI.", state: "Python adapter" },
-  ]
-
   return (
-    <div className="page-stack">
-      <PageHeader eyebrow="Workspace / Quick Tools" title="Process audio without leaving the project" description="The Electron shell owns file selection and job state; engine adapters are connected behind typed contracts." />
-      <button type="button" className="drop-zone" onClick={pickAudio}>
-        <span className="drop-icon"><Plus /></span>
-        <strong>{selectedFiles.length ? `${selectedFiles.length} file${selectedFiles.length > 1 ? "s" : ""} selected` : "Drop audio here or choose files"}</strong>
-        <span>{selectedFiles.length ? selectedFiles.map(basename).join(" · ") : "WAV, AIFF, FLAC, MP3 or M4A"}</span>
-      </button>
-      <div className="tool-grid">
-        {tools.map((tool) => {
-          const Icon = tool.icon
-          return (
-            <Card key={tool.name} className="tool-card">
-              <CardHeader><span className="tool-icon"><Icon /></span><Badge variant="secondary">{tool.state}</Badge></CardHeader>
-              <CardContent><CardTitle>{tool.name}</CardTitle><CardDescription>{tool.detail}</CardDescription><Button variant="outline" disabled={selectedFiles.length === 0}>Configure</Button></CardContent>
-            </Card>
-          )
-        })}
-      </div>
+    <div className="page-stack quick-tools-page">
+      <PageHeader eyebrow="Workspace / Quick Tools" title="The complete 1.9B quick workflow" description="Quick Scan, Quick Convert and Quick Extract keep their original roles. Each engine will be reconnected behind this Electron surface rather than replaced by generic tools." />
+
+      <section className="quick-workbench glass-panel quick-scan-workbench" aria-labelledby="quick-scan-title">
+        <div className="quick-workbench-heading">
+          <span className="tool-icon keycap-icon"><ScanLine aria-hidden="true" /></span>
+          <div><h2 id="quick-scan-title">Quick Scan</h2><p>Detect BPM, key relationships, relative key and compatible modes from one loop.</p></div>
+          <Badge variant="warning">1.9B engine to connect</Badge>
+        </div>
+        <div className="quick-scan-layout">
+          <button type="button" className="compact-drop" onClick={() => pickAudio(setScanFile)}>
+            <Music2 aria-hidden="true" /><span><strong>{scanFile ? basename(scanFile) : "Choose one audio file"}</strong><small>MP3, WAV, FLAC or AIFF</small></span>
+          </button>
+          <div className="quick-scan-results" aria-label="Quick Scan results">
+            {[["BPM", "—"], ["Detected key", "—"], ["Relative key", "—"], ["Modes", "—"]].map(([label, value]) => <div key={label}><small>{label}</small><strong>{value}</strong></div>)}
+          </div>
+        </div>
+        <div className="quick-options">
+          <SegmentedChoice label="Degree reference" value={degreeReference} options={["Major", "Minor"]} onChange={setDegreeReference} />
+          <SegmentedChoice label="Key notation" value={notation} options={["Sharps #", "Flats ♭"]} onChange={setNotation} />
+          <p><CircleAlert aria-hidden="true" /> Results activate when the accepted key/BPM engine is connected.</p>
+        </div>
+      </section>
+
+      <section className="quick-workbench glass-panel quick-convert-workbench" aria-labelledby="quick-convert-title">
+        <div className="quick-workbench-heading">
+          <span className="tool-icon keycap-icon orange"><SlidersHorizontal aria-hidden="true" /></span>
+          <div><h2 id="quick-convert-title">Quick Convert</h2><p>Convert one loop to a selected BPM and relative major/minor key family.</p></div>
+          <Badge variant="warning">Bungee adapter next</Badge>
+        </div>
+        <div className="quick-convert-layout">
+          <button type="button" className="compact-drop" onClick={() => pickAudio(setConvertFile)}>
+            <Repeat2 aria-hidden="true" /><span><strong>{convertFile ? basename(convertFile) : "Choose one loop"}</strong><small>Output remains individually draggable</small></span>
+          </button>
+          <label className="control-field"><span>Target BPM</span><Input type="number" min="40" max="300" value={convertBpm} onChange={(event) => setConvertBpm(Number(event.target.value))} /></label>
+          <Select id="quick-convert-key" label="Target key" value={convertKey} onChange={setConvertKey}>
+            <option>C major / A minor</option><option>D♭ major / B♭ minor</option><option>E♭ major / C minor</option><option>F major / D minor</option><option>G major / E minor</option>
+          </Select>
+          <div className="quick-storage"><span>0 conversions</span><button type="button" disabled>Open output</button><button type="button" disabled>Manage</button></div>
+        </div>
+      </section>
+
+      <section className="quick-workbench glass-panel quick-extract-workbench" aria-labelledby="quick-extract-title">
+        <div className="quick-workbench-heading">
+          <span className="tool-icon keycap-icon red"><AudioLines aria-hidden="true" /></span>
+          <div><h2 id="quick-extract-title">Quick Extract</h2><p>Incremental layer cards with playback, waveform, metadata and parallel MIDI.</p></div>
+          <Badge variant="warning">Extraction adapter next</Badge>
+        </div>
+        <div className="quick-extract-layout">
+          <button type="button" className="compact-drop" onClick={() => pickAudio(setExtractFile)}>
+            <Plus aria-hidden="true" /><span><strong>{extractFile ? basename(extractFile) : "Choose one MP3 loop"}</strong><small>Cards appear incrementally during extraction</small></span>
+          </button>
+          <div className="extract-preview">
+            <Sparkle aria-hidden="true" />
+            <strong>Layer cards will appear here</strong>
+            <span>Audio drag · MIDI drag · optional BPM/key conversion · Drag All</span>
+          </div>
+        </div>
+        <div className="quick-storage"><span>0 extracts</span><button type="button" disabled>Open folder</button><button type="button" disabled>Manage</button></div>
+      </section>
     </div>
   )
 }
@@ -821,31 +905,74 @@ function CloudView() {
   )
 }
 
-function RuntimePanel({ modules, environment }: { modules: MigrationModule[]; environment?: AppEnvironment }) {
+function TaskCenter({ library }: { library: LibraryOverview }) {
   const [open, setOpen] = useState(false)
+  const panelId = useId()
+  const analyzedLayers = library.roots.reduce((sum, root) => sum + root.analyzedKeyCount, 0)
+  const missingConfidence = Math.max(0, library.totalLayers - analyzedLayers)
+
+  useEffect(() => {
+    if (!open) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false)
+    }
+    window.addEventListener("keydown", onKeyDown)
+    return () => window.removeEventListener("keydown", onKeyDown)
+  }, [open])
+
   return (
-    <div className={cn("runtime-panel", open && "is-open")}>
-      <button type="button" className="runtime-trigger" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
-        <span className="status-light is-online" />
-        <span>Electron runtime</span>
-        <Badge variant="secondary">{modules.filter((module) => module.state !== "queued").length}/{modules.length}</Badge>
+    <div className={cn("task-center app-no-drag", open && "is-open")}>
+      <button type="button" className="task-trigger" onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-controls={panelId}>
+        <span className={cn("status-light", library.databaseDetected && "is-online")} />
+        <span>{library.databaseDetected ? "Catalogue ready" : "Catalogue unavailable"}</span>
+        <Badge variant={!library.databaseDetected || missingConfidence > 0 ? "warning" : "success"}>{formatCount(library.totalLayers)}</Badge>
       </button>
       {open ? (
-        <div className="runtime-popover">
-          <div className="runtime-heading"><div><strong>Migration boundary</strong><small>Concrete module ownership</small></div><Button variant="ghost" size="icon" onClick={() => setOpen(false)} aria-label="Fermer"><X /></Button></div>
-          <div className="runtime-list">
-            {modules.map((module) => (
-              <div key={module.id} className="runtime-row">
-                <span className={cn("runtime-state", module.state)} aria-hidden="true" />
-                <div><strong>{module.label}</strong><small>{module.detail}</small></div>
-                <Badge variant={module.runtime === "TypeScript" ? "success" : module.runtime === "External binary" ? "warning" : "secondary"}>{module.runtime}</Badge>
-              </div>
-            ))}
+        <div className="task-popover glass-panel" id={panelId} role="status">
+          <div className="task-heading"><div><strong>Library activity</strong><small>Future scans will remain visible here while you work.</small></div><Button variant="ghost" size="icon" onClick={() => setOpen(false)} aria-label="Close activity"><X /></Button></div>
+          <div className="task-body">
+            <div className="task-title"><span><ScanLine aria-hidden="true" /></span><div><strong>1.9B catalogue</strong><small>{formatCount(library.totalLayers)} cached layers · no scan active</small></div><Badge variant={library.databaseDetected ? "success" : "warning"}>{library.databaseDetected ? "Ready" : "Offline"}</Badge></div>
+            <div className="task-progress" aria-label={library.databaseDetected ? "Catalogue loading complete" : "Catalogue unavailable"} aria-valuemin={0} aria-valuemax={100} aria-valuenow={library.databaseDetected ? 100 : 0} role="progressbar"><span style={{ width: library.databaseDetected ? "100%" : "0%" }} /></div>
+            {!library.databaseDetected ? <p><CircleAlert aria-hidden="true" /> The accepted cache is only available inside the Electron runtime.</p> : missingConfidence > 0 ? <p><CircleAlert aria-hidden="true" /> {formatCount(missingConfidence)} layers currently have no Top-2 confidence data.</p> : <p><Check aria-hidden="true" /> Key confidence metadata is available for the indexed catalogue.</p>}
           </div>
-          {environment ? <p className="runtime-version tabular">Electron {environment.electronVersion} · Node {environment.nodeVersion} · {environment.architecture}</p> : null}
         </div>
       ) : null}
     </div>
+  )
+}
+
+function GlobalPlayer({ layers, playback, soloId, setSoloId }: { layers: GeneratedLayer[]; playback: PlaybackClock; soloId: string | null; setSoloId: React.Dispatch<React.SetStateAction<string | null>> }) {
+  const [volume, setVolume] = useState(78)
+  const currentLayer = layers.find((layer) => layer.id === soloId) ?? layers[0]
+  const allPlaying = playback.playing && soloId === null
+
+  const toggleMix = () => {
+    if (soloId !== null) {
+      setSoloId(null)
+      playback.stop()
+      window.setTimeout(playback.toggle, 0)
+      return
+    }
+    playback.toggle()
+  }
+
+  return (
+    <footer className="global-player app-no-drag" aria-label="Global audio preview">
+      <div className="player-current">
+        <span className="player-art"><AudioLines aria-hidden="true" /></span>
+        <div><strong>{soloId ? currentLayer?.role : "Generated stack"}</strong><small>{currentLayer ? `${currentLayer.bpm} BPM · ${currentLayer.keyName}` : "No generated layers"}</small></div>
+        <Badge variant="secondary">Visual preview</Badge>
+      </div>
+      <div className="player-core">
+        <div className="player-controls">
+          <button type="button" className="player-key" onClick={playback.stop} aria-label="Return to start"><SkipBack aria-hidden="true" /></button>
+          <button type="button" className={cn("player-key player-key-primary", playback.playing && "is-active")} onClick={toggleMix} aria-label={allPlaying ? "Pause all layers" : "Play all layers"}>{allPlaying ? <Pause aria-hidden="true" /> : <Play className="play-glyph" aria-hidden="true" />}</button>
+          <button type="button" className="player-key" onClick={playback.stop} aria-label="Stop preview"><Square aria-hidden="true" /></button>
+        </div>
+        <div className="player-timeline"><Waveform progress={playback.progress} compact label="Generated stack waveform" /><span className="tabular">{(playback.progress * 7.44).toFixed(1)} / 7.4 s</span></div>
+      </div>
+      <label className="player-volume"><Sliders aria-hidden="true" /><span className="sr-only">Preview volume</span><input type="range" min="0" max="100" value={volume} onChange={(event) => setVolume(Number(event.target.value))} /><output className="tabular">{volume}%</output></label>
+    </footer>
   )
 }
 
@@ -853,20 +980,27 @@ export function App() {
   const [activeView, setActiveView] = useState<ViewId>("generate")
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [library, setLibrary] = useState<LibraryOverview>(FALLBACK_LIBRARY)
-  const [environment, setEnvironment] = useState<AppEnvironment>()
-  const [modules, setModules] = useState<MigrationModule[]>([])
   const [layers, setLayers] = useState(INITIAL_LAYERS)
   const [history, setHistory] = useState<HistoryEntry[]>([])
+  const [soloId, setSoloId] = useState<string | null>(null)
+  const playback = usePlaybackClock(7.44)
+  const mainRef = useRef<HTMLElement>(null)
+  const initialViewRef = useRef(true)
 
   useEffect(() => {
     const api = window.stemSlicer
     if (!api) return
-    void Promise.all([api.getLibraryOverview(), api.getEnvironment(), api.getMigrationModules()]).then(([overview, nextEnvironment, nextModules]) => {
-      setLibrary(overview)
-      setEnvironment(nextEnvironment)
-      setModules(nextModules)
-    })
+    void api.getLibraryOverview().then(setLibrary)
   }, [])
+
+  useEffect(() => {
+    document.title = `${NAVIGATION.find((item) => item.id === activeView)?.label ?? "Stem Slicer"} · Stem Slicer Prototype`
+    if (initialViewRef.current) {
+      initialViewRef.current = false
+      return
+    }
+    mainRef.current?.focus()
+  }, [activeView])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -889,16 +1023,18 @@ export function App() {
       <AppSidebar activeView={activeView} collapsed={sidebarCollapsed} totalLayers={library.totalLayers} onNavigate={setActiveView} onToggle={() => setSidebarCollapsed((value) => !value)} />
       <div className="app-workspace">
         <div className="window-dragbar app-drag-region">
-          <span className="prototype-pill app-no-drag"><span /> Live prototype</span>
-          <RuntimePanel modules={modules} environment={environment} />
+          <span className="prototype-pill app-no-drag"><span /> Electron prototype</span>
+          <TaskCenter library={library} />
         </div>
-        <main id="main-content" tabIndex={-1}>
-          {activeView === "generate" ? <GenerateView library={library} layers={layers} setLayers={setLayers} onAddHistory={(entry) => setHistory((items) => [entry, ...items])} /> : null}
+        <main id="main-content" tabIndex={-1} ref={mainRef}>
+          {activeView === "stem-slicer" ? <StemSlicerView /> : null}
+          {activeView === "generate" ? <GenerateView library={library} layers={layers} setLayers={setLayers} onAddHistory={(entry) => setHistory((items) => [entry, ...items])} playback={playback} soloId={soloId} setSoloId={setSoloId} /> : null}
           {activeView === "library" ? <LibraryView library={library} /> : null}
           {activeView === "quick-tools" ? <QuickToolsView /> : null}
           {activeView === "history" ? <HistoryView history={history} /> : null}
           {activeView === "cloud" ? <CloudView /> : null}
         </main>
+        <GlobalPlayer layers={layers} playback={playback} soloId={soloId} setSoloId={setSoloId} />
       </div>
     </div>
   )

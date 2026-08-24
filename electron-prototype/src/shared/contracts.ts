@@ -1,4 +1,10 @@
-export type ViewId = "generate" | "library" | "quick-tools" | "history" | "cloud"
+export type ViewId =
+  | "stem-slicer"
+  | "generate"
+  | "library"
+  | "quick-tools"
+  | "history"
+  | "cloud"
 
 export type KeyCoverage = "analyzed" | "unavailable"
 
