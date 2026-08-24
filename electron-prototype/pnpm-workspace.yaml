@@ -1,0 +1,14 @@
+packages:
+  - "."
+
+# Electron Forge requires a physical, hoisted node_modules tree.
+nodeLinker: hoisted
+
+# Electron Forge 7.11.2 depends on the official @electron/node-gyp Git source.
+blockExoticSubdeps: false
+
+# Only the native binaries required by this development toolchain may execute
+# install scripts. All other dependencies keep pnpm 11's secure default.
+allowBuilds:
+  electron: true
+  esbuild: true

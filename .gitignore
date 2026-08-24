@@ -40,3 +40,11 @@ models/huggingface/
 # Local release evidence
 artifacts/
 validation-output/
+
+# Electron development prototype
+electron-prototype/node_modules/
+electron-prototype/.vite/
+electron-prototype/coverage/
+electron-prototype/test-results/
+electron-prototype/playwright-report/
+electron-prototype/artifacts/

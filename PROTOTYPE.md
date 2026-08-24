@@ -29,6 +29,28 @@ with up to four ordered worker threads.  On the fixed 48-layer cold benchmark:
 
 No application bundle or release ZIP has been rebuilt.
 
+## Electron interface prototype
+
+The evolving Electron prototype lives in `electron-prototype/` and launches in
+development mode with `Launch Stem Slicer Electron Prototype.command`.
+
+It currently provides:
+
+- an Electron 43 shell with sandboxed renderer and typed preload IPC;
+- React 19, TypeScript, Vite and local shadcn/ui components;
+- collapsible navigation for Generate, Library, Quick Tools, History and the
+  future Connected Libraries space;
+- functional Generate controls and synchronized visual transport states;
+- read-only inspection of the accepted 1.9B SQLite catalogue, including real
+  library, category and key-coverage counts;
+- an explicit migration boundary separating TypeScript services, external
+  FFmpeg/Bungee binaries and temporary Python model adapters.
+
+Electron writes its own development state under
+`~/Library/Caches/Stem Slicer/electron-prototype`. It does not write to
+`~/Library/Caches/Stem Slicer/1.9`. No `.app`, ZIP or release artifact is
+created by this launcher.
+
 ## Libraries without Top-1/Top-2 key analysis
 
 The accepted 1.9B cache contains 9,193 rows for `+NRGY ALL LAYERS`, all with a
