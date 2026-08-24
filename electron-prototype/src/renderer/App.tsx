@@ -153,18 +153,6 @@ const INITIAL_LAYERS: GeneratedLayer[] = [
     alternateKey: "A♭ major",
     bars: [28, 34, 42, 47, 53, 58, 63, 68, 72, 75, 78, 81, 83, 85, 86, 87, 88, 88, 87, 86, 84, 81, 78, 74, 70, 65, 60, 55, 50, 45, 41, 37, 34, 32, 31, 30, 31, 33, 36, 40, 45, 51, 58, 65, 71, 76, 80, 82],
   },
-  {
-    id: "texture",
-    role: "Detail",
-    file: "NRGY_129_Fm_Texture_09.wav",
-    category: "Texture",
-    bpm: 129,
-    keyName: "F minor",
-    octave: 1,
-    volume: 57,
-    duration: 7.44,
-    bars: [15, 61, 24, 72, 33, 84, 19, 56, 42, 91, 27, 68, 36, 79, 22, 63, 48, 87, 31, 74, 18, 58, 39, 83, 25, 66, 45, 89, 29, 71, 20, 54, 41, 81, 34, 76, 23, 60, 47, 86, 28, 69, 37, 78, 17, 52, 43, 73],
-  },
 ]
 
 const FALLBACK_LIBRARY: LibraryOverview = {
@@ -615,7 +603,11 @@ function GenerateView({
   const selectedLibrarySet = new Set(selectedLibraryPaths)
   const selectedRoots = library.roots.filter((root) => selectedLibrarySet.has(root.path))
   const selectedLayerCount = selectedRoots.reduce((sum, root) => sum + root.layerCount, 0)
-  const selectedCategories = aggregateCategories(selectedRoots)
+  const selectedRootCategories = aggregateCategories(selectedRoots)
+  const allLibrariesSelected = library.roots.length > 0 && selectedRoots.length === library.roots.length
+  const selectedCategories = selectedRootCategories.length > 0
+    ? selectedRootCategories
+    : allLibrariesSelected ? library.categories : []
   const largestCategoryCount = selectedCategories[0]?.count || 1
 
   useEffect(() => {
@@ -765,25 +757,31 @@ function GenerateView({
             <span className="catalogue-icon" aria-hidden="true"><Database /></span>
             <div>
               <h2 id="generate-catalogue-title">Layer library</h2>
-              <p><strong>{formatCount(selectedLayerCount)}</strong> layers selected for Generate</p>
+              <p>Categories available to the current Generate selection</p>
             </div>
           </div>
-          <LibraryManager
-            library={library}
-            selectedPaths={selectedLibraryPaths}
-            selectedLayerCount={selectedLayerCount}
-            selectedCategoryCount={selectedCategories.length}
-            selectionMessage={selectionMessage}
-            onSelectedPathsChange={setSelectedLibraryPaths}
-            onAddFolder={pickFolder}
-          />
+          <div className="catalogue-actions">
+            <div className="catalogue-layer-count" aria-label={`${formatCount(selectedLayerCount)} layers selected for Generate`}>
+              <strong className="tabular">{formatCount(selectedLayerCount)}</strong>
+              <span>layers selected</span>
+            </div>
+            <LibraryManager
+              library={library}
+              selectedPaths={selectedLibraryPaths}
+              selectedLayerCount={selectedLayerCount}
+              selectedCategoryCount={selectedCategories.length}
+              selectionMessage={selectionMessage}
+              onSelectedPathsChange={setSelectedLibraryPaths}
+              onAddFolder={pickFolder}
+            />
+          </div>
         </div>
 
         <div className="catalogue-distribution-heading">
-          <strong>Category distribution</strong>
-          <span>Automatic and manual labels in the active selection</span>
+          <strong>Categories</strong>
+          <span><b className="tabular">{selectedCategories.length}</b> available for Generate · automatic and manual labels</span>
         </div>
-        <div className="catalogue-distribution" aria-label="Category distribution">
+        <div className="catalogue-distribution" aria-label={`${selectedCategories.length} categories available for Generate`}>
           {selectedCategories.length > 0 ? selectedCategories.map((category) => (
             <div className="category-compact" key={category.name}>
               <span className="category-compact-meter" aria-hidden="true"><span style={{ width: `${Math.max(5, (category.count / largestCategoryCount) * 100)}%` }} /></span>
