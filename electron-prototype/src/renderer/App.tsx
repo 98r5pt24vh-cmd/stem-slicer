@@ -352,6 +352,7 @@ function PageHeader({
 
 function LayerCard({
   layer,
+  tone,
   progress,
   playing,
   isAudible,
@@ -359,6 +360,7 @@ function LayerCard({
   onChange,
 }: {
   layer: GeneratedLayer
+  tone: "green" | "yellow"
   progress: number
   playing: boolean
   isAudible: boolean
@@ -366,7 +368,7 @@ function LayerCard({
   onChange: (layer: GeneratedLayer) => void
 }) {
   return (
-    <Card className={cn("layer-card", isAudible && "is-audible")} aria-label={`${layer.role}, ${layer.category}`}>
+    <Card className={cn("layer-card", `layer-tone-${tone}`, isAudible && "is-audible")} aria-label={`${layer.role}, ${layer.category}`}>
       <CardHeader>
         <div className="layer-heading">
           <div className="layer-index">{layer.role.slice(0, 1)}</div>
@@ -469,6 +471,8 @@ function GenerateView({
   const [isGenerating, setIsGenerating] = useState(false)
   const [status, setStatus] = useState("Visual transport ready")
   const allPlaying = playback.playing && soloId === null
+  const analyzedKeyCount = library.roots.reduce((sum, root) => sum + root.analyzedKeyCount, 0)
+  const unavailableKeyCount = Math.max(0, library.totalLayers - analyzedKeyCount)
 
   const handleGenerate = () => {
     if (isGenerating) return
@@ -511,19 +515,13 @@ function GenerateView({
   }
 
   return (
-    <div className="page-stack">
+    <div className="page-stack generate-page">
       <PageHeader
         eyebrow="Workspace / Generate"
         title="Build a new layer stack"
-        description="Shape the Generate workflow against the real 1.9B catalogue. Card selection and audio playback remain simulated in this first Electron pass."
+        description="Set the musical constraints, inspect the catalogue and work through the generated layers below."
         actions={
-          <div className="library-status">
-            <span className={cn("status-light", library.databaseDetected && !library.error && "is-online")} />
-            <span>
-              <strong>{formatCount(library.totalLayers)} layers</strong>
-              <small>{library.databaseDetected ? "1.9B catalogue connected" : "Catalogue unavailable"}</small>
-            </span>
-          </div>
+          <Badge variant={library.databaseDetected && !library.error ? "success" : "warning"}>{library.databaseDetected ? "1.9B catalogue connected" : "Catalogue unavailable"}</Badge>
         }
       />
 
@@ -579,23 +577,34 @@ function GenerateView({
         </CardContent>
       </Card>
 
-      <div className="layer-grid">
-        {layers.map((layer) => (
-          <LayerCard
-            key={layer.id}
-            layer={layer}
-            progress={playback.progress}
-            playing={playback.playing}
-            isAudible={allPlaying || soloId === layer.id}
-            onPlay={() => toggleSolo(layer.id)}
-            onChange={(next) => setLayers((current) => current.map((item) => item.id === next.id ? next : item))}
-          />
-        ))}
-      </div>
+      <section className="generate-library-summary glass-panel" aria-label="Generate catalogue summary">
+        <div><Database aria-hidden="true" /><span><strong>{formatCount(library.totalLayers)}</strong><small>Layers</small></span></div>
+        <div><FolderOpen aria-hidden="true" /><span><strong>{library.roots.length}</strong><small>Libraries</small></span></div>
+        <div><Layers3 aria-hidden="true" /><span><strong>{library.categories.length}</strong><small>Categories</small></span></div>
+        <div><Radio aria-hidden="true" /><span><strong>{formatCount(analyzedKeyCount)}</strong><small>Top-1 / Top-2 analyzed</small></span></div>
+        <div className={cn(unavailableKeyCount > 0 && "has-warning")}><CircleAlert aria-hidden="true" /><span><strong>{formatCount(unavailableKeyCount)}</strong><small>Confidence unavailable</small></span></div>
+      </section>
 
-      <div className="generate-footer">
-        <p><Check aria-hidden="true" /> Shared BPM and key constraints are active.</p>
-        <Button variant="outline"><Layers3 /> Drag all</Button>
+      <div className="layer-scroll" tabIndex={0} aria-label="Generated layer cards">
+        <div className="layer-grid">
+          {layers.map((layer, index) => (
+            <LayerCard
+              key={layer.id}
+              layer={layer}
+              tone={index % 2 === 0 ? "green" : "yellow"}
+              progress={playback.progress}
+              playing={playback.playing}
+              isAudible={allPlaying || soloId === layer.id}
+              onPlay={() => toggleSolo(layer.id)}
+              onChange={(next) => setLayers((current) => current.map((item) => item.id === next.id ? next : item))}
+            />
+          ))}
+        </div>
+
+        <div className="generate-footer">
+          <p><Check aria-hidden="true" /> Shared BPM and key constraints are active.</p>
+          <Button variant="outline"><Layers3 /> Drag all</Button>
+        </div>
       </div>
     </div>
   )
@@ -803,7 +812,7 @@ function QuickToolsView() {
     <div className="page-stack quick-tools-page">
       <PageHeader eyebrow="Workspace / Quick Tools" title="The complete 1.9B quick workflow" description="Quick Scan, Quick Convert and Quick Extract keep their original roles. Each engine will be reconnected behind this Electron surface rather than replaced by generic tools." />
 
-      <section className="quick-workbench glass-panel quick-scan-workbench" aria-labelledby="quick-scan-title">
+      <section className="quick-workbench glass-panel tone-green quick-scan-workbench" aria-labelledby="quick-scan-title">
         <div className="quick-workbench-heading">
           <span className="tool-icon keycap-icon"><ScanLine aria-hidden="true" /></span>
           <div><h2 id="quick-scan-title">Quick Scan</h2><p>Detect BPM, key relationships, relative key and compatible modes from one loop.</p></div>
@@ -824,7 +833,7 @@ function QuickToolsView() {
         </div>
       </section>
 
-      <section className="quick-workbench glass-panel quick-convert-workbench" aria-labelledby="quick-convert-title">
+      <section className="quick-workbench glass-panel tone-yellow quick-convert-workbench" aria-labelledby="quick-convert-title">
         <div className="quick-workbench-heading">
           <span className="tool-icon keycap-icon orange"><SlidersHorizontal aria-hidden="true" /></span>
           <div><h2 id="quick-convert-title">Quick Convert</h2><p>Convert one loop to a selected BPM and relative major/minor key family.</p></div>
@@ -842,7 +851,7 @@ function QuickToolsView() {
         </div>
       </section>
 
-      <section className="quick-workbench glass-panel quick-extract-workbench" aria-labelledby="quick-extract-title">
+      <section className="quick-workbench glass-panel tone-green quick-extract-workbench" aria-labelledby="quick-extract-title">
         <div className="quick-workbench-heading">
           <span className="tool-icon keycap-icon red"><AudioLines aria-hidden="true" /></span>
           <div><h2 id="quick-extract-title">Quick Extract</h2><p>Incremental layer cards with playback, waveform, metadata and parallel MIDI.</p></div>
@@ -1026,7 +1035,7 @@ export function App() {
           <span className="prototype-pill app-no-drag"><span /> Electron prototype</span>
           <TaskCenter library={library} />
         </div>
-        <main id="main-content" tabIndex={-1} ref={mainRef}>
+        <main id="main-content" tabIndex={-1} ref={mainRef} className={cn(activeView === "generate" && "generate-main")}>
           {activeView === "stem-slicer" ? <StemSlicerView /> : null}
           {activeView === "generate" ? <GenerateView library={library} layers={layers} setLayers={setLayers} onAddHistory={(entry) => setHistory((items) => [entry, ...items])} playback={playback} soloId={soloId} setSoloId={setSoloId} /> : null}
           {activeView === "library" ? <LibraryView library={library} /> : null}
