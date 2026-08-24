@@ -11,7 +11,12 @@ import sys
 
 APP_NAME = "Stem Slicer"
 APP_VERSION = "1.9B"
-RUNTIME_DATA_VERSION = "1.9"
+# Development launchers may select an isolated runtime namespace.  The normal
+# application path deliberately keeps the accepted 1.9 cache compatibility.
+RUNTIME_DATA_VERSION = os.environ.get(
+    "STEM_SLICER_RUNTIME_DATA_VERSION",
+    "1.9",
+).strip() or "1.9"
 
 # Configure every writable runtime cache before importing Qt, OpenKeyScan,
 # Numba or any audio engine.  A packaged application must never modify its own

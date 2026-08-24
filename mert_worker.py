@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import redirect_stdout
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import os
@@ -256,6 +257,34 @@ def dsp_features(audio: np.ndarray) -> np.ndarray:
     return vector
 
 
+def dsp_features_many(
+    audios: Sequence[np.ndarray],
+    *,
+    max_workers: int | None = None,
+) -> np.ndarray:
+    """Extract ordered, bit-identical DSP vectors with bounded concurrency."""
+
+    if not audios:
+        return np.empty((0, 64), dtype=np.float32)
+    configured = (
+        int(os.environ.get("STEM_SLICER_DSP_WORKERS", "4"))
+        if max_workers is None
+        else int(max_workers)
+    )
+    if configured < 1:
+        raise ValueError("DSP worker count must be at least one")
+    workers = min(configured, len(audios))
+    if workers == 1:
+        vectors = [dsp_features(audio) for audio in audios]
+    else:
+        with ThreadPoolExecutor(
+            max_workers=workers,
+            thread_name_prefix="StemSlicerDSP",
+        ) as executor:
+            vectors = list(executor.map(dsp_features, audios))
+    return np.stack(vectors, axis=0)
+
+
 class Runtime:
     def __init__(
         self,
@@ -485,7 +514,7 @@ class Runtime:
             audios,
             window_batch_size=window_batch_size,
         )
-        dsp = np.stack([dsp_features(audio) for audio in audios], axis=0)
+        dsp = dsp_features_many(audios)
         vectors = np.concatenate([mert, dsp], axis=1).astype(
             np.float32,
             copy=False,

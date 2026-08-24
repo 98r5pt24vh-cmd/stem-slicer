@@ -1,7 +1,7 @@
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import torch
@@ -57,6 +57,23 @@ class MertWorkerBatchTests(unittest.TestCase):
         runtime.processor = _Processor()
         runtime.mert = _Mert()
         return runtime
+
+    def test_parallel_dsp_preserves_input_order_and_values(self):
+        audios = [
+            np.asarray([3.0], dtype=np.float32),
+            np.asarray([1.0], dtype=np.float32),
+            np.asarray([2.0], dtype=np.float32),
+        ]
+
+        def fake_features(audio):
+            return np.full(64, audio[0], dtype=np.float32)
+
+        with patch.object(mert_worker, "dsp_features", side_effect=fake_features):
+            sequential = mert_worker.dsp_features_many(audios, max_workers=1)
+            parallel = mert_worker.dsp_features_many(audios, max_workers=3)
+
+        np.testing.assert_array_equal(parallel, sequential)
+        self.assertEqual(parallel[:, 0].tolist(), [3.0, 1.0, 2.0])
 
     def test_different_sample_lengths_are_never_padded_together(self):
         runtime = self._runtime()
