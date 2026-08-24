@@ -1,7 +1,11 @@
 import { Dialog } from "@base-ui/react/dialog"
+import { Select as BaseSelect } from "@base-ui/react/select"
 import {
   AudioLines,
+  Check,
+  ChevronDown,
   ChevronLeft,
+  ChevronUp,
   CircleAlert,
   Cloud,
   CloudCog,
@@ -19,7 +23,6 @@ import {
   Plus,
   Radio,
   Repeat2,
-  RotateCcw,
   ScanLine,
   Settings2,
   SkipBack,
@@ -54,6 +57,7 @@ interface NavItem {
   label: string
   icon: LucideIcon
   shortcut?: string
+  badge?: string
 }
 
 interface GeneratedLayer {
@@ -72,7 +76,6 @@ interface GeneratedLayer {
 
 interface HistoryEntry {
   id: string
-  seed: number
   bpm: number
   keyName: string
   recipe: string
@@ -85,6 +88,21 @@ const NAVIGATION: NavItem[] = [
   { id: "quick-tools", label: "Quick Tools", icon: Wrench, shortcut: "Q" },
   { id: "generate", label: "Generate", icon: Sparkles, shortcut: "G" },
   { id: "history", label: "History", icon: History, shortcut: "H" },
+  { id: "cloud", label: "Connected Libraries", icon: Cloud, badge: "WIP" },
+]
+
+const GENERATE_KEYS = [
+  "C major", "C minor", "C♯ major", "C♯ minor", "D major", "D minor",
+  "E♭ major", "E♭ minor", "E major", "E minor", "F major", "F minor",
+  "F♯ major", "F♯ minor", "G major", "G minor", "A♭ major", "A♭ minor",
+  "A major", "A minor", "B♭ major", "B♭ minor", "B major", "B minor",
+]
+
+const TARGET_KEY_FAMILIES = [
+  "C major / A minor", "C♯ major / A♯ minor", "D major / B minor",
+  "D♯ major / C minor", "E major / C♯ minor", "F major / D minor",
+  "F♯ major / D♯ minor", "G major / E minor", "G♯ major / F minor",
+  "A major / F♯ minor", "A♯ major / G minor", "B major / G♯ minor",
 ]
 
 const INITIAL_LAYERS: GeneratedLayer[] = [
@@ -219,23 +237,60 @@ function Select({
   label,
   value,
   onChange,
-  children,
+  options,
+  disabled = false,
+  forceBelow = false,
   className,
 }: {
   id: string
   label: string
   value: string
   onChange: (value: string) => void
-  children: React.ReactNode
+  options: string[]
+  disabled?: boolean
+  forceBelow?: boolean
   className?: string
 }) {
+  const labelId = `${id}-label`
   return (
-    <label className={cn("control-field", className)} htmlFor={id}>
-      <span>{label}</span>
-      <select id={id} value={value} onChange={(event) => onChange(event.target.value)}>
-        {children}
-      </select>
-    </label>
+    <div className={cn("control-field", className)}>
+      <span id={labelId}>{label}</span>
+      <BaseSelect.Root
+        id={id}
+        items={options.map((option) => ({ label: option, value: option }))}
+        value={value}
+        disabled={disabled}
+        onValueChange={(nextValue) => {
+          if (nextValue) onChange(nextValue)
+        }}
+      >
+        <BaseSelect.Trigger className="custom-select-trigger" aria-labelledby={labelId}>
+          <BaseSelect.Value />
+          <BaseSelect.Icon><ChevronDown aria-hidden="true" /></BaseSelect.Icon>
+        </BaseSelect.Trigger>
+        <BaseSelect.Portal>
+          <BaseSelect.Positioner
+            className="custom-select-positioner"
+            side="bottom"
+            align="start"
+            sideOffset={5}
+            alignItemWithTrigger={false}
+            collisionAvoidance={forceBelow ? { side: "none", align: "shift", fallbackAxisSide: "none" } : undefined}
+          >
+            <BaseSelect.Popup className="custom-select-popup">
+              <BaseSelect.List className="custom-select-list">
+                {options.map((option) => (
+                  <BaseSelect.Item className="custom-select-item" key={option} value={option}>
+                    <BaseSelect.ItemText>{option}</BaseSelect.ItemText>
+                    <BaseSelect.ItemIndicator><Check aria-hidden="true" /></BaseSelect.ItemIndicator>
+                  </BaseSelect.Item>
+                ))}
+              </BaseSelect.List>
+            </BaseSelect.Popup>
+          </BaseSelect.Positioner>
+        </BaseSelect.Portal>
+      </BaseSelect.Root>
+    </div>
   )
 }
 
@@ -306,23 +361,10 @@ function AppSidebar({
               {item.shortcut ? (
                 <kbd>{item.shortcut}</kbd>
               ) : null}
+              {item.badge ? <Badge variant="warning" className="nav-beta">{item.badge}</Badge> : null}
             </button>
           )
         })}
-
-        <p className="sidebar-group-label sidebar-cloud-label">Network</p>
-        <button
-          type="button"
-          className={cn("nav-item", activeView === "cloud" && "is-active")}
-          onClick={() => onNavigate("cloud")}
-          aria-current={activeView === "cloud" ? "page" : undefined}
-          aria-label={collapsed ? "Connected Libraries" : undefined}
-          title={collapsed ? "Connected Libraries" : undefined}
-        >
-          <Cloud aria-hidden="true" />
-          <span className="nav-label">Connected Libraries</span>
-          <Badge variant="warning" className="nav-beta">Future</Badge>
-        </button>
       </nav>
 
       <div className="sidebar-footer">
@@ -364,7 +406,6 @@ function PageHeader({
 
 function LayerCard({
   layer,
-  tone,
   progress,
   playing,
   isAudible,
@@ -373,7 +414,6 @@ function LayerCard({
   onChange,
 }: {
   layer: GeneratedLayer
-  tone: "green" | "yellow"
   progress: number
   playing: boolean
   isAudible: boolean
@@ -382,7 +422,7 @@ function LayerCard({
   onChange: (layer: GeneratedLayer) => void
 }) {
   return (
-    <Card className={cn("layer-card", `layer-tone-${tone}`, isAudible && "is-audible")} aria-label={`${layer.role}, ${layer.category}`}>
+    <Card className={cn("layer-card", "layer-tone-spectral", isAudible && "is-audible")} aria-label={`${layer.role}, ${layer.category}`}>
       <CardHeader>
         <div className="layer-heading">
           <div className="layer-index">{layer.role.slice(0, 1)}</div>
@@ -592,7 +632,6 @@ function GenerateView({
   const [bpm, setBpm] = useState(129)
   const [keyName, setKeyName] = useState("F minor")
   const [recipe, setRecipe] = useState("Balanced")
-  const [seed, setSeed] = useState(734291)
   const [isGenerating, setIsGenerating] = useState(false)
   const [status, setStatus] = useState("Visual transport ready")
   const [selectionMessage, setSelectionMessage] = useState("")
@@ -634,12 +673,10 @@ function GenerateView({
     setIsGenerating(true)
     setStatus("Assembling a new combination…")
     window.setTimeout(() => {
-      const nextSeed = Math.floor(100000 + Math.random() * 899999)
-      setSeed(nextSeed)
       setLayers((current) =>
-        current.map((layer, index) => ({
+        current.map((layer) => ({
           ...layer,
-          file: layer.file.replace(/_\d+\.wav$/, `_${(nextSeed + index * 7) % 36 + 1}.wav`),
+          file: layer.file.replace(/_\d+\.wav$/, `_${Math.floor(Math.random() * 36) + 1}.wav`),
           bpm,
           keyName,
         })),
@@ -648,7 +685,6 @@ function GenerateView({
       setIsGenerating(false)
       onAddHistory({
         id: crypto.randomUUID(),
-        seed: nextSeed,
         bpm,
         keyName,
         recipe,
@@ -711,35 +747,8 @@ function GenerateView({
               onChange={(event) => setBpm(Number(event.target.value))}
             />
           </label>
-          <Select id="target-key" label="Target key" value={keyName} onChange={setKeyName}>
-            <option>F minor</option>
-            <option>G minor</option>
-            <option>A♭ major</option>
-            <option>C minor</option>
-            <option>D♭ major</option>
-          </Select>
-          <Select id="recipe" label="Recipe" value={recipe} onChange={setRecipe}>
-            <option>Balanced</option>
-            <option>Melodic</option>
-            <option>Minimal</option>
-            <option>Dense</option>
-          </Select>
-          <label className="control-field" htmlFor="generation-seed">
-            <span>Seed</span>
-            <div className="seed-control">
-              <Input id="generation-seed" value={seed} readOnly className="tabular" />
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                aria-label="Choisir une nouvelle seed"
-                title="Nouvelle seed"
-                onClick={() => setSeed(Math.floor(100000 + Math.random() * 899999))}
-              >
-                <RotateCcw />
-              </Button>
-            </div>
-          </label>
+          <Select id="target-key" label="Target key" value={keyName} onChange={setKeyName} options={GENERATE_KEYS} forceBelow />
+          <Select id="recipe" label="Recipe" value={recipe} onChange={setRecipe} options={["Balanced", "Melodic", "Minimal", "Dense"]} forceBelow />
           <div className="generate-action">
             <span className="sr-only" aria-live="polite">{status}</span>
           <Button className="hardware-button generate-hardware" size="lg" onClick={handleGenerate} disabled={isGenerating}>
@@ -799,11 +808,10 @@ function GenerateView({
 
         <div className="layer-scroll" tabIndex={0} aria-label="Generated layer cards">
           <div className="layer-grid">
-            {layers.map((layer, index) => (
+            {layers.map((layer) => (
               <LayerCard
                 key={layer.id}
                 layer={layer}
-                tone={index % 2 === 0 ? "green" : "yellow"}
                 progress={playback.progress}
                 playing={playback.playing}
                 isAudible={allPlaying || soloId === layer.id}
@@ -827,12 +835,33 @@ function GenerateView({
   )
 }
 
+function OperationSwitch({ checked, onChange, label, accent }: { checked: boolean; onChange: (checked: boolean) => void; label: string; accent: "red" | "yellow" | "orange" }) {
+  return (
+    <label className={cn("operation-switch", `accent-${accent}`)}>
+      <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} />
+      <span aria-hidden="true" />
+      <span className="sr-only">{label}</span>
+    </label>
+  )
+}
+
 function StemSlicerView() {
   const [sourceFolder, setSourceFolder] = useState("")
-  const [spaceEnabled, setSpaceEnabled] = useState(true)
-  const [noSpaceEnabled, setNoSpaceEnabled] = useState(true)
+  const [outputFolder, setOutputFolder] = useState("/Users/nrgy/Documents/Stem Slicer/Extracted Layers/Loop Pack Name")
+  const [layerExtraction, setLayerExtraction] = useState(true)
   const [keyAnalysis, setKeyAnalysis] = useState(true)
+  const [keyExpanded, setKeyExpanded] = useState(true)
+  const [keyMode, setKeyMode] = useState("Detected")
+  const [keyNotation, setKeyNotation] = useState("Sharps #")
+  const [keyDestination, setKeyDestination] = useState("Copy to analyzed loops")
+  const [nameTokens, setNameTokens] = useState(["Key", "Loop name", "BPM", "Prod name"])
+  const [draggedToken, setDraggedToken] = useState<string | null>(null)
   const [conversion, setConversion] = useState(false)
+  const [conversionExpanded, setConversionExpanded] = useState(false)
+  const [targetBpmEnabled, setTargetBpmEnabled] = useState(true)
+  const [targetKeyEnabled, setTargetKeyEnabled] = useState(true)
+  const [targetBpm, setTargetBpm] = useState(120)
+  const [targetKey, setTargetKey] = useState(TARGET_KEY_FAMILIES[0])
 
   const pickSourceFolder = async () => {
     const result = await window.stemSlicer?.pickLibraryFolder()
@@ -840,57 +869,148 @@ function StemSlicerView() {
     setSourceFolder(result.paths[0])
   }
 
+  const pickOutputFolder = async () => {
+    const result = await window.stemSlicer?.pickLibraryFolder()
+    if (!result || result.canceled || result.paths.length === 0) return
+    setOutputFolder(result.paths[0])
+  }
+
+  const moveToken = (token: string, direction: -1 | 1) => {
+    setNameTokens((current) => {
+      const from = current.indexOf(token)
+      const to = Math.max(0, Math.min(current.length - 1, from + direction))
+      if (from === to) return current
+      const next = [...current]
+      next.splice(from, 1)
+      next.splice(to, 0, token)
+      return next
+    })
+  }
+
+  const dropToken = (target: string) => {
+    if (!draggedToken || draggedToken === target) return
+    setNameTokens((current) => {
+      const next = current.filter((token) => token !== draggedToken)
+      next.splice(next.indexOf(target), 0, draggedToken)
+      return next
+    })
+    setDraggedToken(null)
+  }
+
   return (
-    <div className="page-stack">
+    <div className="page-stack stem-slicer-page">
       <PageHeader
         eyebrow="Workspace / Stem Slicer"
-        title="Batch extraction, preserved from 1.9B"
-        description="The Electron workspace keeps the accepted Space and NoSpace paths, key and BPM analysis, Bungee conversion, naming and DAW-ready outputs."
-        actions={<Badge variant="warning">Engine adapter next</Badge>}
+        title="Batch extraction"
+        description="The accepted 1.9B batch workflow, reorganized for the Electron prototype."
       />
 
-      <div className="workflow-grid">
-        <Card className="glass-panel workflow-card">
-          <CardHeader>
-            <div className="workflow-heading"><span>01</span><div><CardTitle>Source folder</CardTitle><CardDescription>Select the folder containing the MP3 loops to process.</CardDescription></div></div>
-          </CardHeader>
-          <CardContent>
-            <button type="button" className="compact-drop" onClick={pickSourceFolder}>
+      <section className="workflow-section workflow-red" aria-labelledby="source-folder-title">
+        <header className="workflow-section-heading">
+          <FolderOpen aria-hidden="true" />
+          <div><h2 id="source-folder-title">Source folder</h2><p>Drop a folder containing loops to configure the batch.</p></div>
+        </header>
+        <div className="source-folder-grid">
+          <button type="button" className="workflow-drop" onClick={pickSourceFolder}>
+            <FolderOpen aria-hidden="true" />
+            <span><strong>Drop a loop folder here</strong><small>or click to browse</small></span>
+            <span className="workflow-browse">Browse folder</span>
+          </button>
+          <div className="source-path-box" title={sourceFolder || undefined}>
+            <FolderOpen aria-hidden="true" />
+            <strong>{sourceFolder || "No folder selected"}</strong>
+          </div>
+        </div>
+      </section>
+
+      <section className="workflow-section operations-section" aria-labelledby="operations-title">
+        <header className="workflow-section-heading workflow-red">
+          <Settings2 aria-hidden="true" />
+          <div><h2 id="operations-title">Operations</h2><p>Enable only the operations required for this batch.</p></div>
+        </header>
+
+        <div className={cn("operation-card operation-red", !layerExtraction && "is-disabled")}>
+          <div className="operation-header">
+            <OperationSwitch checked={layerExtraction} onChange={setLayerExtraction} label="Enable Layer Extraction" accent="red" />
+            <Layers3 aria-hidden="true" />
+            <div className="operation-copy"><strong>Layer extraction</strong><small>Extract every detected layer from each loop.</small></div>
+            <div className="operation-location">
+              <span>Output location</span>
               <FolderOpen aria-hidden="true" />
-              <span><strong>{sourceFolder ? basename(sourceFolder) : "Choose a loop folder"}</strong><small>{sourceFolder || "Folder selection is handled natively by Electron."}</small></span>
+              <strong title={outputFolder}>{outputFolder}</strong>
+              <Button variant="outline" size="sm" onClick={pickOutputFolder}>Change</Button>
+              <Button variant="outline" size="sm" onClick={() => void window.stemSlicer?.revealPath(outputFolder)}>Open folder</Button>
+            </div>
+          </div>
+        </div>
+
+        <div className={cn("operation-card operation-yellow", !keyAnalysis && "is-disabled")}>
+          <div className="operation-header">
+            <OperationSwitch checked={keyAnalysis} onChange={setKeyAnalysis} label="Enable Key Analysis" accent="yellow" />
+            <ScanLine aria-hidden="true" />
+            <div className="operation-copy"><strong>Key analysis</strong><small>Detect keys and apply the selected output naming structure.</small></div>
+            <button type="button" className="operation-chevron" onClick={() => setKeyExpanded((value) => !value)} aria-expanded={keyExpanded} aria-label={keyExpanded ? "Collapse Key Analysis" : "Expand Key Analysis"}>
+              {keyExpanded ? <ChevronUp aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}
             </button>
-          </CardContent>
-        </Card>
-
-        <Card className="glass-panel workflow-card">
-          <CardHeader>
-            <div className="workflow-heading"><span>02</span><div><CardTitle>Extraction paths</CardTitle><CardDescription>Both validated detection paths remain independently selectable.</CardDescription></div></div>
-          </CardHeader>
-          <CardContent className="option-grid">
-            <label className="toggle-tile"><input type="checkbox" checked={spaceEnabled} onChange={(event) => setSpaceEnabled(event.target.checked)} /><span><strong>Space</strong><small>Loops with separated layers</small></span></label>
-            <label className="toggle-tile"><input type="checkbox" checked={noSpaceEnabled} onChange={(event) => setNoSpaceEnabled(event.target.checked)} /><span><strong>NoSpace</strong><small>Contiguous-layer inference</small></span></label>
-            <label className="toggle-tile"><input type="checkbox" checked={keyAnalysis} onChange={(event) => setKeyAnalysis(event.target.checked)} /><span><strong>Key + BPM</strong><small>Accepted musical analysis</small></span></label>
-            <label className="toggle-tile"><input type="checkbox" checked={conversion} onChange={(event) => setConversion(event.target.checked)} /><span><strong>Convert</strong><small>Bungee BPM and key conversion</small></span></label>
-          </CardContent>
-        </Card>
-
-        <Card className="glass-panel workflow-card workflow-output">
-          <CardHeader>
-            <div className="workflow-heading"><span>03</span><div><CardTitle>Output</CardTitle><CardDescription>Naming and destinations remain compatible with the 1.9B workflow.</CardDescription></div></div>
-          </CardHeader>
-          <CardContent>
-            <div className="feature-strip" aria-label="Preserved output features">
-              <Badge variant="secondary">DAW naming</Badge>
-              <Badge variant="secondary">Combined operations</Badge>
-              <Badge variant="secondary">Output folders</Badge>
+          </div>
+          {keyExpanded ? (
+            <div className="key-analysis-settings">
+              <SegmentedChoice label="Key mode" value={keyMode} options={["Detected", "Relative minor", "Relative major"]} onChange={setKeyMode} />
+              <SegmentedChoice label="Key notation" value={keyNotation} options={["Sharps #", "Flats ♭"]} onChange={setKeyNotation} />
+              <div className="naming-field">
+                <span>Output name structure · drag to reorder</span>
+                <div className="naming-token-list">
+                  {nameTokens.map((token, index) => (
+                    <button
+                      type="button"
+                      draggable
+                      className="naming-token"
+                      key={token}
+                      onDragStart={() => setDraggedToken(token)}
+                      onDragEnd={() => setDraggedToken(null)}
+                      onDragOver={(event) => event.preventDefault()}
+                      onDrop={() => dropToken(token)}
+                      onKeyDown={(event) => {
+                        if (event.key === "ArrowLeft") { event.preventDefault(); moveToken(token, -1) }
+                        if (event.key === "ArrowRight") { event.preventDefault(); moveToken(token, 1) }
+                      }}
+                      aria-label={`${token}, position ${index + 1} of ${nameTokens.length}. Use left and right arrows to reorder.`}
+                    >
+                      <span aria-hidden="true">⠿</span>{token}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <SegmentedChoice label="Key analysis destination" value={keyDestination} options={["Copy to analyzed loops", "Rename originals"]} onChange={setKeyDestination} />
+              <div className="name-preview"><span>Preview</span><strong>{keyNotation === "Sharps #" ? "A♯m" : "B♭m"} CALLMEUR3 137 +NRGY_L1.mp3</strong></div>
             </div>
-            <div className="blocked-action">
-              <Button className="hardware-button" disabled>Start batch</Button>
-              <p>The accepted Python engine will be connected here before this action is enabled.</p>
+          ) : null}
+        </div>
+
+        <div className={cn("operation-card operation-orange", !conversion && "is-disabled")}>
+          <div className="operation-header">
+            <OperationSwitch checked={conversion} onChange={(checked) => { setConversion(checked); if (checked) setConversionExpanded(true) }} label="Enable Convert BPM and Key" accent="orange" />
+            <Repeat2 aria-hidden="true" />
+            <div className="operation-copy"><strong>Convert BPM &amp; key</strong><small>Convert extracted layers, or every source loop when extraction is disabled.</small></div>
+            <button type="button" className="operation-chevron" onClick={() => setConversionExpanded((value) => !value)} aria-expanded={conversionExpanded} aria-label={conversionExpanded ? "Collapse Convert BPM and Key" : "Expand Convert BPM and Key"}>
+              {conversionExpanded ? <ChevronUp aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}
+            </button>
+          </div>
+          {conversionExpanded ? (
+            <div className="conversion-settings">
+              <label className="target-option"><input type="checkbox" checked={targetBpmEnabled} onChange={(event) => setTargetBpmEnabled(event.target.checked)} /><span>Target BPM</span><Input type="number" min="40" max="300" value={targetBpm} disabled={!targetBpmEnabled} onChange={(event) => setTargetBpm(Number(event.target.value))} /></label>
+              <div className="target-option"><label className="target-toggle"><input type="checkbox" checked={targetKeyEnabled} onChange={(event) => setTargetKeyEnabled(event.target.checked)} /><span>Target key</span></label><Select id="stem-target-key" label="Target key" value={targetKey} onChange={setTargetKey} options={TARGET_KEY_FAMILIES} disabled={!targetKeyEnabled} className="inline-select" /></div>
             </div>
-          </CardContent>
-        </Card>
-      </div>
+          ) : null}
+        </div>
+      </section>
+
+      <section className="process-strip" aria-label="Batch process status">
+        <div><span>Process status</span><strong>Interface ready · engine connection pending</strong></div>
+        <div className="process-stats"><span>0 files</span><span>0 successful</span><span>0 errors</span></div>
+        <div className="process-progress" aria-hidden="true"><span /></div>
+        <Button className="hardware-button" disabled>Process loops</Button>
+      </section>
     </div>
   )
 }
@@ -924,7 +1044,11 @@ function QuickToolsView() {
   const [degreeReference, setDegreeReference] = useState("Major")
   const [notation, setNotation] = useState("Sharps #")
   const [convertBpm, setConvertBpm] = useState(120)
-  const [convertKey, setConvertKey] = useState("C major / A minor")
+  const [convertKey, setConvertKey] = useState(TARGET_KEY_FAMILIES[0])
+  const [extractBpmEnabled, setExtractBpmEnabled] = useState(false)
+  const [extractKeyEnabled, setExtractKeyEnabled] = useState(false)
+  const [extractBpm, setExtractBpm] = useState(120)
+  const [extractKey, setExtractKey] = useState(TARGET_KEY_FAMILIES[0])
 
   const pickAudio = async (setPath: (path: string) => void) => {
     const result = await window.stemSlicer?.pickAudioFiles()
@@ -934,64 +1058,81 @@ function QuickToolsView() {
 
   return (
     <div className="page-stack quick-tools-page">
-      <PageHeader eyebrow="Workspace / Quick Tools" title="The complete 1.9B quick workflow" description="Quick Scan, Quick Convert and Quick Extract keep their original roles. Each engine will be reconnected behind this Electron surface rather than replaced by generic tools." />
+      <PageHeader eyebrow="Workspace / Quick Tools" title="Quick workflow" description="Quick Extract, Quick Scan and Quick Convert follow the accepted 1.9B structure." />
 
-      <section className="quick-workbench glass-panel tone-green quick-scan-workbench" aria-labelledby="quick-scan-title">
-        <div className="quick-workbench-heading">
-          <span className="tool-icon keycap-icon"><ScanLine aria-hidden="true" /></span>
-          <div><h2 id="quick-scan-title">Quick Scan</h2><p>Detect BPM, key relationships, relative key and compatible modes from one loop.</p></div>
-          <Badge variant="warning">1.9B engine to connect</Badge>
-        </div>
-        <div className="quick-scan-layout">
-          <button type="button" className="compact-drop" onClick={() => pickAudio(setScanFile)}>
-            <Music2 aria-hidden="true" /><span><strong>{scanFile ? basename(scanFile) : "Choose one audio file"}</strong><small>MP3, WAV, FLAC or AIFF</small></span>
-          </button>
-          <div className="quick-scan-results" aria-label="Quick Scan results">
-            {[["BPM", "—"], ["Detected key", "—"], ["Relative key", "—"], ["Modes", "—"]].map(([label, value]) => <div key={label}><small>{label}</small><strong>{value}</strong></div>)}
-          </div>
-        </div>
-        <div className="quick-options">
-          <SegmentedChoice label="Degree reference" value={degreeReference} options={["Major", "Minor"]} onChange={setDegreeReference} />
-          <SegmentedChoice label="Key notation" value={notation} options={["Sharps #", "Flats ♭"]} onChange={setNotation} />
-          <p><CircleAlert aria-hidden="true" /> Results activate when the accepted key/BPM engine is connected.</p>
-        </div>
-      </section>
-
-      <section className="quick-workbench glass-panel tone-yellow quick-convert-workbench" aria-labelledby="quick-convert-title">
-        <div className="quick-workbench-heading">
-          <span className="tool-icon keycap-icon orange"><SlidersHorizontal aria-hidden="true" /></span>
-          <div><h2 id="quick-convert-title">Quick Convert</h2><p>Convert one loop to a selected BPM and relative major/minor key family.</p></div>
-          <Badge variant="warning">Bungee adapter next</Badge>
-        </div>
-        <div className="quick-convert-layout">
-          <button type="button" className="compact-drop" onClick={() => pickAudio(setConvertFile)}>
-            <Repeat2 aria-hidden="true" /><span><strong>{convertFile ? basename(convertFile) : "Choose one loop"}</strong><small>Output remains individually draggable</small></span>
-          </button>
-          <label className="control-field"><span>Target BPM</span><Input type="number" min="40" max="300" value={convertBpm} onChange={(event) => setConvertBpm(Number(event.target.value))} /></label>
-          <Select id="quick-convert-key" label="Target key" value={convertKey} onChange={setConvertKey}>
-            <option>C major / A minor</option><option>D♭ major / B♭ minor</option><option>E♭ major / C minor</option><option>F major / D minor</option><option>G major / E minor</option>
-          </Select>
-          <div className="quick-storage"><span>0 conversions</span><button type="button" disabled>Open output</button><button type="button" disabled>Manage</button></div>
-        </div>
-      </section>
-
-      <section className="quick-workbench glass-panel tone-green quick-extract-workbench" aria-labelledby="quick-extract-title">
+      <section className="quick-workbench quick-extract-workbench accent-red" aria-labelledby="quick-extract-title">
         <div className="quick-workbench-heading">
           <span className="tool-icon keycap-icon red"><AudioLines aria-hidden="true" /></span>
-          <div><h2 id="quick-extract-title">Quick Extract</h2><p>Incremental layer cards with playback, waveform, metadata and parallel MIDI.</p></div>
-          <Badge variant="warning">Extraction adapter next</Badge>
+          <div><h2 id="quick-extract-title">Quick Extract</h2><p>Extract playable layers from one loop, with optional target transformation.</p></div>
+          <Button variant="outline" size="sm" disabled><Layers3 /> Drag all</Button>
         </div>
-        <div className="quick-extract-layout">
-          <button type="button" className="compact-drop" onClick={() => pickAudio(setExtractFile)}>
-            <Plus aria-hidden="true" /><span><strong>{extractFile ? basename(extractFile) : "Choose one MP3 loop"}</strong><small>Cards appear incrementally during extraction</small></span>
-          </button>
-          <div className="extract-preview">
-            <Sparkle aria-hidden="true" />
-            <strong>Layer cards will appear here</strong>
-            <span>Audio drag · MIDI drag · optional BPM/key conversion · Drag All</span>
+        <div className="quick-extract-body">
+          <div className="quick-extract-source">
+            <button type="button" className="quick-drop" onClick={() => pickAudio(setExtractFile)}>
+              <Music2 aria-hidden="true" /><span><strong>{extractFile ? basename(extractFile) : "Drop one MP3 loop here"}</strong><small>{extractFile || "or click to browse"}</small></span>
+            </button>
+            <div className="optional-target">
+              <span>Optional target</span>
+              <label><input type="checkbox" checked={extractBpmEnabled} onChange={(event) => setExtractBpmEnabled(event.target.checked)} /><b>BPM</b><Input type="number" min="40" max="300" value={extractBpm} disabled={!extractBpmEnabled} onChange={(event) => setExtractBpm(Number(event.target.value))} /></label>
+              <div className="optional-target-key"><label><input type="checkbox" checked={extractKeyEnabled} onChange={(event) => setExtractKeyEnabled(event.target.checked)} /><b>Key</b></label><Select id="quick-extract-key" label="Target key" value={extractKey} onChange={setExtractKey} options={TARGET_KEY_FAMILIES} disabled={!extractKeyEnabled} className="inline-select" /></div>
+            </div>
+          </div>
+          <div className="quick-layer-area" aria-live="polite">
+            <div className="quick-layer-empty">
+              <Sparkle aria-hidden="true" />
+              <strong>Layer cards appear here incrementally</strong>
+              <span>Audio playback · waveform · MIDI drag · individual export</span>
+            </div>
           </div>
         </div>
-        <div className="quick-storage"><span>0 extracts</span><button type="button" disabled>Open folder</button><button type="button" disabled>Manage</button></div>
+        <div className="quick-section-footer">
+          <span>0 extractions · 0 o</span><span>{extractFile ? `${basename(extractFile)} selected` : "Ready for one MP3 loop."}</span>
+          <Button variant="outline" size="sm" disabled>Open output folder</Button><Button variant="outline" size="sm" disabled>Manage</Button>
+        </div>
+      </section>
+
+      <section className="quick-workbench quick-scan-workbench accent-yellow" aria-labelledby="quick-scan-title">
+        <div className="quick-workbench-heading">
+          <span className="tool-icon keycap-icon"><ScanLine aria-hidden="true" /></span>
+          <div><h2 id="quick-scan-title">Quick Scan</h2><p>Detect BPM, key relationships and relative modes from one loop.</p></div>
+        </div>
+        <div className="quick-scan-grid">
+          <button type="button" className="quick-drop scan-drop" onClick={() => pickAudio(setScanFile)}>
+            <Music2 aria-hidden="true" /><span><strong>{scanFile ? basename(scanFile) : "Drop one loop here"}</strong><small>{scanFile || "or click to browse"}</small></span>
+          </button>
+          {[["BPM", "—", ""], ["Detected key", "—", "—"], ["Relative key", "—", "—"]].map(([label, value, detail]) => (
+            <div className="scan-metric" key={label}><span>{label}</span><strong>{value}</strong>{detail ? <small>{detail}</small> : null}</div>
+          ))}
+          <div className="relative-modes">
+            <span>Relative modes</span>
+            <div>{["I", "II", "III", "IV", "V"].map((degree) => <div key={degree}><strong>—</strong><small>—</small></div>)}</div>
+            <small>Scan a file to reveal its relative modes.</small>
+          </div>
+          <div className="quick-scan-status"><Music2 aria-hidden="true" /><strong>{scanFile ? basename(scanFile) : "Drop a file to begin."}</strong></div>
+          <div className="quick-scan-options">
+            <SegmentedChoice label="Degree reference" value={degreeReference} options={["Major", "Minor"]} onChange={setDegreeReference} />
+            <SegmentedChoice label="Key notation" value={notation} options={["Sharps #", "Flats ♭"]} onChange={setNotation} />
+          </div>
+        </div>
+      </section>
+
+      <section className="quick-workbench quick-convert-workbench accent-orange" aria-labelledby="quick-convert-title">
+        <div className="quick-workbench-heading">
+          <span className="tool-icon keycap-icon orange"><Repeat2 aria-hidden="true" /></span>
+          <div><h2 id="quick-convert-title">Quick Convert</h2><p>Convert one loop to a selected BPM and key.</p></div>
+        </div>
+        <div className="quick-convert-row">
+          <button type="button" className="quick-drop convert-drop" onClick={() => pickAudio(setConvertFile)}>
+            <Repeat2 aria-hidden="true" /><span><strong>{convertFile ? basename(convertFile) : "Drop one loop here"}</strong><small>{convertFile || "or click to browse"}</small></span>
+          </button>
+          <div className="quick-convert-targets">
+            <label><span>BPM</span><Input type="number" min="40" max="300" value={convertBpm} onChange={(event) => setConvertBpm(Number(event.target.value))} /></label>
+            <Select id="quick-convert-key" label="Key" value={convertKey} onChange={setConvertKey} options={TARGET_KEY_FAMILIES} />
+          </div>
+          <Button className="convert-button" disabled>Convert</Button>
+          <div className="quick-convert-result"><strong>No converted file yet</strong><small>Result remains individually draggable.</small></div>
+        </div>
+        <div className="quick-section-footer"><span>0 conversions · 0 o</span><span>{convertFile ? `${basename(convertFile)} selected` : "Ready for one loop."}</span><Button variant="outline" size="sm" disabled>Open output folder</Button><Button variant="outline" size="sm" disabled>Manage</Button></div>
       </section>
     </div>
   )
@@ -1000,14 +1141,14 @@ function QuickToolsView() {
 function HistoryView({ history }: { history: HistoryEntry[] }) {
   return (
     <div className="page-stack">
-      <PageHeader eyebrow="Workspace / History" title="Generation history" description="Reopen a previous seed, compare recipes and keep the combinations worth exporting." actions={<Button variant="outline"><ListFilter /> Filter</Button>} />
+      <PageHeader eyebrow="Workspace / History" title="Generation history" description="Reopen previous combinations, compare recipes and keep the stacks worth exporting." actions={<Button variant="outline"><ListFilter /> Filter</Button>} />
       {history.length ? (
         <div className="history-list">
           {history.map((entry) => (
             <Card key={entry.id} className="history-item">
               <CardContent>
                 <span className="history-icon"><History /></span>
-                <div><strong>Seed <span className="tabular">{entry.seed}</span></strong><small>{entry.createdAt} · {entry.layerCount} layers</small></div>
+                <div><strong>{entry.recipe} combination</strong><small>{entry.createdAt} · {entry.layerCount} layers</small></div>
                 <div className="history-spec"><Badge variant="secondary">{entry.recipe}</Badge><span>{entry.bpm} BPM</span><span>{entry.keyName}</span></div>
                 <Button variant="outline" size="sm">Reopen</Button>
               </CardContent>
@@ -1015,7 +1156,7 @@ function HistoryView({ history }: { history: HistoryEntry[] }) {
           ))}
         </div>
       ) : (
-        <EmptyState icon={History} title="No generation yet" description="Generate a combination and it will appear here with its seed and musical constraints." action={<span className="empty-hint">Open Generate to create the first entry.</span>} />
+        <EmptyState icon={History} title="No generation yet" description="Generate a combination and it will appear here with its musical constraints." action={<span className="empty-hint">Open Generate to create the first entry.</span>} />
       )}
     </div>
   )
@@ -1024,11 +1165,11 @@ function HistoryView({ history }: { history: HistoryEntry[] }) {
 function CloudView() {
   return (
     <div className="page-stack">
-      <PageHeader eyebrow="Network / Connected Libraries" title="Mix trusted producer libraries" description="A future permission layer will let Generate combine your local catalogue with libraries explicitly shared by other producers." />
+      <PageHeader eyebrow="Workspace / Connected Libraries" title="Mix trusted producer libraries" description="A future permission layer will let Generate combine your local catalogue with libraries explicitly shared by other producers." actions={<Badge variant="warning">WIP</Badge>} />
       <Card className="cloud-hero">
         <CardContent>
           <span className="cloud-symbol"><CloudCog /></span>
-          <Badge variant="warning">Product direction</Badge>
+          <Badge variant="warning">Working in progress</Badge>
           <h2>Connected Libraries</h2>
           <p>Permission, identity, remote indexing and revocation will live here. No cloud connection exists in this prototype yet.</p>
           <Button variant="outline" disabled><Plus /> Invite a producer</Button>
@@ -1106,7 +1247,7 @@ export function App() {
         setSidebarCollapsed((value) => !value)
         return
       }
-      if (event.metaKey || event.ctrlKey || event.altKey || event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) return
+      if (event.metaKey || event.ctrlKey || event.altKey || event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement || event.target instanceof HTMLButtonElement || event.target instanceof HTMLTextAreaElement) return
       const item = NAVIGATION.find((entry) => entry.shortcut?.toLowerCase() === event.key.toLowerCase())
       if (item) setActiveView(item.id)
     }
@@ -1122,7 +1263,7 @@ export function App() {
         <div className="window-dragbar app-drag-region">
           <span className="prototype-pill app-no-drag"><span /> Electron prototype</span>
         </div>
-        <main id="main-content" tabIndex={-1} ref={mainRef} className={cn(activeView === "generate" && "generate-main")}>
+        <main id="main-content" tabIndex={-1} ref={mainRef} className={cn(activeView === "generate" && "generate-main", activeView === "quick-tools" && "quick-tools-main")}>
           {activeView === "stem-slicer" ? <StemSlicerView /> : null}
           {activeView === "generate" ? <GenerateView library={library} layers={layers} setLayers={setLayers} onAddHistory={(entry) => setHistory((items) => [entry, ...items])} playback={playback} soloId={soloId} setSoloId={setSoloId} /> : null}
           {activeView === "quick-tools" ? <QuickToolsView /> : null}
