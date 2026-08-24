@@ -1,3 +1,4 @@
+import { Dialog } from "@base-ui/react/dialog"
 import {
   AudioLines,
   Check,
@@ -138,6 +139,31 @@ const INITIAL_LAYERS: GeneratedLayer[] = [
     volume: 79,
     duration: 7.44,
     bars: [55, 70, 64, 48, 82, 76, 59, 43, 88, 73, 57, 45, 84, 79, 61, 47, 90, 75, 58, 44, 86, 77, 60, 46, 89, 74, 56, 42, 83, 78, 62, 49, 91, 72, 54, 41, 81, 76, 59, 45, 87, 71, 53, 40, 79, 68, 51, 38],
+  },
+  {
+    id: "pad",
+    role: "Atmosphere",
+    file: "NRGY_129_Fm_Pad_18.wav",
+    category: "Pad",
+    bpm: 129,
+    keyName: "F minor",
+    octave: 0,
+    volume: 61,
+    duration: 7.44,
+    alternateKey: "A♭ major",
+    bars: [28, 34, 42, 47, 53, 58, 63, 68, 72, 75, 78, 81, 83, 85, 86, 87, 88, 88, 87, 86, 84, 81, 78, 74, 70, 65, 60, 55, 50, 45, 41, 37, 34, 32, 31, 30, 31, 33, 36, 40, 45, 51, 58, 65, 71, 76, 80, 82],
+  },
+  {
+    id: "texture",
+    role: "Detail",
+    file: "NRGY_129_Fm_Texture_09.wav",
+    category: "Texture",
+    bpm: 129,
+    keyName: "F minor",
+    octave: 1,
+    volume: 57,
+    duration: 7.44,
+    bars: [15, 61, 24, 72, 33, 84, 19, 56, 42, 91, 27, 68, 36, 79, 22, 63, 48, 87, 31, 74, 18, 58, 39, 83, 25, 66, 45, 89, 29, 71, 20, 54, 41, 81, 34, 76, 23, 60, 47, 86, 28, 69, 37, 78, 17, 52, 43, 73],
   },
 ]
 
@@ -439,6 +465,106 @@ function LayerCard({
   )
 }
 
+function aggregateCategories(roots: LibraryOverview["roots"]) {
+  const counts = new Map<string, number>()
+  for (const root of roots) {
+    for (const category of root.categories ?? []) {
+      counts.set(category.name, (counts.get(category.name) ?? 0) + category.count)
+    }
+  }
+  return Array.from(counts, ([name, count]) => ({ name, count }))
+    .sort((left, right) => right.count - left.count)
+}
+
+function LibraryManager({
+  library,
+  selectedPaths,
+  selectedLayerCount,
+  selectedCategoryCount,
+  selectionMessage,
+  onSelectedPathsChange,
+  onAddFolder,
+}: {
+  library: LibraryOverview
+  selectedPaths: string[]
+  selectedLayerCount: number
+  selectedCategoryCount: number
+  selectionMessage: string
+  onSelectedPathsChange: React.Dispatch<React.SetStateAction<string[]>>
+  onAddFolder: () => Promise<void>
+}) {
+  const selectedSet = new Set(selectedPaths)
+  const toggleLibrary = (path: string, checked: boolean) => {
+    onSelectedPathsChange((current) => checked
+      ? Array.from(new Set([...current, path]))
+      : current.filter((item) => item !== path))
+  }
+
+  return (
+    <Dialog.Root>
+      <Dialog.Trigger className="manage-library-trigger">
+        <SlidersHorizontal aria-hidden="true" /> Manage library
+      </Dialog.Trigger>
+      <Dialog.Portal>
+        <Dialog.Backdrop className="dialog-backdrop" />
+        <Dialog.Viewport className="dialog-viewport">
+          <Dialog.Popup className="library-manager-dialog">
+            <header className="library-manager-header">
+              <div>
+                <Dialog.Title>Manage library</Dialog.Title>
+                <Dialog.Description>Choose which indexed folders Generate can use.</Dialog.Description>
+              </div>
+              <Dialog.Close className="dialog-close" aria-label="Close library manager"><X /></Dialog.Close>
+            </header>
+
+            <div className="library-manager-metrics" aria-live="polite">
+              <div><strong className="tabular">{selectedPaths.length}/{library.roots.length}</strong><span>Libraries active</span></div>
+              <div><strong className="tabular">{formatCount(selectedLayerCount)}</strong><span>Layers selected</span></div>
+              <div><strong className="tabular">{selectedCategoryCount}</strong><span>Categories available</span></div>
+            </div>
+
+            <div className="library-manager-list-heading">
+              <strong>Indexed folders</strong>
+              <div>
+                <button type="button" onClick={() => onSelectedPathsChange(library.roots.map((root) => root.path))}>Select all</button>
+                <button type="button" onClick={() => onSelectedPathsChange([])}>Select none</button>
+              </div>
+            </div>
+
+            <div className="library-manager-list" role="group" aria-label="Libraries available to Generate">
+              {library.roots.length > 0 ? library.roots.map((root) => {
+                const checked = selectedSet.has(root.path)
+                return (
+                  <div className={cn("library-manager-row", checked && "is-selected")} key={root.path}>
+                    <label>
+                      <input type="checkbox" checked={checked} onChange={(event) => toggleLibrary(root.path, event.target.checked)} />
+                      <span>
+                        <strong>{root.name}</strong>
+                        <small title={root.path}>{root.path}</small>
+                      </span>
+                      <output className="tabular">{formatCount(root.layerCount)}</output>
+                    </label>
+                    <button type="button" className="library-reveal" aria-label={`Afficher ${root.name} dans le Finder`} title="Afficher dans le Finder" onClick={() => window.stemSlicer?.revealPath(root.path)}>
+                      <FolderOpen aria-hidden="true" />
+                    </button>
+                  </div>
+                )
+              }) : <p className="library-manager-empty">No indexed library is available yet.</p>}
+            </div>
+
+            {selectionMessage ? <p className="library-manager-notice" role="status"><FolderOpen aria-hidden="true" /> {selectionMessage}</p> : null}
+
+            <footer className="library-manager-footer">
+              <Button variant="outline" onClick={onAddFolder}><Plus /> Add folder</Button>
+              <Dialog.Close className="dialog-done">Done</Dialog.Close>
+            </footer>
+          </Dialog.Popup>
+        </Dialog.Viewport>
+      </Dialog.Portal>
+    </Dialog.Root>
+  )
+}
+
 function GenerateView({
   library,
   layers,
@@ -463,8 +589,27 @@ function GenerateView({
   const [isGenerating, setIsGenerating] = useState(false)
   const [status, setStatus] = useState("Visual transport ready")
   const [selectionMessage, setSelectionMessage] = useState("")
+  const [selectedLibraryPaths, setSelectedLibraryPaths] = useState<string[]>([])
+  const knownLibraryPathsRef = useRef<Set<string>>(new Set())
   const allPlaying = playback.playing && soloId === null
-  const largestCategoryCount = library.categories[0]?.count || 1
+  const selectedLibrarySet = new Set(selectedLibraryPaths)
+  const selectedRoots = library.roots.filter((root) => selectedLibrarySet.has(root.path))
+  const selectedLayerCount = selectedRoots.reduce((sum, root) => sum + root.layerCount, 0)
+  const selectedCategories = aggregateCategories(selectedRoots)
+  const largestCategoryCount = selectedCategories[0]?.count || 1
+
+  useEffect(() => {
+    const availablePaths = library.roots.map((root) => root.path)
+    const availableSet = new Set(availablePaths)
+    const knownPaths = knownLibraryPathsRef.current
+    setSelectedLibraryPaths((current) => {
+      if (knownPaths.size === 0) return availablePaths
+      const retained = current.filter((path) => availableSet.has(path))
+      const newlyIndexed = availablePaths.filter((path) => !knownPaths.has(path))
+      return [...retained, ...newlyIndexed]
+    })
+    knownLibraryPathsRef.current = availableSet
+  }, [library.roots])
 
   const pickFolder = async () => {
     const result = await window.stemSlicer?.pickLibraryFolder()
@@ -488,7 +633,7 @@ function GenerateView({
           keyName,
         })),
       )
-      setStatus("4 prototype cards generated")
+      setStatus(`${layers.length} prototype cards generated`)
       setIsGenerating(false)
       onAddHistory({
         id: crypto.randomUUID(),
@@ -580,39 +725,40 @@ function GenerateView({
           <div className="catalogue-heading">
             <span className="catalogue-icon" aria-hidden="true"><Database /></span>
             <div>
-              <h2 id="generate-catalogue-title">Layer catalogue</h2>
-              <p><strong>{formatCount(library.totalLayers)}</strong> layers · {library.roots.length} libraries · {library.categories.length} categories</p>
+              <h2 id="generate-catalogue-title">Layer library</h2>
+              <p><strong>{formatCount(selectedLayerCount)}</strong> layers selected for Generate</p>
             </div>
           </div>
-          <Button size="sm" onClick={pickFolder}><Plus /> Add library</Button>
-        </div>
-
-        {selectionMessage ? <p className="catalogue-selection" role="status"><FolderOpen aria-hidden="true" /> {selectionMessage}</p> : null}
-
-        <div className="catalogue-sources" aria-label="Indexed libraries">
-          {library.roots.length > 0 ? library.roots.map((root) => (
-            <button type="button" className="catalogue-source" key={root.path} title={root.path} onClick={() => window.stemSlicer?.revealPath(root.path)}>
-              <FolderOpen aria-hidden="true" />
-              <span>{root.name}</span>
-              <small className="tabular">{formatCount(root.layerCount)}</small>
-            </button>
-          )) : <span className="catalogue-empty">No indexed library detected.</span>}
+          <LibraryManager
+            library={library}
+            selectedPaths={selectedLibraryPaths}
+            selectedLayerCount={selectedLayerCount}
+            selectedCategoryCount={selectedCategories.length}
+            selectionMessage={selectionMessage}
+            onSelectedPathsChange={setSelectedLibraryPaths}
+            onAddFolder={pickFolder}
+          />
         </div>
 
         <div className="catalogue-distribution-heading">
           <strong>Category distribution</strong>
-          <span>Automatic and manual labels in the active catalogue</span>
+          <span>Automatic and manual labels in the active selection</span>
         </div>
         <div className="catalogue-distribution" aria-label="Category distribution">
-          {library.categories.length > 0 ? library.categories.map((category) => (
+          {selectedCategories.length > 0 ? selectedCategories.map((category) => (
             <div className="category-compact" key={category.name}>
               <span className="category-compact-meter" aria-hidden="true"><span style={{ width: `${Math.max(5, (category.count / largestCategoryCount) * 100)}%` }} /></span>
               <strong title={category.name}>{category.name}</strong>
               <small className="tabular">{formatCount(category.count)}</small>
             </div>
-          )) : <p className="catalogue-empty">Category distribution becomes available with the Electron catalogue.</p>}
+          )) : <p className="catalogue-empty">Select at least one indexed library to view its categories.</p>}
         </div>
       </section>
+
+      <div className="generate-layer-toolbar glass-panel">
+        <div><strong>Generated layers</strong><span>{layers.length} synchronized cards · shared BPM and key</span></div>
+        <Button variant="outline" size="sm"><Layers3 /> Drag all</Button>
+      </div>
 
       <div className="layer-scroll" tabIndex={0} aria-label="Generated layer cards">
         <div className="layer-grid">
@@ -630,10 +776,6 @@ function GenerateView({
           ))}
         </div>
 
-        <div className="generate-footer">
-          <p><Check aria-hidden="true" /> Shared BPM and key constraints are active.</p>
-          <Button variant="outline"><Layers3 /> Drag all</Button>
-        </div>
       </div>
     </div>
   )

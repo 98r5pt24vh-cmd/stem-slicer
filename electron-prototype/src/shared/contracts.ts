@@ -23,6 +23,7 @@ export interface LibraryRootSummary {
   layerCount: number
   analyzedKeyCount: number
   keyCoverage: KeyCoverage
+  categories: CategorySummary[]
 }
 
 export interface CategorySummary {

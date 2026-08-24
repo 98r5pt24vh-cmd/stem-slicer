@@ -23,6 +23,10 @@ interface CategoryRow {
   layer_count: number
 }
 
+interface RootCategoryRow extends CategoryRow {
+  library_root: string
+}
+
 function basename(libraryPath: string): string {
   return path.basename(libraryPath) || libraryPath
 }
@@ -71,6 +75,24 @@ export function readLibraryOverview(acceptedCachePath: string): LibraryOverview 
         LIMIT 24
       `)
       .all() as unknown as CategoryRow[]
+    const rootCategoryRows = database
+      .prepare(`
+        SELECT
+          library_root,
+          COALESCE(NULLIF(manual_label, ''), NULLIF(predicted_label, ''), 'Unknown')
+            AS category,
+          COUNT(*) AS layer_count
+        FROM layer_cache
+        GROUP BY library_root, category
+        ORDER BY library_root, layer_count DESC
+      `)
+      .all() as unknown as RootCategoryRow[]
+    const categoriesByRoot = new Map<string, CategorySummary[]>()
+    for (const row of rootCategoryRows) {
+      const categories = categoriesByRoot.get(row.library_root) ?? []
+      categories.push({ name: row.category, count: Number(row.layer_count) })
+      categoriesByRoot.set(row.library_root, categories)
+    }
 
     const roots: LibraryRootSummary[] = rootRows.map((row) => ({
       path: row.library_root,
@@ -79,6 +101,7 @@ export function readLibraryOverview(acceptedCachePath: string): LibraryOverview 
       analyzedKeyCount: Number(row.analyzed_key_count),
       keyCoverage:
         Number(row.analyzed_key_count) > 0 ? "analyzed" : "unavailable",
+      categories: categoriesByRoot.get(row.library_root) ?? [],
     }))
     const categories: CategorySummary[] = categoryRows.map((row) => ({
       name: row.category,
