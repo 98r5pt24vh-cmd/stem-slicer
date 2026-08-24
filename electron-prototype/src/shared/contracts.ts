@@ -1,7 +1,6 @@
 export type ViewId =
   | "stem-slicer"
   | "generate"
-  | "library"
   | "quick-tools"
   | "history"
   | "cloud"

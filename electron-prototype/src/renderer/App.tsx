@@ -11,7 +11,6 @@ import {
   Gauge,
   History,
   Layers3,
-  Library,
   ListFilter,
   LoaderCircle,
   Menu,
@@ -23,7 +22,6 @@ import {
   Repeat2,
   RotateCcw,
   ScanLine,
-  Search,
   Settings2,
   SkipBack,
   Sliders,
@@ -34,10 +32,9 @@ import {
   WandSparkles,
   Wrench,
   X,
-  Zap,
   type LucideIcon,
 } from "lucide-react"
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useId, useRef, useState } from "react"
 
 import { Waveform } from "@/components/waveform"
 import { Badge } from "@/components/ui/badge"
@@ -88,7 +85,6 @@ const NAVIGATION: NavItem[] = [
   { id: "stem-slicer", label: "Stem Slicer", icon: FolderCog, shortcut: "S" },
   { id: "quick-tools", label: "Quick Tools", icon: Wrench, shortcut: "Q" },
   { id: "generate", label: "Generate", icon: Sparkles, shortcut: "G" },
-  { id: "library", label: "Library", icon: Library, shortcut: "L" },
   { id: "history", label: "History", icon: History, shortcut: "H" },
 ]
 
@@ -227,13 +223,11 @@ function Select({
 function AppSidebar({
   activeView,
   collapsed,
-  totalLayers,
   onNavigate,
   onToggle,
 }: {
   activeView: ViewId
   collapsed: boolean
-  totalLayers: number
   onNavigate: (view: ViewId) => void
   onToggle: () => void
 }) {
@@ -289,9 +283,7 @@ function AppSidebar({
             >
               <Icon aria-hidden="true" />
               <span className="nav-label">{item.label}</span>
-              {item.id === "library" && totalLayers > 0 ? (
-                <span className="nav-count">{formatCount(totalLayers)}</span>
-              ) : item.shortcut ? (
+              {item.shortcut ? (
                 <kbd>{item.shortcut}</kbd>
               ) : null}
             </button>
@@ -470,9 +462,15 @@ function GenerateView({
   const [seed, setSeed] = useState(734291)
   const [isGenerating, setIsGenerating] = useState(false)
   const [status, setStatus] = useState("Visual transport ready")
+  const [selectionMessage, setSelectionMessage] = useState("")
   const allPlaying = playback.playing && soloId === null
-  const analyzedKeyCount = library.roots.reduce((sum, root) => sum + root.analyzedKeyCount, 0)
-  const unavailableKeyCount = Math.max(0, library.totalLayers - analyzedKeyCount)
+  const largestCategoryCount = library.categories[0]?.count || 1
+
+  const pickFolder = async () => {
+    const result = await window.stemSlicer?.pickLibraryFolder()
+    if (!result || result.canceled || result.paths.length === 0) return
+    setSelectionMessage(`${basename(result.paths[0])} selected — scanning is not started automatically.`)
+  }
 
   const handleGenerate = () => {
     if (isGenerating) return
@@ -577,12 +575,43 @@ function GenerateView({
         </CardContent>
       </Card>
 
-      <section className="generate-library-summary glass-panel" aria-label="Generate catalogue summary">
-        <div><Database aria-hidden="true" /><span><strong>{formatCount(library.totalLayers)}</strong><small>Layers</small></span></div>
-        <div><FolderOpen aria-hidden="true" /><span><strong>{library.roots.length}</strong><small>Libraries</small></span></div>
-        <div><Layers3 aria-hidden="true" /><span><strong>{library.categories.length}</strong><small>Categories</small></span></div>
-        <div><Radio aria-hidden="true" /><span><strong>{formatCount(analyzedKeyCount)}</strong><small>Top-1 / Top-2 analyzed</small></span></div>
-        <div className={cn(unavailableKeyCount > 0 && "has-warning")}><CircleAlert aria-hidden="true" /><span><strong>{formatCount(unavailableKeyCount)}</strong><small>Confidence unavailable</small></span></div>
+      <section className="generate-catalogue glass-panel" aria-labelledby="generate-catalogue-title">
+        <div className="catalogue-toolbar">
+          <div className="catalogue-heading">
+            <span className="catalogue-icon" aria-hidden="true"><Database /></span>
+            <div>
+              <h2 id="generate-catalogue-title">Layer catalogue</h2>
+              <p><strong>{formatCount(library.totalLayers)}</strong> layers · {library.roots.length} libraries · {library.categories.length} categories</p>
+            </div>
+          </div>
+          <Button size="sm" onClick={pickFolder}><Plus /> Add library</Button>
+        </div>
+
+        {selectionMessage ? <p className="catalogue-selection" role="status"><FolderOpen aria-hidden="true" /> {selectionMessage}</p> : null}
+
+        <div className="catalogue-sources" aria-label="Indexed libraries">
+          {library.roots.length > 0 ? library.roots.map((root) => (
+            <button type="button" className="catalogue-source" key={root.path} title={root.path} onClick={() => window.stemSlicer?.revealPath(root.path)}>
+              <FolderOpen aria-hidden="true" />
+              <span>{root.name}</span>
+              <small className="tabular">{formatCount(root.layerCount)}</small>
+            </button>
+          )) : <span className="catalogue-empty">No indexed library detected.</span>}
+        </div>
+
+        <div className="catalogue-distribution-heading">
+          <strong>Category distribution</strong>
+          <span>Automatic and manual labels in the active catalogue</span>
+        </div>
+        <div className="catalogue-distribution" aria-label="Category distribution">
+          {library.categories.length > 0 ? library.categories.map((category) => (
+            <div className="category-compact" key={category.name}>
+              <span className="category-compact-meter" aria-hidden="true"><span style={{ width: `${Math.max(5, (category.count / largestCategoryCount) * 100)}%` }} /></span>
+              <strong title={category.name}>{category.name}</strong>
+              <small className="tabular">{formatCount(category.count)}</small>
+            </div>
+          )) : <p className="catalogue-empty">Category distribution becomes available with the Electron catalogue.</p>}
+        </div>
       </section>
 
       <div className="layer-scroll" tabIndex={0} aria-label="Generated layer cards">
@@ -606,99 +635,6 @@ function GenerateView({
           <Button variant="outline"><Layers3 /> Drag all</Button>
         </div>
       </div>
-    </div>
-  )
-}
-
-function LibraryView({ library }: { library: LibraryOverview }) {
-  const [query, setQuery] = useState("")
-  const [selectionMessage, setSelectionMessage] = useState("")
-  const filteredCategories = useMemo(
-    () => library.categories.filter((category) => category.name.toLowerCase().includes(query.toLowerCase())),
-    [library.categories, query],
-  )
-
-  const pickFolder = async () => {
-    const result = await window.stemSlicer?.pickLibraryFolder()
-    if (!result || result.canceled || result.paths.length === 0) return
-    setSelectionMessage(`${basename(result.paths[0])} selected — scanning is not started automatically.`)
-  }
-
-  return (
-    <div className="page-stack">
-      <PageHeader
-        eyebrow="Workspace / Library"
-        title="Your layer catalogue"
-        description="Inspect the real 1.9B catalogue. This Electron prototype never writes to the accepted cache."
-        actions={<Button onClick={pickFolder}><Plus /> Add library</Button>}
-      />
-
-      {selectionMessage ? (
-        <div className="notice" role="status"><FolderOpen /> {selectionMessage}</div>
-      ) : null}
-
-      <div className="metric-grid">
-        <Card><CardContent className="metric"><Database /><span><strong>{formatCount(library.totalLayers)}</strong><small>Total layers</small></span></CardContent></Card>
-        <Card><CardContent className="metric"><FolderOpen /><span><strong>{library.roots.length}</strong><small>Libraries</small></span></CardContent></Card>
-        <Card><CardContent className="metric"><Layers3 /><span><strong>{library.categories.length}</strong><small>Detected categories</small></span></CardContent></Card>
-        <Card><CardContent className="metric"><Zap /><span><strong>{formatCount(library.roots.reduce((sum, root) => sum + root.analyzedKeyCount, 0))}</strong><small>Top-1 / Top-2 analyzed</small></span></CardContent></Card>
-      </div>
-
-      <Card>
-        <CardHeader>
-          <div><CardTitle>Libraries</CardTitle><CardDescription>Paths are truncated visually but remain available as tooltips.</CardDescription></div>
-          <Badge variant={library.error ? "warning" : "success"}>{library.error ? "Attention" : "Read-only connected"}</Badge>
-        </CardHeader>
-        <CardContent className="table-wrap">
-          {library.roots.length > 0 ? (
-            <table>
-              <thead><tr><th>Name</th><th>Layers</th><th>Key analysis</th><th>Source</th></tr></thead>
-              <tbody>
-                {library.roots.map((root) => (
-                  <tr key={root.path}>
-                    <td><strong>{root.name}</strong></td>
-                    <td className="tabular">{formatCount(root.layerCount)}</td>
-                    <td>
-                      {root.keyCoverage === "analyzed" ? (
-                        <Badge variant="success"><Check /> {formatCount(root.analyzedKeyCount)} analyzed</Badge>
-                      ) : (
-                        <Badge variant="warning"><CircleAlert /> Confidence unavailable</Badge>
-                      )}
-                    </td>
-                    <td><button className="path-button" title={root.path} onClick={() => window.stemSlicer?.revealPath(root.path)}>{root.path}</button></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : (
-            <EmptyState icon={Database} title="No catalogue detected" description={library.error ?? "Connect the 1.9B catalogue to inspect its libraries."} action={<Button onClick={pickFolder}><FolderOpen /> Choose folder</Button>} />
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <div><CardTitle>Category distribution</CardTitle><CardDescription>Current automatic and manual labels, ordered by layer count.</CardDescription></div>
-          <div className="search-field">
-            <Search aria-hidden="true" />
-            <Input aria-label="Rechercher une catégorie" placeholder="Search categories" value={query} onChange={(event) => setQuery(event.target.value)} />
-            {query ? <button onClick={() => setQuery("")} aria-label="Effacer la recherche"><X /></button> : null}
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="category-grid">
-            {filteredCategories.map((category, index) => (
-              <div className="category-row" key={category.name}>
-                <span className="category-rank tabular">{String(index + 1).padStart(2, "0")}</span>
-                <strong>{category.name}</strong>
-                <span className="category-meter" aria-hidden="true"><span style={{ width: `${Math.max(4, (category.count / (library.categories[0]?.count || 1)) * 100)}%` }} /></span>
-                <span className="tabular">{formatCount(category.count)}</span>
-              </div>
-            ))}
-          </div>
-          {filteredCategories.length === 0 ? <p className="empty-inline">No category matches “{query}”.</p> : null}
-        </CardContent>
-      </Card>
     </div>
   )
 }
@@ -1029,7 +965,7 @@ export function App() {
   return (
     <div className="app-frame">
       <a className="skip-link" href="#main-content">Aller au contenu principal</a>
-      <AppSidebar activeView={activeView} collapsed={sidebarCollapsed} totalLayers={library.totalLayers} onNavigate={setActiveView} onToggle={() => setSidebarCollapsed((value) => !value)} />
+      <AppSidebar activeView={activeView} collapsed={sidebarCollapsed} onNavigate={setActiveView} onToggle={() => setSidebarCollapsed((value) => !value)} />
       <div className="app-workspace">
         <div className="window-dragbar app-drag-region">
           <span className="prototype-pill app-no-drag"><span /> Electron prototype</span>
@@ -1038,7 +974,6 @@ export function App() {
         <main id="main-content" tabIndex={-1} ref={mainRef} className={cn(activeView === "generate" && "generate-main")}>
           {activeView === "stem-slicer" ? <StemSlicerView /> : null}
           {activeView === "generate" ? <GenerateView library={library} layers={layers} setLayers={setLayers} onAddHistory={(entry) => setHistory((items) => [entry, ...items])} playback={playback} soloId={soloId} setSoloId={setSoloId} /> : null}
-          {activeView === "library" ? <LibraryView library={library} /> : null}
           {activeView === "quick-tools" ? <QuickToolsView /> : null}
           {activeView === "history" ? <HistoryView history={history} /> : null}
           {activeView === "cloud" ? <CloudView /> : null}
