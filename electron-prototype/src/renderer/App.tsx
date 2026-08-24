@@ -216,7 +216,14 @@ function usePlaybackClock(duration: number) {
     setProgress(0)
   }, [])
 
-  return { playing, progress, setProgress, toggle, stop }
+  const seek = useCallback((nextProgress: number) => {
+    const clampedProgress = Math.max(0, Math.min(nextProgress, 1))
+    setProgress(clampedProgress)
+    startingProgressRef.current = clampedProgress
+    if (playing) startedAtRef.current = performance.now()
+  }, [playing])
+
+  return { playing, progress, seek, toggle, stop }
 }
 
 type PlaybackClock = ReturnType<typeof usePlaybackClock>
@@ -375,6 +382,7 @@ function LayerCard({
   playing,
   isAudible,
   onPlay,
+  onSeek,
   onChange,
 }: {
   layer: GeneratedLayer
@@ -383,6 +391,7 @@ function LayerCard({
   playing: boolean
   isAudible: boolean
   onPlay: () => void
+  onSeek: (progress: number) => void
   onChange: (layer: GeneratedLayer) => void
 }) {
   return (
@@ -400,24 +409,35 @@ function LayerCard({
         <Badge variant="secondary">{layer.category}</Badge>
       </CardHeader>
       <CardContent>
-        <button
-          type="button"
-          className="waveform-button"
-          onClick={onPlay}
-          aria-label={playing && isAudible ? `Mettre ${layer.role} en pause` : `Lire ${layer.role} en solo`}
-        >
-          <span className="card-play-icon" aria-hidden="true">
+        <div className="layer-transport">
+          <button
+            type="button"
+            className="card-play-button"
+            onClick={onPlay}
+            aria-label={playing && isAudible ? `Mettre ${layer.role} en pause` : `Lire ${layer.role} en solo`}
+          >
             {playing && isAudible ? <Pause /> : <Play className="play-glyph" />}
-          </span>
-          <Waveform
-            progress={isAudible ? progress : 0}
-            label={`Forme d’onde de ${layer.role}`}
-            bars={layer.bars}
-          />
-          <span className="wave-time tabular">
-            {((isAudible ? progress : 0) * layer.duration).toFixed(1)} / {layer.duration.toFixed(1)} s
-          </span>
-        </button>
+          </button>
+          <div className="waveform-reader">
+            <Waveform
+              progress={isAudible ? progress : 0}
+              label={`Forme d’onde de ${layer.role}`}
+              bars={layer.bars}
+            />
+            <input
+              className="waveform-scrubber"
+              type="range"
+              min="0"
+              max="1000"
+              value={Math.round((isAudible ? progress : 0) * 1000)}
+              aria-label={`Position de lecture de ${layer.role}`}
+              onChange={(event) => onSeek(Number(event.target.value) / 1000)}
+            />
+            <span className="wave-time tabular" aria-hidden="true">
+              {((isAudible ? progress : 0) * layer.duration).toFixed(1)} / {layer.duration.toFixed(1)} s
+            </span>
+          </div>
+        </div>
 
         <div className="layer-metadata">
           <span><Gauge aria-hidden="true" /> {layer.bpm} BPM</span>
@@ -657,6 +677,25 @@ function GenerateView({
     window.setTimeout(playback.toggle, 0)
   }
 
+  const addLayerCard = () => {
+    setLayers((current) => {
+      const layerNumber = current.length + 1
+      const waveformTemplate = INITIAL_LAYERS[current.length % INITIAL_LAYERS.length]
+      return [...current, {
+        id: `extra-${Date.now()}`,
+        role: `Layer ${layerNumber}`,
+        file: "Select a source layer",
+        category: "Unassigned",
+        bpm,
+        keyName,
+        octave: 0,
+        volume: 75,
+        duration: 7.44,
+        bars: waveformTemplate.bars,
+      }]
+    })
+  }
+
   return (
     <div className="page-stack generate-page">
       <PageHeader
@@ -771,9 +810,18 @@ function GenerateView({
               playing={playback.playing}
               isAudible={allPlaying || soloId === layer.id}
               onPlay={() => toggleSolo(layer.id)}
+              onSeek={(nextProgress) => {
+                if (!allPlaying && soloId !== layer.id) setSoloId(layer.id)
+                playback.seek(nextProgress)
+              }}
               onChange={(next) => setLayers((current) => current.map((item) => item.id === next.id ? next : item))}
             />
           ))}
+          <button type="button" className="add-layer-card" onClick={addLayerCard}>
+            <span aria-hidden="true"><Plus /></span>
+            <strong>Add layer card</strong>
+            <small>Add another layer to this stack</small>
+          </button>
         </div>
 
       </div>

@@ -690,10 +690,11 @@ main:focus {
 
 .generate-catalogue {
   min-width: 0;
-  flex: 0 0 auto;
+  min-height: 180px;
+  flex: 0 0 180px;
   overflow: hidden;
   border-radius: 12px;
-  padding: 7px 9px 8px;
+  padding: 9px 11px 10px;
 }
 
 .catalogue-toolbar,
@@ -1071,7 +1072,7 @@ main:focus {
 
 .catalogue-distribution-heading {
   gap: 8px;
-  margin-block: 5px 4px;
+  margin-block: 8px 6px;
 }
 
 .catalogue-distribution-heading strong {
@@ -1087,22 +1088,22 @@ main:focus {
 
 .catalogue-distribution {
   display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: 4px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 5px;
 }
 
 .category-compact {
   position: relative;
   display: flex;
   min-width: 0;
-  min-height: 20px;
+  min-height: 25px;
   align-items: center;
   gap: 5px;
   overflow: hidden;
   border: 1px solid rgb(255 255 255 / 0.065);
   border-radius: 7px;
   background: rgb(0 0 0 / 0.2);
-  padding: 3px 5px 5px;
+  padding: 4px 7px 6px;
 }
 
 .category-compact-meter {
@@ -1483,11 +1484,12 @@ main:focus {
   white-space: nowrap;
 }
 
-.waveform-button {
-  position: relative;
-  display: block;
+.layer-transport {
+  display: grid;
   width: 100%;
-  min-height: 36px;
+  min-height: 40px;
+  grid-template-columns: 40px minmax(0, 1fr);
+  align-items: center;
   overflow: hidden;
   border: 1px solid rgb(255 255 255 / 0.075);
   border-radius: 8px;
@@ -1495,37 +1497,36 @@ main:focus {
     linear-gradient(180deg, rgb(255 255 255 / 0.045), transparent),
     rgb(4 8 4 / 0.56);
   color: inherit;
-  padding: 2px 6px;
-  text-align: start;
   transition: border-color 120ms ease, background-color 120ms ease;
 }
 
-.layer-card .waveform {
-  height: 30px;
-}
-
-.waveform-button:hover {
-  border-color: #394332;
-  background: #0c100a;
-}
-
-.card-play-icon {
-  position: absolute;
-  z-index: 2;
-  inset-block-start: 4px;
-  inset-inline-start: 5px;
+.card-play-button {
   display: grid;
-  width: 18px;
-  height: 18px;
+  width: 30px;
+  height: 30px;
+  min-height: 30px;
+  place-self: center;
   place-items: center;
   border: 1px solid rgb(255 255 255 / 0.12);
   border-radius: 50%;
   background: linear-gradient(145deg, #2b2e2b, #0d0f0d 72%);
   color: var(--primary);
   box-shadow: 0 5px 10px rgb(0 0 0 / 0.46), 0 1px 0 rgb(255 255 255 / 0.12) inset, 0 -2px 4px rgb(0 0 0 / 0.42) inset;
+  transition: filter 120ms ease, transform 120ms ease, box-shadow 120ms ease;
 }
 
-.layer-tone-yellow .card-play-icon {
+.card-play-button:active {
+  transform: scale(0.96);
+  box-shadow: 0 2px 6px rgb(0 0 0 / 0.5), 0 1px 0 rgb(255 255 255 / 0.1) inset;
+}
+
+.card-play-button:focus-visible,
+.waveform-reader:has(.waveform-scrubber:focus-visible) {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.layer-tone-yellow .card-play-button {
   color: var(--signal-yellow);
 }
 
@@ -1533,15 +1534,50 @@ main:focus {
   color: var(--signal-yellow) !important;
 }
 
-.card-play-icon svg {
-  width: 9px;
-  height: 9px;
+.card-play-button svg {
+  width: 13px;
+  height: 13px;
+}
+
+.waveform-reader {
+  position: relative;
+  min-width: 0;
+  height: 40px;
+  overflow: hidden;
+  border-inline-start: 1px solid rgb(255 255 255 / 0.07);
+  padding: 4px 7px 3px 8px;
+}
+
+.layer-card .waveform-reader .waveform {
+  height: 25px;
+  transform: translateY(3px);
+}
+
+.waveform-reader .waveform-scrubber {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  appearance: none;
+  background: transparent;
+  cursor: ew-resize;
+  opacity: 0;
+}
+
+.waveform-reader .waveform-scrubber::-webkit-slider-thumb {
+  width: 1px;
+  height: 40px;
+  border: 0;
+  appearance: none;
+  background: transparent;
 }
 
 .wave-time {
   position: absolute;
+  z-index: 1;
   inset-inline-end: 6px;
-  inset-block-end: 2px;
+  inset-block-end: 1px;
   color: #6f7968;
   font-family: var(--font-mono);
   font-size: 7px;
@@ -1654,6 +1690,78 @@ input[type="range"]::-webkit-slider-thumb {
 .layer-card input[type="range"]::-webkit-slider-thumb {
   width: 12px;
   height: 12px;
+}
+
+.layer-card .waveform-reader .waveform-scrubber {
+  height: 100%;
+  border-radius: 0;
+  background: transparent;
+}
+
+.layer-card .waveform-reader .waveform-scrubber::-webkit-slider-thumb {
+  width: 1px;
+  height: 40px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.add-layer-card {
+  display: grid;
+  min-width: 0;
+  min-height: 135px;
+  place-content: center;
+  justify-items: center;
+  gap: 5px;
+  border: 1px dashed rgb(115 189 0 / 0.34);
+  border-radius: 12px;
+  background:
+    radial-gradient(circle at 50% 35%, rgb(115 189 0 / 0.09), transparent 44%),
+    rgb(9 12 9 / 0.52);
+  color: var(--muted-foreground);
+  padding: 14px;
+  text-align: center;
+  transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease, transform 120ms ease;
+}
+
+.add-layer-card > span {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 1px solid rgb(115 189 0 / 0.28);
+  border-radius: 10px;
+  background: rgb(115 189 0 / 0.09);
+  color: var(--primary);
+}
+
+.add-layer-card svg {
+  width: 16px;
+  height: 16px;
+}
+
+.add-layer-card strong,
+.add-layer-card small {
+  display: block;
+}
+
+.add-layer-card strong {
+  color: var(--foreground);
+  font-size: 10px;
+}
+
+.add-layer-card small {
+  font-size: 8px;
+}
+
+.add-layer-card:active {
+  transform: scale(0.96);
+}
+
+.add-layer-card:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
 }
 
 .generate-footer {
@@ -2823,6 +2931,21 @@ td strong {
   .task-trigger:hover {
     color: var(--foreground);
     filter: brightness(1.08);
+  }
+
+  .layer-transport:hover {
+    border-color: #394332;
+    background-color: #0c100a;
+  }
+
+  .card-play-button:hover {
+    filter: brightness(1.12);
+  }
+
+  .add-layer-card:hover {
+    border-color: rgb(115 189 0 / 0.62);
+    background-color: rgb(115 189 0 / 0.055);
+    color: var(--foreground);
   }
 }
 
