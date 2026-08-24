@@ -854,8 +854,16 @@ def select_generation(
                 del loop_use_counts[loop_id]
         return False
 
+    # Do not explore reserve limits that are provably impossible.  A library
+    # without precomputed Top-1/Top-2 confidence has no safe options at all;
+    # starting at zero would otherwise enumerate enormous dead search trees
+    # before eventually allowing one unavailable candidate per recipe slot.
+    minimum_reserve = sum(
+        not any(option.key_pool_priority == 0 for option in options)
+        for options in options_by_slot
+    )
     assigned = False
-    for reserve_limit in range(len(request.categories) + 1):
+    for reserve_limit in range(minimum_reserve, len(request.categories) + 1):
         selected_options.clear()
         used_identities.clear()
         loop_use_counts.clear()

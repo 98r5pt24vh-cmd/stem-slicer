@@ -28,3 +28,15 @@ with up to four ordered worker threads.  On the fixed 48-layer cold benchmark:
 - unchanged rescan: 0.016 seconds for all 48 rows.
 
 No application bundle or release ZIP has been rebuilt.
+
+## Libraries without Top-1/Top-2 key analysis
+
+The accepted 1.9B cache contains 9,193 rows for `+NRGY ALL LAYERS`, all with a
+filename key but without the precomputed confidence inventory that exists for
+`+NRGY ALL LAYERS 2`.  The old reserve search explored impossible confidence
+limits and became combinatorial at this size.
+
+The prototype starts the search at the provable minimum reserve count.  A
+library without Top-1/Top-2 data can therefore generate from its filename keys
+immediately.  This fallback does not invent an alternate key or claim measured
+confidence; such rows remain explicitly `unavailable`.

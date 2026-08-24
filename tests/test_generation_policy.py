@@ -485,6 +485,36 @@ class SelectionPolicyTests(unittest.TestCase):
             "uncertain",
         )
 
+    def test_large_library_without_key_confidence_skips_impossible_limits(self):
+        categories = ("Bass", "Chords", "Lead", "Pad")
+        candidates = [
+            candidate(
+                f"{category.casefold()}-{index}",
+                category,
+                loop=f"{category.casefold()}-loop-{index}",
+                key_margin=None,
+                key_status="unavailable",
+            )
+            for category in categories
+            for index in range(250)
+        ]
+
+        plan = select_generation(
+            candidates,
+            GenerationRequest(categories, 140, "A minor", seed=42),
+        )
+
+        self.assertEqual(
+            tuple(selection.category for selection in plan.selections),
+            categories,
+        )
+        self.assertTrue(
+            all(
+                selection.candidate.key_confidence_status == "unavailable"
+                for selection in plan.selections
+            )
+        )
+
     def test_key_conflict_is_never_selected(self):
         with self.assertRaises(SelectionError):
             select_generation(
