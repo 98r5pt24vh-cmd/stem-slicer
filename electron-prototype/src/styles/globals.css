@@ -690,8 +690,8 @@ main:focus {
 
 .generate-catalogue {
   min-width: 0;
-  min-height: 196px;
-  flex: 0 0 196px;
+  min-height: 154px;
+  flex: 0 0 154px;
   overflow: hidden;
   border-radius: 12px;
   padding: 9px 11px 10px;
@@ -759,7 +759,7 @@ main:focus {
 .catalogue-actions {
   display: flex;
   flex: 0 0 auto;
-  align-items: center;
+  align-items: stretch;
   gap: 8px;
 }
 
@@ -795,6 +795,11 @@ main:focus {
 .catalogue-toolbar > button,
 .manage-library-trigger {
   flex: 0 0 auto;
+}
+
+.catalogue-actions .manage-library-trigger {
+  height: 34px;
+  min-height: 34px;
 }
 
 .manage-library-trigger,
@@ -1129,7 +1134,7 @@ main:focus {
 
 .catalogue-distribution {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 5px;
 }
 
@@ -2396,7 +2401,13 @@ td strong {
 }
 
 .generate-hardware {
-  min-height: 44px !important;
+  height: 34px !important;
+  min-height: 34px !important;
+  border-radius: 8px !important;
+  box-shadow:
+    0 1px 0 rgb(255 255 255 / 0.28) inset,
+    0 -2px 0 rgb(21 55 0 / 0.35) inset,
+    0 5px 12px rgb(0 0 0 / 0.34) !important;
 }
 
 .workflow-grid {
