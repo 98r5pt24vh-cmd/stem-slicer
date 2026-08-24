@@ -1,7 +1,6 @@
 import { Dialog } from "@base-ui/react/dialog"
 import {
   AudioLines,
-  Check,
   ChevronLeft,
   CircleAlert,
   Cloud,
@@ -14,7 +13,6 @@ import {
   Layers3,
   ListFilter,
   LoaderCircle,
-  Menu,
   Music2,
   Pause,
   Play,
@@ -35,7 +33,7 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react"
-import { useCallback, useEffect, useId, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 
 import { Waveform } from "@/components/waveform"
 import { Badge } from "@/components/ui/badge"
@@ -265,8 +263,9 @@ function AppSidebar({
         <button
           type="button"
           className="brand-mark app-no-drag"
-          onClick={() => onNavigate("generate")}
-          aria-label="Ouvrir Generate"
+          onClick={() => collapsed ? onToggle() : onNavigate("generate")}
+          aria-label={collapsed ? "Déplier la barre latérale" : "Ouvrir Generate"}
+          title={collapsed ? "Déplier la barre latérale (⌘B)" : "Stem Slicer"}
         >
           <AudioLines aria-hidden="true" />
         </button>
@@ -283,7 +282,7 @@ function AppSidebar({
           aria-label={collapsed ? "Déplier la barre latérale" : "Replier la barre latérale"}
           title={collapsed ? "Déplier (⌘B)" : "Replier (⌘B)"}
         >
-          {collapsed ? <Menu /> : <ChevronLeft />}
+          <ChevronLeft />
         </Button>
       </div>
 
@@ -1039,42 +1038,6 @@ function CloudView() {
   )
 }
 
-function TaskCenter({ library }: { library: LibraryOverview }) {
-  const [open, setOpen] = useState(false)
-  const panelId = useId()
-  const analyzedLayers = library.roots.reduce((sum, root) => sum + root.analyzedKeyCount, 0)
-  const missingConfidence = Math.max(0, library.totalLayers - analyzedLayers)
-
-  useEffect(() => {
-    if (!open) return
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false)
-    }
-    window.addEventListener("keydown", onKeyDown)
-    return () => window.removeEventListener("keydown", onKeyDown)
-  }, [open])
-
-  return (
-    <div className={cn("task-center app-no-drag", open && "is-open")}>
-      <button type="button" className="task-trigger" onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-controls={panelId}>
-        <span className={cn("status-light", library.databaseDetected && "is-online")} />
-        <span>{library.databaseDetected ? "Catalogue ready" : "Catalogue unavailable"}</span>
-        <Badge variant={!library.databaseDetected || missingConfidence > 0 ? "warning" : "success"}>{formatCount(library.totalLayers)}</Badge>
-      </button>
-      {open ? (
-        <div className="task-popover glass-panel" id={panelId} role="status">
-          <div className="task-heading"><div><strong>Library activity</strong><small>Future scans will remain visible here while you work.</small></div><Button variant="ghost" size="icon" onClick={() => setOpen(false)} aria-label="Close activity"><X /></Button></div>
-          <div className="task-body">
-            <div className="task-title"><span><ScanLine aria-hidden="true" /></span><div><strong>1.9B catalogue</strong><small>{formatCount(library.totalLayers)} cached layers · no scan active</small></div><Badge variant={library.databaseDetected ? "success" : "warning"}>{library.databaseDetected ? "Ready" : "Offline"}</Badge></div>
-            <div className="task-progress" aria-label={library.databaseDetected ? "Catalogue loading complete" : "Catalogue unavailable"} aria-valuemin={0} aria-valuemax={100} aria-valuenow={library.databaseDetected ? 100 : 0} role="progressbar"><span style={{ width: library.databaseDetected ? "100%" : "0%" }} /></div>
-            {!library.databaseDetected ? <p><CircleAlert aria-hidden="true" /> The accepted cache is only available inside the Electron runtime.</p> : missingConfidence > 0 ? <p><CircleAlert aria-hidden="true" /> {formatCount(missingConfidence)} layers currently have no Top-2 confidence data.</p> : <p><Check aria-hidden="true" /> Key confidence metadata is available for the indexed catalogue.</p>}
-          </div>
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
 function GlobalPlayer({ layers, playback, soloId, setSoloId }: { layers: GeneratedLayer[]; playback: PlaybackClock; soloId: string | null; setSoloId: React.Dispatch<React.SetStateAction<string | null>> }) {
   const [volume, setVolume] = useState(78)
   const currentLayer = layers.find((layer) => layer.id === soloId) ?? layers[0]
@@ -1158,7 +1121,6 @@ export function App() {
       <div className="app-workspace">
         <div className="window-dragbar app-drag-region">
           <span className="prototype-pill app-no-drag"><span /> Electron prototype</span>
-          <TaskCenter library={library} />
         </div>
         <main id="main-content" tabIndex={-1} ref={mainRef} className={cn(activeView === "generate" && "generate-main")}>
           {activeView === "stem-slicer" ? <StemSlicerView /> : null}

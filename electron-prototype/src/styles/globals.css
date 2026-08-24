@@ -252,6 +252,11 @@ a:focus-visible {
   height: 21px;
 }
 
+.brand-mark:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
 .sidebar-copy {
   min-width: 0;
   flex: 1;
@@ -286,32 +291,27 @@ a:focus-visible {
 }
 
 .is-collapsed .sidebar-copy {
-  width: 0;
-  opacity: 0;
-  pointer-events: none;
+  display: none;
 }
 
 .is-collapsed .sidebar-brand {
   justify-content: center;
-  padding: 7px 14px;
+  gap: 0;
+  padding: 7px 15px;
 }
 
 .is-collapsed .brand-mark {
-  display: none;
-}
-
-.is-collapsed .sidebar-collapse {
-  position: static;
+  display: grid;
   width: 42px;
   height: 42px;
   flex: 0 0 42px;
-  border: 1px solid rgb(225 213 0 / 0.22);
-  border-radius: 12px;
+  border-color: rgb(225 213 0 / 0.22);
   background: linear-gradient(145deg, rgb(115 189 0 / 0.14), rgb(13 16 12 / 0.94));
   color: var(--signal-yellow);
-  box-shadow:
-    0 5px 12px rgb(0 0 0 / 0.38),
-    0 1px 0 rgb(255 255 255 / 0.09) inset;
+}
+
+.is-collapsed .sidebar-collapse {
+  display: none;
 }
 
 .sidebar-nav {
@@ -428,8 +428,7 @@ a:focus-visible {
 .is-collapsed .nav-item kbd,
 .is-collapsed .nav-count,
 .is-collapsed .nav-beta {
-  width: 0;
-  opacity: 0;
+  display: none;
 }
 
 .is-collapsed .nav-item {
@@ -437,7 +436,18 @@ a:focus-visible {
   min-height: 42px;
   flex: 0 0 42px;
   justify-content: center;
+  gap: 0;
   padding-inline: 0;
+}
+
+.is-collapsed .nav-item::before {
+  display: none;
+}
+
+.is-collapsed .nav-item > svg {
+  width: 20px;
+  height: 20px;
+  flex-basis: 20px;
 }
 
 .is-collapsed .sidebar-nav {
@@ -452,7 +462,10 @@ a:focus-visible {
 
 .sidebar-footer {
   display: flex;
+  height: 66px;
   min-height: 66px;
+  flex: 0 0 66px;
+  box-sizing: border-box;
   align-items: center;
   gap: 10px;
   border-block-start: 1px solid var(--sidebar-border);
@@ -495,7 +508,7 @@ a:focus-visible {
 .app-workspace::before {
   position: absolute;
   z-index: 0;
-  inset: 42px 0 86px;
+  inset: 42px 0 66px;
   background:
     radial-gradient(circle at 78% 8%, rgb(255 255 255 / 0.03), transparent 28%),
     radial-gradient(circle at 18% 62%, rgb(255 255 255 / 0.018), transparent 38%);
@@ -690,8 +703,8 @@ main:focus {
 
 .generate-catalogue {
   min-width: 0;
-  min-height: 154px;
-  flex: 0 0 154px;
+  min-height: 160px;
+  flex: 0 0 160px;
   overflow: hidden;
   border-radius: 12px;
   padding: 9px 11px 10px;
@@ -716,9 +729,9 @@ main:focus {
 
 .catalogue-icon {
   display: grid;
-  width: 34px;
-  height: 34px;
-  flex: 0 0 34px;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
   place-items: center;
   border: 1px solid rgb(115 189 0 / 0.2);
   border-radius: 9px;
@@ -727,8 +740,8 @@ main:focus {
 }
 
 .catalogue-icon svg {
-  width: 17px;
-  height: 17px;
+  width: 19px;
+  height: 19px;
 }
 
 .catalogue-heading h2,
@@ -766,7 +779,7 @@ main:focus {
 .catalogue-layer-count {
   display: grid;
   min-width: 94px;
-  min-height: 34px;
+  min-height: 40px;
   align-content: center;
   border: 1px solid rgb(255 255 255 / 0.075);
   border-radius: 9px;
@@ -798,8 +811,8 @@ main:focus {
 }
 
 .catalogue-actions .manage-library-trigger {
-  height: 34px;
-  min-height: 34px;
+  height: 40px;
+  min-height: 40px;
 }
 
 .manage-library-trigger,
@@ -2792,111 +2805,14 @@ td strong {
   margin-block-start: 10px;
 }
 
-.task-center {
-  position: relative;
-  -webkit-app-region: no-drag;
-}
-
-.task-trigger {
-  display: inline-flex;
-  min-height: 32px;
-  align-items: center;
-  gap: 8px;
-  border: 1px solid rgb(255 255 255 / 0.08);
-  border-radius: 10px;
-  background: linear-gradient(145deg, rgb(255 255 255 / 0.055), rgb(5 9 5 / 0.45));
-  color: var(--muted-foreground);
-  padding: 3px 5px 3px 10px;
-  box-shadow: 0 4px 10px rgb(0 0 0 / 0.25), 0 1px 0 rgb(255 255 255 / 0.06) inset;
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.task-popover {
-  position: absolute;
-  z-index: 80;
-  inset-block-start: calc(100% + 9px);
-  inset-inline-end: 0;
-  width: min(390px, calc(100vw - 100px));
-  overflow: hidden;
-  border-radius: 18px;
-}
-
-.task-heading,
-.task-title {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.task-heading {
-  padding: 12px 12px 10px 15px;
-}
-
-.task-heading strong,
-.task-heading small,
-.task-title strong,
-.task-title small {
-  display: block;
-}
-
-.task-heading strong { font-size: 13px; }
-.task-heading small,
-.task-title small { margin-block-start: 2px; color: var(--muted-foreground); font-size: 10px; }
-
-.task-body {
-  border-block-start: 1px solid rgb(255 255 255 / 0.07);
-  padding: 13px 15px 15px;
-}
-
-.task-title > span {
-  display: grid;
-  width: 34px;
-  height: 34px;
-  place-items: center;
-  border-radius: 10px;
-  background: rgb(115 189 0 / 0.13);
-  color: var(--primary);
-}
-
-.task-title > span svg { width: 17px; height: 17px; }
-.task-title > div { min-width: 0; flex: 1; }
-.task-title strong { font-size: 12px; }
-
-.task-progress {
-  height: 5px;
-  margin-block-start: 13px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: rgb(0 0 0 / 0.4);
-}
-
-.task-progress span {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: linear-gradient(90deg, var(--primary), var(--signal-yellow));
-  box-shadow: 0 0 13px rgb(115 189 0 / 0.45);
-}
-
-.task-body > p {
-  display: flex;
-  align-items: flex-start;
-  gap: 7px;
-  margin: 11px 0 0;
-  color: var(--muted-foreground);
-  font-size: 10px;
-  line-height: 1.45;
-}
-
-.task-body > p svg { width: 14px; height: 14px; flex: 0 0 14px; color: var(--signal-orange); }
-
 .global-player {
   position: relative;
   z-index: 30;
   display: grid;
-  min-height: 86px;
+  height: 66px;
+  min-height: 66px;
+  flex: 0 0 66px;
+  box-sizing: border-box;
   grid-template-columns: minmax(240px, 0.8fr) minmax(420px, 1.5fr) minmax(170px, 0.6fr);
   align-items: center;
   gap: 18px;
@@ -2904,7 +2820,7 @@ td strong {
   background:
     linear-gradient(145deg, rgb(255 255 255 / 0.06), transparent 34%),
     rgb(15 17 15 / 0.86);
-  padding: 10px 18px;
+  padding: 6px 16px;
   backdrop-filter: blur(26px) saturate(145%);
   box-shadow: 0 -18px 44px rgb(0 0 0 / 0.3), 0 1px 0 rgb(255 255 255 / 0.08) inset;
 }
@@ -3001,8 +2917,7 @@ td strong {
     background: rgb(115 189 0 / 0.055);
   }
 
-  .player-key:hover,
-  .task-trigger:hover {
+  .player-key:hover {
     color: var(--foreground);
     filter: brightness(1.08);
   }
