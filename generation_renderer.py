@@ -218,7 +218,17 @@ class BungeePCMBackend:
         from audio_convert import _find_bungee
         from engine import find_ffmpeg
 
-        return self._ffmpeg or find_ffmpeg(), _find_bungee(self._bungee)
+        ffmpeg = self._ffmpeg or find_ffmpeg()
+        if not ffmpeg:
+            raise GenerationRenderError(
+                "FFmpeg was not found for Generate audio rendering"
+            )
+        bungee = _find_bungee(self._bungee)
+        if not bungee:
+            raise GenerationRenderError(
+                "Bungee was not found for Generate audio rendering"
+            )
+        return ffmpeg, bungee
 
     @staticmethod
     def _run(command: Sequence[str], *, capture_stdout: bool = False) -> bytes:

@@ -18,7 +18,9 @@ from generation_policy import (
     select_generation,
 )
 from generation_renderer import (
+    BungeePCMBackend,
     FFmpegMP3Encoder,
+    GenerationRenderError,
     LAYER_NORMALIZATION_MAX_BOOST_DB,
     RenderRequest,
     TimelinePlan,
@@ -89,6 +91,16 @@ class CapturingEncoder:
             for item in self.calls
             if item["destination"] == destination
         )
+
+
+class ExternalPayloadTests(unittest.TestCase):
+    def test_missing_ffmpeg_reports_a_clear_generate_error(self):
+        backend = BungeePCMBackend()
+        with patch("engine.find_ffmpeg", return_value=None), self.assertRaisesRegex(
+            GenerationRenderError,
+            "FFmpeg was not found",
+        ):
+            backend._executables()
 
 
 class TimelineTests(unittest.TestCase):
