@@ -792,37 +792,38 @@ function GenerateView({
         </div>
       </section>
 
-      <div className="generate-layer-toolbar glass-panel">
-        <div><strong>Generated layers</strong><span>{layers.length} synchronized cards · shared BPM and key</span></div>
-        <Button variant="outline" size="sm"><Layers3 /> Drag all</Button>
-      </div>
+      <section className="generated-layers-section" aria-labelledby="generated-layers-title">
+        <header className="generate-layer-toolbar">
+          <div><h2 id="generated-layers-title">Generated layers</h2><span>{layers.length} synchronized cards · shared BPM and key</span></div>
+          <Button variant="outline" size="sm"><Layers3 /> Drag all</Button>
+        </header>
 
-      <div className="layer-scroll" tabIndex={0} aria-label="Generated layer cards">
-        <div className="layer-grid">
-          {layers.map((layer, index) => (
-            <LayerCard
-              key={layer.id}
-              layer={layer}
-              tone={index % 2 === 0 ? "green" : "yellow"}
-              progress={playback.progress}
-              playing={playback.playing}
-              isAudible={allPlaying || soloId === layer.id}
-              onPlay={() => toggleSolo(layer.id)}
-              onSeek={(nextProgress) => {
-                if (!allPlaying && soloId !== layer.id) setSoloId(layer.id)
-                playback.seek(nextProgress)
-              }}
-              onChange={(next) => setLayers((current) => current.map((item) => item.id === next.id ? next : item))}
-            />
-          ))}
-          <button type="button" className="add-layer-card" onClick={addLayerCard}>
-            <span aria-hidden="true"><Plus /></span>
-            <strong>Add layer card</strong>
-            <small>Add another layer to this stack</small>
-          </button>
+        <div className="layer-scroll" tabIndex={0} aria-label="Generated layer cards">
+          <div className="layer-grid">
+            {layers.map((layer, index) => (
+              <LayerCard
+                key={layer.id}
+                layer={layer}
+                tone={index % 2 === 0 ? "green" : "yellow"}
+                progress={playback.progress}
+                playing={playback.playing}
+                isAudible={allPlaying || soloId === layer.id}
+                onPlay={() => toggleSolo(layer.id)}
+                onSeek={(nextProgress) => {
+                  if (!allPlaying && soloId !== layer.id) setSoloId(layer.id)
+                  playback.seek(nextProgress)
+                }}
+                onChange={(next) => setLayers((current) => current.map((item) => item.id === next.id ? next : item))}
+              />
+            ))}
+            <button type="button" className="add-layer-card" onClick={addLayerCard}>
+              <span aria-hidden="true"><Plus /></span>
+              <strong>Add layer card</strong>
+              <small>Add another layer to this stack</small>
+            </button>
+          </div>
         </div>
-
-      </div>
+      </section>
     </div>
   )
 }
