@@ -5906,6 +5906,20 @@ main.quick-tools-main {
 .quick-tool-panel.scan-panel { --panel-accent: var(--signal-yellow); --panel-rgb: 225 213 0; }
 .quick-tool-panel.convert-panel { --panel-accent: var(--signal-orange); --panel-rgb: 235 188 0; }
 
+.quick-extracted-layers-section {
+  margin-inline: -10px;
+  padding-inline: 10px;
+  background: linear-gradient(180deg, rgb(0 0 0 / 0.34), rgb(0 0 0 / 0.16) 74%, rgb(0 0 0 / 0.08));
+}
+
+.quick-extracted-layers-section::before {
+  inset-inline: 0;
+}
+
+.quick-extracted-layers-section .layer-scroll {
+  padding-inline: 12px 18px;
+}
+
 .quick-panel-heading,
 .quick-panel-actions,
 .quick-results-heading,
