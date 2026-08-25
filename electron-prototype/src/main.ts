@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, net, protocol, shell } from "electron"
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, net, protocol, shell } from "electron"
 import type { IpcMainInvokeEvent } from "electron"
 import path from "node:path"
 import { homedir } from "node:os"
@@ -64,6 +64,7 @@ function createWindow(): void {
     height: 786,
     minWidth: 1040,
     minHeight: 700,
+    autoHideMenuBar: true,
     backgroundColor: "#09090b",
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     trafficLightPosition: { x: 18, y: 18 },
@@ -75,6 +76,7 @@ function createWindow(): void {
       sandbox: true,
     },
   })
+  mainWindow.setMenu(null)
 
   mainWindow.once("ready-to-show", () => mainWindow.show())
 
@@ -163,6 +165,7 @@ function registerIpc(): void {
 }
 
 app.whenReady().then(() => {
+  Menu.setApplicationMenu(null)
   protocol.handle("stem-media", (request) => {
     const url = new URL(request.url)
     const targetPath = decodeURIComponent(url.pathname.replace(/^\//, ""))

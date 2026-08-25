@@ -426,7 +426,6 @@ a:focus-visible {
   transition: opacity 100ms ease;
 }
 
-.nav-item kbd,
 .nav-count {
   color: #707a69;
   font-family: var(--font-mono);
@@ -439,7 +438,6 @@ a:focus-visible {
 }
 
 .is-collapsed .nav-label,
-.is-collapsed .nav-item kbd,
 .is-collapsed .nav-count,
 .is-collapsed .nav-beta {
   display: none;

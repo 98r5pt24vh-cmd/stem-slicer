@@ -69,7 +69,6 @@ interface NavItem {
   id: ViewId
   label: string
   icon: LucideIcon
-  shortcut?: string
   badge?: string
 }
 
@@ -130,10 +129,10 @@ function MidiFileIcon() {
 type QuickToolId = "extract" | "scan" | "convert"
 
 const NAVIGATION: NavItem[] = [
-  { id: "stem-slicer", label: "Stem Slicer", icon: FolderCog, shortcut: "S" },
-  { id: "quick-tools", label: "Quick Tools", icon: Wrench, shortcut: "Q" },
-  { id: "generate", label: "Generate", icon: Sparkles, shortcut: "G" },
-  { id: "history", label: "History", icon: History, shortcut: "H" },
+  { id: "stem-slicer", label: "Stem Slicer", icon: FolderCog },
+  { id: "quick-tools", label: "Quick Tools", icon: Wrench },
+  { id: "generate", label: "Generate", icon: Sparkles },
+  { id: "history", label: "History", icon: History },
   { id: "cloud", label: "Connected Libraries", icon: Cloud, badge: "WIP" },
 ]
 
@@ -296,7 +295,6 @@ function loadGenerateHistory(): HistoryEntry[] {
 }
 
 type PlaybackMode = "idle" | "solo" | "mix"
-const TIMELINE_SCRUB_KEYS = new Set(["ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown"])
 
 function usePlaybackClock(layers: GeneratedLayer[]) {
   const [playing, setPlaying] = useState(false)
@@ -1053,7 +1051,7 @@ function AppSidebar({
           className="brand-mark app-no-drag"
           onClick={() => collapsed ? onToggle() : onNavigate("generate")}
           aria-label={collapsed ? "Déplier la barre latérale" : "Ouvrir Generate"}
-          title={collapsed ? "Déplier la barre latérale (⌘B)" : "Stem Slicer"}
+          title={collapsed ? "Déplier la barre latérale" : "Stem Slicer"}
         >
           <AudioLines aria-hidden="true" />
         </button>
@@ -1068,7 +1066,7 @@ function AppSidebar({
           className="sidebar-collapse app-no-drag"
           onClick={onToggle}
           aria-label={collapsed ? "Déplier la barre latérale" : "Replier la barre latérale"}
-          title={collapsed ? "Déplier (⌘B)" : "Replier (⌘B)"}
+          title={collapsed ? "Déplier" : "Replier"}
         >
           <ChevronLeft />
         </Button>
@@ -1091,9 +1089,6 @@ function AppSidebar({
             >
               <Icon aria-hidden="true" />
               <span className="nav-label">{item.label}</span>
-              {item.shortcut ? (
-                <kbd>{item.shortcut}</kbd>
-              ) : null}
               {item.badge ? <Badge variant="warning" className="nav-beta">{item.badge}</Badge> : null}
             </button>
           )
@@ -1262,14 +1257,8 @@ function LayerCard({
               max="1000"
               value={Math.round(visibleProgress * 1000)}
               aria-label={`Position de lecture de ${layer.role}`}
+              tabIndex={-1}
               onChange={(event) => onSeek(Number(event.target.value) / 1000)}
-              onKeyDown={(event) => {
-                if (TIMELINE_SCRUB_KEYS.has(event.key)) onScrubStart()
-              }}
-              onKeyUp={(event) => {
-                if (TIMELINE_SCRUB_KEYS.has(event.key)) void onScrubEnd()
-              }}
-              onBlur={() => void onScrubEnd()}
             />
             <span className="wave-time tabular" aria-hidden="true">
               {(visibleProgress * layer.duration).toFixed(1)} / {layer.duration.toFixed(1)} s
@@ -1899,18 +1888,6 @@ function StemSlicerView() {
     setOutputFolder(result.paths[0])
   }
 
-  const moveToken = (token: string, direction: -1 | 1) => {
-    setNameTokens((current) => {
-      const from = current.indexOf(token)
-      const to = Math.max(0, Math.min(current.length - 1, from + direction))
-      if (from === to) return current
-      const next = [...current]
-      next.splice(from, 1)
-      next.splice(to, 0, token)
-      return next
-    })
-  }
-
   const dropToken = (target: string) => {
     if (!draggedToken || draggedToken === target) return
     setNameTokens((current) => {
@@ -2024,7 +2001,7 @@ function StemSlicerView() {
                 <SegmentedChoice label="Notation" value={keyNotation} options={["Sharps #", "Flats ♭"]} onChange={setKeyNotation} />
               </div>
               <div className="unified-naming-block">
-                <div className="unified-field-label"><span>Output name structure</span><small>Drag or use ← → to reorder</small></div>
+                <div className="unified-field-label"><span>Output name structure</span><small>Drag to reorder</small></div>
                 <div className="naming-token-list">
                   {nameTokens.map((token, index) => (
                     <button
@@ -2036,11 +2013,7 @@ function StemSlicerView() {
                       onDragEnd={() => setDraggedToken(null)}
                       onDragOver={(event) => event.preventDefault()}
                       onDrop={() => dropToken(token)}
-                      onKeyDown={(event) => {
-                        if (event.key === "ArrowLeft") { event.preventDefault(); moveToken(token, -1) }
-                        if (event.key === "ArrowRight") { event.preventDefault(); moveToken(token, 1) }
-                      }}
-                      aria-label={`${token}, position ${index + 1} of ${nameTokens.length}. Use left and right arrows to reorder.`}
+                      aria-label={`${token}, position ${index + 1} of ${nameTokens.length}.`}
                     >
                       <span aria-hidden="true">⠿</span>{token}
                     </button>
@@ -2138,7 +2111,6 @@ function QuickToolsView({
   const [extractKeyEnabled, setExtractKeyEnabled] = useState(false)
   const [extractBpm, setExtractBpm] = useState(120)
   const [extractKey, setExtractKey] = useState(TARGET_KEY_FAMILIES[0])
-  const tabRefs = useRef<Array<HTMLButtonElement | null>>([])
   const extractJob = useAudioJob("quick-extract")
   const scanJob = useAudioJob("quick-scan")
   const convertJob = useAudioJob("quick-convert")
@@ -2222,42 +2194,22 @@ function QuickToolsView({
     }).catch(() => undefined)
   }
 
-  const moveBetweenTools = (currentIndex: number, key: string) => {
-    let nextIndex = currentIndex
-    if (key === "ArrowRight") nextIndex = (currentIndex + 1) % quickTools.length
-    if (key === "ArrowLeft") nextIndex = (currentIndex - 1 + quickTools.length) % quickTools.length
-    if (key === "Home") nextIndex = 0
-    if (key === "End") nextIndex = quickTools.length - 1
-    if (nextIndex === currentIndex) return
-    const nextTool = quickTools[nextIndex]
-    selectTool(nextTool.id)
-    tabRefs.current[nextIndex]?.focus()
-  }
-
   return (
     <div className="page-stack quick-tools-page">
       <PageHeader eyebrow="Workspace / Quick Tools" title="Quick tools" description="Choose one focused operation. Every accepted 1.9B option stays available inside its tool." />
 
       <section className="quick-tools-shell" aria-label="Quick tools workspace">
-        <div className="quick-tool-tabs" role="tablist" aria-label="Choose a quick tool">
-          {quickTools.map(({ id, label, description, icon: Icon }, index) => (
+        <div className="quick-tool-tabs" role="group" aria-label="Choose a quick tool">
+          {quickTools.map(({ id, label, description, icon: Icon }) => (
             <button
               key={id}
-              ref={(element) => { tabRefs.current[index] = element }}
               id={`quick-tool-tab-${id}`}
               type="button"
-              role="tab"
               className="quick-tool-tab"
               data-tool={id}
-              aria-selected={activeTool === id}
+              aria-pressed={activeTool === id}
               aria-controls={`quick-tool-panel-${id}`}
-              tabIndex={activeTool === id ? 0 : -1}
               onClick={() => selectTool(id)}
-              onKeyDown={(event) => {
-                if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return
-                event.preventDefault()
-                moveBetweenTools(index, event.key)
-              }}
             >
               <span className="quick-tab-icon"><Icon aria-hidden="true" /></span>
               <span><strong>{label}</strong><small>{description}</small></span>
@@ -2266,7 +2218,7 @@ function QuickToolsView({
         </div>
 
         {activeTool === "extract" ? (
-          <div id="quick-tool-panel-extract" className="quick-tool-panel extract-panel" role="tabpanel" aria-labelledby="quick-tool-tab-extract">
+          <div id="quick-tool-panel-extract" className="quick-tool-panel extract-panel" role="region" aria-labelledby="quick-tool-tab-extract">
             <header className="quick-panel-heading">
               <div><span className="quick-panel-kicker">One loop · multiple layers</span><h2>Extract layers</h2></div>
               <div className="quick-panel-actions"><span className="quick-panel-status">{extractJob.busy ? `${extractJob.percent}% · ${extractJob.message}` : `${previewLayers.length} layers`}</span><Button variant="outline" size="sm" disabled={previewLayers.length === 0} onClick={() => window.stemSlicer?.startFilesDrag(previewLayers.flatMap((layer) => layer.path ? [layer.path] : []))}><Layers3 /> Drag all</Button></div>
@@ -2322,7 +2274,7 @@ function QuickToolsView({
         ) : null}
 
         {activeTool === "scan" ? (
-          <div id="quick-tool-panel-scan" className="quick-tool-panel scan-panel" role="tabpanel" aria-labelledby="quick-tool-tab-scan">
+          <div id="quick-tool-panel-scan" className="quick-tool-panel scan-panel" role="region" aria-labelledby="quick-tool-tab-scan">
             <header className="quick-panel-heading">
               <div><span className="quick-panel-kicker">One loop · full musical readout</span><h2>Scan BPM and key</h2></div>
               <span className="quick-panel-status">{scanJob.busy ? `${scanJob.percent}% · ${scanJob.message}` : scanJob.error || (scanResult ? "Analysis complete" : scanFile ? "File selected" : "Ready to scan")}</span>
@@ -2373,7 +2325,7 @@ function QuickToolsView({
         ) : null}
 
         {activeTool === "convert" ? (
-          <div id="quick-tool-panel-convert" className="quick-tool-panel convert-panel" role="tabpanel" aria-labelledby="quick-tool-tab-convert">
+          <div id="quick-tool-panel-convert" className="quick-tool-panel convert-panel" role="region" aria-labelledby="quick-tool-tab-convert">
             <header className="quick-panel-heading">
               <div><span className="quick-panel-kicker">One loop · new BPM and key</span><h2>Convert audio</h2></div>
               <span className="quick-panel-status">{convertJob.busy ? `${convertJob.percent}% · ${convertJob.message}` : convertJob.error || (convertResult ? "1 conversion" : "0 conversions")}</span>
@@ -2569,14 +2521,8 @@ function GlobalPlayer({ layers, playback, contextLabel, syncAvailable }: { layer
               disabled={!timelineLayer}
               value={Math.round((timelineLayer ? playback.progress : 0) * 1000)}
               aria-label={`Position de lecture ${contextLabel}`}
+              tabIndex={-1}
               onChange={(event) => timelineLayer && playback.previewScrub(timelineLayer.id, Number(event.target.value) / 1000)}
-              onKeyDown={(event) => {
-                if (timelineLayer && TIMELINE_SCRUB_KEYS.has(event.key)) playback.beginScrub(timelineLayer.id)
-              }}
-              onKeyUp={(event) => {
-                if (TIMELINE_SCRUB_KEYS.has(event.key)) void playback.endScrub()
-              }}
-              onBlur={() => void playback.endScrub()}
             />
           </div>
           <span className="tabular">{((timelineLayer ? playback.progress : 0) * duration).toFixed(1)} / {duration.toFixed(1)} s</span>
@@ -2647,21 +2593,6 @@ export function App() {
     resetPlayback()
     setActiveView(view)
   }, [activeView, resetPlayback])
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "b") {
-        event.preventDefault()
-        setSidebarCollapsed((value) => !value)
-        return
-      }
-      if (event.metaKey || event.ctrlKey || event.altKey || event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement || event.target instanceof HTMLButtonElement || event.target instanceof HTMLTextAreaElement) return
-      const item = NAVIGATION.find((entry) => entry.shortcut?.toLowerCase() === event.key.toLowerCase())
-      if (item) navigateToView(item.id)
-    }
-    window.addEventListener("keydown", onKeyDown)
-    return () => window.removeEventListener("keydown", onKeyDown)
-  }, [navigateToView])
 
   const reopenHistory = (entry: HistoryEntry) => {
     playback.reset()
