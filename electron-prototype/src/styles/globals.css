@@ -565,6 +565,11 @@ main.generate-main {
   overflow: hidden;
 }
 
+main.generate-main > :not([hidden]) {
+  min-block-size: 0;
+  block-size: 100%;
+}
+
 main:focus {
   outline: none;
 }
