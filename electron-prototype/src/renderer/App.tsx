@@ -2353,6 +2353,7 @@ function CloudView() {
 }
 
 function GlobalPlayer({ layers, playback, contextLabel, syncAvailable }: { layers: GeneratedLayer[]; playback: PlaybackClock; contextLabel: string; syncAvailable: boolean }) {
+  const timelineScrubberRef = useRef<HTMLInputElement>(null)
   const soloLayer = layers.find((layer) => layer.id === playback.soloId)
   const audibleMixLayers = layers.filter((layer) => !playback.mutedIds.has(layer.id))
   const activeLayers = playback.playing
@@ -2382,7 +2383,7 @@ function GlobalPlayer({ layers, playback, contextLabel, syncAvailable }: { layer
       : layers.length > 0
         ? "Choose a card or start synchronized play"
         : "No audio layers"
-  const seekTimelineFromPointer = (event: React.PointerEvent<HTMLInputElement>) => {
+  const seekTimelineFromPointer = (event: React.PointerEvent<HTMLDivElement>) => {
     if (!timelineLayer) return
     const bounds = event.currentTarget.getBoundingClientRect()
     if (bounds.width <= 0) return
@@ -2409,9 +2410,26 @@ function GlobalPlayer({ layers, playback, contextLabel, syncAvailable }: { layer
           <button type="button" className={cn("player-key player-loop-key", playback.loopEnabled && "is-active")} disabled={!layers.some((layer) => layer.path)} onClick={playback.toggleLoopMode} aria-pressed={playback.loopEnabled} aria-label={playback.loopEnabled ? "Disable loop playback" : "Enable loop playback"}><Repeat2 aria-hidden="true" /></button>
         </div>
         <div className="player-timeline">
-          <div className="global-waveform-reader">
+          <div
+            className={cn("global-waveform-reader", !timelineLayer && "is-disabled")}
+            onPointerDown={(event) => {
+              if (!timelineLayer || event.button !== 0) return
+              timelineScrubberRef.current?.focus({ preventScroll: true })
+              event.currentTarget.setPointerCapture(event.pointerId)
+              seekTimelineFromPointer(event)
+            }}
+            onPointerMove={(event) => {
+              if (event.currentTarget.hasPointerCapture(event.pointerId)) seekTimelineFromPointer(event)
+            }}
+            onPointerUp={(event) => {
+              if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
+              seekTimelineFromPointer(event)
+              event.currentTarget.releasePointerCapture(event.pointerId)
+            }}
+          >
             <Waveform progress={timelineLayer ? playback.progress : 0} compact label={`${contextLabel} waveform`} />
             <input
+              ref={timelineScrubberRef}
               className="global-waveform-scrubber"
               type="range"
               min="0"
@@ -2420,18 +2438,6 @@ function GlobalPlayer({ layers, playback, contextLabel, syncAvailable }: { layer
               value={Math.round((timelineLayer ? playback.progress : 0) * 1000)}
               aria-label={`Position de lecture ${contextLabel}`}
               onChange={(event) => timelineLayer && playback.seekLayer(timelineLayer.id, Number(event.target.value) / 1000)}
-              onPointerDown={(event) => {
-                if (event.button !== 0) return
-                event.currentTarget.setPointerCapture(event.pointerId)
-                seekTimelineFromPointer(event)
-              }}
-              onPointerMove={(event) => {
-                if (event.currentTarget.hasPointerCapture(event.pointerId)) seekTimelineFromPointer(event)
-              }}
-              onPointerUp={(event) => {
-                seekTimelineFromPointer(event)
-                if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
-              }}
             />
           </div>
           <span className="tabular">{((timelineLayer ? playback.progress : 0) * duration).toFixed(1)} / {duration.toFixed(1)} s</span>

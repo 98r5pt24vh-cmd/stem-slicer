@@ -6857,6 +6857,16 @@ main.quick-tools-main {
   position: relative;
   min-width: 160px;
   flex: 1;
+  cursor: grab;
+  touch-action: none;
+}
+
+.global-waveform-reader:active:not(.is-disabled) {
+  cursor: grabbing;
+}
+
+.global-waveform-reader.is-disabled {
+  cursor: default;
 }
 
 .global-waveform-reader .waveform {
@@ -6871,17 +6881,8 @@ main.quick-tools-main {
   height: 100%;
   appearance: none;
   background: transparent;
-  cursor: grab;
-  touch-action: none;
   opacity: 0;
-}
-
-.global-waveform-scrubber:active {
-  cursor: grabbing;
-}
-
-.global-waveform-scrubber:disabled {
-  cursor: default;
+  pointer-events: none;
 }
 
 .global-waveform-scrubber::-webkit-slider-thumb {
