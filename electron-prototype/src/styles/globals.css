@@ -1712,12 +1712,25 @@ main:focus {
   margin-block: 3px 4px;
 }
 
-.layer-metadata span {
+.layer-metadata span,
+.layer-metadata .layer-alt-key {
   display: inline-flex;
   align-items: center;
   gap: 3px;
   color: #adb5a6;
   font-size: 8px;
+}
+
+.layer-metadata .layer-alt-key {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+}
+
+.layer-metadata .layer-alt-key:disabled {
+  cursor: wait;
+  opacity: 0.55;
 }
 
 .layer-metadata svg {
@@ -6229,6 +6242,135 @@ main.quick-tools-main {
 .quick-result-actions {
   flex: 0 0 auto;
   gap: 7px;
+}
+
+.quick-artifact-grid {
+  display: grid;
+  min-width: 0;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-content: start;
+  gap: 9px;
+}
+
+.audio-artifact-card {
+  display: grid;
+  min-width: 0;
+  min-height: 152px;
+  grid-template-rows: auto minmax(44px, 1fr) auto;
+  gap: 8px;
+  overflow: hidden;
+  border: 1px solid rgb(var(--panel-rgb, 115 189 0) / 0.2);
+  border-radius: 12px;
+  background:
+    linear-gradient(145deg, rgb(255 255 255 / 0.055), transparent 40%),
+    rgb(8 12 9 / 0.94);
+  padding: 9px;
+  box-shadow: 0 1px 0 rgb(255 255 255 / 0.05) inset, 0 10px 24px rgb(0 0 0 / 0.2);
+}
+
+.audio-artifact-card > audio {
+  display: none;
+}
+
+.audio-artifact-card > header,
+.audio-artifact-card > footer,
+.artifact-wave-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.audio-artifact-card > header {
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.audio-artifact-card > header > div {
+  min-width: 0;
+}
+
+.audio-artifact-card > header strong,
+.audio-artifact-card > header small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audio-artifact-card > header strong {
+  color: var(--foreground);
+  font-size: 10px;
+}
+
+.audio-artifact-card > header small,
+.audio-artifact-card > header > span {
+  color: var(--muted-foreground);
+  font-size: 8px;
+}
+
+.artifact-wave-row {
+  gap: 8px;
+  border-radius: 9px;
+  background: rgb(0 0 0 / 0.22);
+  padding: 6px;
+}
+
+.artifact-wave-row > button {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  place-items: center;
+  border: 1px solid rgb(var(--panel-rgb, 115 189 0) / 0.28);
+  border-radius: 9px;
+  background: linear-gradient(145deg, #272d25, #0b0e0a 74%);
+  color: var(--panel-accent, var(--signal-green));
+  box-shadow: 0 3px 0 #050705, 0 1px 0 rgb(255 255 255 / 0.08) inset;
+}
+
+.artifact-wave-row > button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.artifact-wave-row .waveform {
+  min-width: 0;
+  flex: 1;
+}
+
+.audio-artifact-card > footer {
+  gap: 5px;
+}
+
+.audio-artifact-card > footer button,
+.audio-artifact-card > footer span {
+  display: inline-flex;
+  min-width: 0;
+  min-height: 26px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  flex: 1;
+  border: 1px solid rgb(255 255 255 / 0.075);
+  border-radius: 7px;
+  background: rgb(255 255 255 / 0.025);
+  color: var(--muted-foreground);
+  padding-inline: 6px;
+  font-size: 7px;
+  white-space: nowrap;
+}
+
+.audio-artifact-card > footer button svg {
+  width: 11px;
+  height: 11px;
+}
+
+.quick-tool-panel.convert-panel .quick-convert-result > .audio-artifact-card {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  grid-column: 1 / -1;
 }
 
 @media (hover: hover) {

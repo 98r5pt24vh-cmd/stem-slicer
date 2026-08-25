@@ -1,11 +1,14 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron"
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, net, protocol, shell } from "electron"
 import type { IpcMainInvokeEvent } from "electron"
 import path from "node:path"
 import { homedir } from "node:os"
+import { existsSync } from "node:fs"
+import { pathToFileURL } from "node:url"
 
+import { AudioEngineService } from "./main/audio-engine"
 import { readLibraryOverview } from "./main/library-cache"
 import { migrationModules } from "./main/migration-modules"
-import type { AudioSelection } from "./shared/contracts"
+import type { AudioJobKind, AudioJobRequest, AudioSelection } from "./shared/contracts"
 
 const acceptedCachePath = path.join(
   homedir(),
@@ -24,6 +27,14 @@ const prototypeCachePath = path.join(
 
 app.setPath("userData", path.join(prototypeCachePath, "electron-user-data"))
 app.setName("Stem Slicer Electron Prototype")
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: "stem-media",
+    privileges: { secure: true, standard: true, supportFetchAPI: true, stream: true },
+  },
+])
+
+const audioEngine = new AudioEngineService(app.getAppPath(), prototypeCachePath)
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
@@ -68,6 +79,15 @@ function registerIpc(): void {
     readLibraryOverview(acceptedCachePath),
   )
   ipcMain.handle("migration:get-modules", () => migrationModules)
+  ipcMain.handle("engine:get-status", () => audioEngine.status())
+  ipcMain.handle(
+    "audio-job:start",
+    (event: IpcMainInvokeEvent, kind: AudioJobKind, request: AudioJobRequest) =>
+      audioEngine.startJob(kind, request, event.sender),
+  )
+  ipcMain.handle("audio-job:cancel", (_event: IpcMainInvokeEvent, jobId: unknown) => {
+    if (typeof jobId === "string") audioEngine.cancelJob(jobId)
+  })
   ipcMain.handle("dialog:pick-library-folder", async (): Promise<AudioSelection> => {
     const result = await dialog.showOpenDialog({
       title: "Choisir une bibliothèque de layers",
@@ -92,9 +112,36 @@ function registerIpc(): void {
     if (typeof targetPath !== "string" || targetPath.length === 0) return
     shell.showItemInFolder(targetPath)
   })
+  ipcMain.on("drag:start", (event, targetPath: unknown) => {
+    if (typeof targetPath !== "string" || !existsSync(targetPath)) return
+    const iconPath = path.join(audioEngine.status().sourceRoot, "assets", "app-icon.png")
+    event.sender.startDrag({
+      file: targetPath,
+      icon: existsSync(iconPath) ? nativeImage.createFromPath(iconPath) : nativeImage.createEmpty(),
+    })
+  })
+  ipcMain.on("drag:start-many", (event, targetPaths: unknown) => {
+    if (!Array.isArray(targetPaths)) return
+    const files = targetPaths.filter((item): item is string => typeof item === "string" && existsSync(item))
+    if (files.length === 0) return
+    const iconPath = path.join(audioEngine.status().sourceRoot, "assets", "app-icon.png")
+    event.sender.startDrag({
+      file: files[0],
+      files,
+      icon: existsSync(iconPath) ? nativeImage.createFromPath(iconPath) : nativeImage.createEmpty(),
+    })
+  })
 }
 
 app.whenReady().then(() => {
+  protocol.handle("stem-media", (request) => {
+    const url = new URL(request.url)
+    const targetPath = decodeURIComponent(url.pathname.replace(/^\//, ""))
+    if (!path.isAbsolute(targetPath) || !existsSync(targetPath)) {
+      return new Response("Media file unavailable.", { status: 404 })
+    }
+    return net.fetch(pathToFileURL(targetPath).toString())
+  })
   registerIpc()
   createWindow()
 
@@ -106,3 +153,5 @@ app.whenReady().then(() => {
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit()
 })
+
+app.on("before-quit", () => audioEngine.shutdown())

@@ -4,7 +4,7 @@ const reactRefresh = require("eslint-plugin-react-refresh")
 const tseslint = require("typescript-eslint")
 
 module.exports = tseslint.config(
-  { ignores: [".vite", "node_modules", "coverage", "artifacts", "eslint.config.js"] },
+  { ignores: [".runtime", ".vite", "node_modules", "coverage", "artifacts", "eslint.config.js"] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
