@@ -149,6 +149,7 @@ export interface AudioArtifact {
   identity?: string
   sourceKeyRank?: 1 | 2
   octave?: -1 | 0 | 1
+  locked?: boolean
 }
 
 export interface QuickScanResult {
@@ -258,6 +259,7 @@ export interface StemSlicerDesktopApi {
   onAudioJobEvent: (listener: (event: AudioJobEvent) => void) => () => void
   pathForFile: (file: File) => string
   revealPath: (path: string) => Promise<void>
+  trashPath: (path: string) => Promise<void>
   startFileDrag: (path: string) => void
   startFilesDrag: (paths: string[]) => void
   mediaUrl: (path: string) => string

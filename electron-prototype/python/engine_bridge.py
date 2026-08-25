@@ -793,6 +793,10 @@ def generation_artifacts(rendered, request, midi_by_identity: dict[str, str] | N
                 "identity": selection.candidate.identity,
                 "sourceKeyRank": selection.source_key_rank,
                 "octave": int(selection.manual_pitch_semitones // 12),
+                "locked": (
+                    request.plan.request.locked_identities_by_slot[selection.slot_index]
+                    == selection.candidate.identity
+                ),
             }
         )
         midi_path = midi_paths.get(selection.candidate.identity)

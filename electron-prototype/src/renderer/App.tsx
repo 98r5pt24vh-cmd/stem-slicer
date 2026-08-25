@@ -14,13 +14,14 @@ import {
   Gauge,
   History,
   Layers3,
-  ListFilter,
+  Lock,
   Music2,
   Pause,
   Play,
   Plus,
   Radio,
   Repeat2,
+  RotateCcw,
   ScanLine,
   Settings2,
   SkipBack,
@@ -28,6 +29,8 @@ import {
   SlidersHorizontal,
   Sparkles,
   Square,
+  Trash2,
+  Unlock,
   WandSparkles,
   Wrench,
   X,
@@ -85,6 +88,7 @@ interface GeneratedLayer {
   sourcePath?: string
   identity?: string
   sourceKeyRank?: 1 | 2
+  locked?: boolean
   bars: number[]
 }
 
@@ -95,6 +99,8 @@ interface HistoryEntry {
   recipe: string
   createdAt: string
   layerCount: number
+  generation: GenerateResult
+  layers: GeneratedLayer[]
 }
 
 const NAVIGATION: NavItem[] = [
@@ -229,6 +235,21 @@ const FALLBACK_LIBRARY: LibraryOverview = {
   roots: [],
   categories: [],
   error: "Le catalogue sera lu au lancement dans Electron.",
+}
+
+const HISTORY_STORAGE_KEY = "stem-slicer-electron.generate-history.v1"
+
+function loadGenerateHistory(): HistoryEntry[] {
+  try {
+    const stored = window.localStorage.getItem(HISTORY_STORAGE_KEY)
+    if (!stored) return []
+    const parsed = JSON.parse(stored)
+    return Array.isArray(parsed)
+      ? parsed.filter((item) => item && typeof item === "object" && item.generation?.masterPath && Array.isArray(item.layers))
+      : []
+  } catch {
+    return []
+  }
 }
 
 function usePlaybackClock(layers: GeneratedLayer[]) {
@@ -677,6 +698,10 @@ function LayerCard({
   onSeek,
   onChange,
   onToggleAlternateKey,
+  onToggleLock,
+  onRemove,
+  categoryOptions,
+  canRemove,
   updating = false,
 }: {
   layer: GeneratedLayer
@@ -687,8 +712,18 @@ function LayerCard({
   onSeek: (progress: number) => void
   onChange: (layer: GeneratedLayer) => void
   onToggleAlternateKey: () => void
+  onToggleLock: () => void
+  onRemove: () => void
+  categoryOptions: string[]
+  canRemove: boolean
   updating?: boolean
 }) {
+  const beginDrag = (event: React.DragEvent, path: string | undefined) => {
+    if (!path) return
+    event.preventDefault()
+    window.stemSlicer?.startFileDrag(path)
+  }
+
   return (
     <Card className={cn("layer-card", "layer-tone-spectral", isAudible && "is-audible")} aria-label={`${layer.role}, ${layer.category}`}>
       <CardHeader>
@@ -701,7 +736,19 @@ function LayerCard({
             </CardDescription>
           </div>
         </div>
-        <Badge variant="secondary">{layer.category}</Badge>
+        <div className="layer-card-actions">
+          <select
+            className="layer-category-select"
+            aria-label={`Catégorie de ${layer.role}`}
+            value={layer.category}
+            disabled={updating}
+            onChange={(event) => onChange({ ...layer, category: event.target.value, locked: false })}
+          >
+            {Array.from(new Set([layer.category, ...categoryOptions])).map((category) => <option key={category} value={category}>{category}</option>)}
+          </select>
+          <button type="button" className={cn("layer-mini-action", layer.locked && "is-active")} disabled={!layer.identity || updating} aria-pressed={Boolean(layer.locked)} aria-label={`${layer.locked ? "Libérer" : "Garder"} ${layer.role} pour la prochaine génération`} onClick={onToggleLock}>{layer.locked ? <Lock aria-hidden="true" /> : <Unlock aria-hidden="true" />}</button>
+          <button type="button" className="layer-mini-action" disabled={!canRemove || updating} aria-label={`Supprimer la card ${layer.role}`} onClick={onRemove}><X aria-hidden="true" /></button>
+        </div>
       </CardHeader>
       <CardContent>
         <div className="layer-transport">
@@ -780,13 +827,21 @@ function LayerCard({
             aria-label={`Exporter ${layer.role}`}
             title={layer.path ? "Drag audio or click to reveal it" : "Generate this layer before exporting it"}
             onClick={() => layer.path && void window.stemSlicer?.revealPath(layer.path)}
-            onDragStart={(event) => {
-              if (!layer.path) return
-              event.preventDefault()
-              window.stemSlicer?.startFileDrag(layer.path)
-            }}
+            onDragStart={(event) => beginDrag(event, layer.path)}
           >
-            <Layers3 /> Export
+            <AudioLines /> Audio
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={!layer.midiPath}
+            draggable={Boolean(layer.midiPath)}
+            aria-label={`Exporter le MIDI de ${layer.role}`}
+            title={layer.midiPath ? "Drag MIDI or click to reveal it" : "MIDI unavailable"}
+            onClick={() => layer.midiPath && void window.stemSlicer?.revealPath(layer.midiPath)}
+            onDragStart={(event) => beginDrag(event, layer.midiPath)}
+          >
+            <Music2 /> MIDI
           </Button>
         </div>
       </CardContent>
@@ -898,7 +953,10 @@ function GenerateView({
   library,
   layers,
   setLayers,
+  currentGenerationResult,
+  setCurrentGenerationResult,
   onAddHistory,
+  onUpdateHistory,
   onLibraryRefresh,
   playback,
   soloId,
@@ -907,7 +965,10 @@ function GenerateView({
   library: LibraryOverview
   layers: GeneratedLayer[]
   setLayers: React.Dispatch<React.SetStateAction<GeneratedLayer[]>>
+  currentGenerationResult: GenerateResult | null
+  setCurrentGenerationResult: React.Dispatch<React.SetStateAction<GenerateResult | null>>
   onAddHistory: (entry: HistoryEntry) => void
+  onUpdateHistory: (generation: GenerateResult, layers: GeneratedLayer[]) => void
   onLibraryRefresh: () => Promise<void>
   playback: PlaybackClock
   soloId: string | null
@@ -918,12 +979,15 @@ function GenerateView({
   const [recipe, setRecipe] = useState("Balanced")
   const [status, setStatus] = useState("Local Generate engine ready")
   const [selectionMessage, setSelectionMessage] = useState("")
-  const [currentGenerationResult, setCurrentGenerationResult] = useState<GenerateResult | null>(null)
+  const [currentSeed, setCurrentSeed] = useState<number | null>(null)
+  const [previousSeed, setPreviousSeed] = useState<number | null>(null)
+  const [recipeDirty, setRecipeDirty] = useState(false)
   const [selectedLibraryPaths, setSelectedLibraryPaths] = useState<string[]>([])
   const knownLibraryPathsRef = useRef<Set<string>>(new Set())
   const handledGenerationRef = useRef("")
   const handledUpdateRef = useRef("")
   const handledScanRef = useRef("")
+  const currentGenerationDirectoryRef = useRef("")
   const generateJob = useAudioJob("generate")
   const generateUpdateJob = useAudioJob("generate-update")
   const libraryScanJob = useAudioJob("library-scan")
@@ -939,6 +1003,17 @@ function GenerateView({
     ? selectedRootCategories
     : allLibrariesSelected ? library.categories : []
   const largestCategoryCount = selectedCategories[0]?.count || 1
+
+  useEffect(() => {
+    if (!currentGenerationResult) return
+    if (currentGenerationDirectoryRef.current !== currentGenerationResult.outputDirectory) {
+      currentGenerationDirectoryRef.current = currentGenerationResult.outputDirectory
+      setRecipeDirty(false)
+    }
+    setBpm(Math.round(currentGenerationResult.targetBpm))
+    setKeyName(currentGenerationResult.targetKey)
+    setCurrentSeed(currentGenerationResult.seed)
+  }, [currentGenerationResult])
 
   useEffect(() => {
     const availablePaths = library.roots.map((root) => root.path)
@@ -959,9 +1034,10 @@ function GenerateView({
     if (handledGenerationRef.current === resultIdentity) return
     handledGenerationRef.current = resultIdentity
     setCurrentGenerationResult(generationResult)
+    setRecipeDirty(false)
     playback.stop()
     setSoloId(null)
-    setLayers(generationResult.layers.map((artifact, index) => ({
+    const nextLayers = generationResult.layers.map((artifact, index): GeneratedLayer => ({
       id: `${generationResult.seed}-${index}-${artifact.category ?? "layer"}`,
       role: artifact.category ?? `Layer ${index + 1}`,
       file: artifact.name,
@@ -977,8 +1053,10 @@ function GenerateView({
       identity: artifact.identity,
       sourceKeyRank: artifact.sourceKeyRank ?? 1,
       octave: artifact.octave ?? 0,
+      locked: artifact.locked ?? false,
       bars: artifact.peaks.map((peak) => Math.max(8, Math.round(peak * 100))),
-    })))
+    }))
+    setLayers(nextLayers)
     setStatus(`${generationResult.layers.length} real layers generated`)
     onAddHistory({
       id: crypto.randomUUID(),
@@ -987,8 +1065,10 @@ function GenerateView({
       recipe,
       createdAt: new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit" }).format(new Date()),
       layerCount: generationResult.layers.length,
+      generation: generationResult,
+      layers: nextLayers,
     })
-  }, [generationResult, onAddHistory, playback, recipe, setLayers, setSoloId])
+  }, [generationResult, onAddHistory, playback, recipe, setCurrentGenerationResult, setLayers, setSoloId])
 
   useEffect(() => {
     if (!generationUpdateResult) return
@@ -998,8 +1078,8 @@ function GenerateView({
     setCurrentGenerationResult(generationUpdateResult)
     playback.stop()
     setSoloId(null)
-    setLayers((current) => generationUpdateResult.layers.map((artifact, index) => {
-      const previous = current.find((layer) => layer.identity === artifact.identity) ?? current[index]
+    const nextLayers = generationUpdateResult.layers.map((artifact, index): GeneratedLayer => {
+      const previous = layers.find((layer) => layer.identity === artifact.identity) ?? layers[index]
       return {
         ...previous,
         id: previous?.id ?? `${generationUpdateResult.seed}-${index}-${artifact.category ?? "layer"}`,
@@ -1016,11 +1096,14 @@ function GenerateView({
         sourcePath: artifact.sourcePath,
         identity: artifact.identity,
         sourceKeyRank: artifact.sourceKeyRank ?? 1,
+        locked: previous?.locked ?? artifact.locked ?? false,
         bars: artifact.peaks.map((peak) => Math.max(8, Math.round(peak * 100))),
       }
-    }))
+    })
+    setLayers(nextLayers)
+    onUpdateHistory(generationUpdateResult, nextLayers)
     setStatus("Generated layer and master updated")
-  }, [generationUpdateResult, playback, setLayers, setSoloId])
+  }, [generationUpdateResult, layers, onUpdateHistory, playback, setCurrentGenerationResult, setLayers, setSoloId])
 
   useEffect(() => {
     if (generateUpdateJob.error) setStatus(generateUpdateJob.error)
@@ -1044,7 +1127,7 @@ function GenerateView({
     void libraryScanJob.start({ root, databasePath: library.databasePath }).catch(() => undefined)
   }
 
-  const handleGenerate = () => {
+  const handleGenerate = (seedOverride?: number) => {
     if (generateJob.busy) {
       generateJob.cancel()
       return
@@ -1064,7 +1147,11 @@ function GenerateView({
       return
     }
     playback.stop()
-    const seed = crypto.getRandomValues(new Uint32Array(1))[0]
+    const seed = seedOverride ?? crypto.getRandomValues(new Uint32Array(1))[0]
+    if (currentSeed !== seed) {
+      setPreviousSeed(currentSeed)
+      setCurrentSeed(seed)
+    }
     setStatus("Selecting and rendering real layers…")
     void generateJob.start({
       databasePath: library.databasePath,
@@ -1074,6 +1161,10 @@ function GenerateView({
       targetKey: keyName,
       seed,
       bars: 4,
+      lockedIdentitiesBySlot: layers.map((layer) => layer.locked && layer.identity ? layer.identity : null),
+      excludedIdentities: seedOverride == null
+        ? layers.filter((layer) => !layer.locked && layer.identity).map((layer) => layer.identity as string)
+        : [],
     }).catch(() => undefined)
   }
 
@@ -1090,6 +1181,7 @@ function GenerateView({
     const previous = layers[slotIndex]
     if (!previous) return
     if (next.octave === previous.octave) {
+      if (next.category !== previous.category) setRecipeDirty(true)
       setLayers((current) => current.map((item) => item.id === next.id ? next : item))
       return
     }
@@ -1118,7 +1210,17 @@ function GenerateView({
     }).catch(() => undefined)
   }
 
+  const toggleLayerLock = (slotIndex: number) => {
+    setLayers((current) => current.map((layer, index) => index === slotIndex ? { ...layer, locked: !layer.locked } : layer))
+  }
+
+  const removeLayerCard = (slotIndex: number) => {
+    setRecipeDirty(true)
+    setLayers((current) => current.length <= 1 ? current : current.filter((_, index) => index !== slotIndex))
+  }
+
   const addLayerCard = () => {
+    setRecipeDirty(true)
     setLayers((current) => {
       const layerNumber = current.length + 1
       const waveformTemplate = INITIAL_LAYERS[current.length % INITIAL_LAYERS.length]
@@ -1169,7 +1271,8 @@ function GenerateView({
           <Select id="recipe" label="Recipe" value={recipe} onChange={setRecipe} options={["Balanced", "Melodic", "Minimal", "Dense"]} forceBelow />
           <div className="generate-action">
             <span className="sr-only" aria-live="polite">{generateJob.error || (generateJob.busy ? generateJob.message : status)}</span>
-          <Button className="hardware-button generate-hardware" size="lg" onClick={handleGenerate} disabled={!generateJob.busy && selectedLibraryPaths.length === 0}>
+            <Button variant="outline" className="previous-seed-button" size="sm" disabled={generateJob.busy || previousSeed == null} onClick={() => previousSeed != null && handleGenerate(previousSeed)} title={previousSeed == null ? "No previous seed yet" : `Generate seed ${previousSeed}`}><RotateCcw /> Previous</Button>
+          <Button className="hardware-button generate-hardware" size="lg" onClick={() => handleGenerate()} disabled={!generateJob.busy && selectedLibraryPaths.length === 0}>
               {generateJob.busy ? <X /> : <WandSparkles />}
               {generateJob.busy ? `${generateJob.percent}% · Cancel` : "Generate"}
             </Button>
@@ -1224,12 +1327,12 @@ function GenerateView({
           <Button
             variant="outline"
             size="sm"
-            disabled={!currentGenerationResult?.masterPath}
-            draggable={Boolean(currentGenerationResult?.masterPath)}
-            title={currentGenerationResult?.masterPath ? "Drag the rendered master containing the complete stack" : "Generate a stack first"}
+            disabled={!currentGenerationResult?.masterPath || recipeDirty}
+            draggable={Boolean(currentGenerationResult?.masterPath && !recipeDirty)}
+            title={recipeDirty ? "Generate the edited recipe before dragging its master" : currentGenerationResult?.masterPath ? "Drag the rendered master containing the complete stack" : "Generate a stack first"}
             onClick={() => currentGenerationResult?.outputDirectory && void window.stemSlicer?.revealPath(currentGenerationResult.outputDirectory)}
             onDragStart={(event) => {
-              if (!currentGenerationResult?.masterPath) return
+              if (!currentGenerationResult?.masterPath || recipeDirty) return
               event.preventDefault()
               window.stemSlicer?.startFileDrag(currentGenerationResult.masterPath)
             }}
@@ -1252,6 +1355,10 @@ function GenerateView({
                 }}
                 onChange={(next) => updateGeneratedLayer(index, next)}
                 onToggleAlternateKey={() => toggleAlternateKey(index)}
+                onToggleLock={() => toggleLayerLock(index)}
+                onRemove={() => removeLayerCard(index)}
+                categoryOptions={selectedCategories.map((category) => category.name)}
+                canRemove={layers.length > 1}
                 updating={generateUpdateJob.busy}
               />
             ))}
@@ -1765,10 +1872,30 @@ function QuickToolsView() {
   )
 }
 
-function HistoryView({ history }: { history: HistoryEntry[] }) {
+function HistoryPlayButton({ entry }: { entry: HistoryEntry }) {
+  const audioRef = useRef<HTMLAudioElement>(null)
+  const [playing, setPlaying] = useState(false)
+  const source = window.stemSlicer?.mediaUrl(entry.generation.masterPath) ?? ""
+
+  const toggle = () => {
+    const audio = audioRef.current
+    if (!audio) return
+    if (audio.paused) void audio.play()
+    else audio.pause()
+  }
+
+  return (
+    <>
+      <audio ref={audioRef} src={source} preload="metadata" onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)} />
+      <Button variant="outline" size="sm" onClick={toggle} aria-label={`${playing ? "Pause" : "Play"} ${entry.recipe} generation`}>{playing ? <Pause /> : <Play className="play-glyph" />}</Button>
+    </>
+  )
+}
+
+function HistoryView({ history, onReopen, onTrash }: { history: HistoryEntry[]; onReopen: (entry: HistoryEntry) => void; onTrash: (entry: HistoryEntry) => Promise<void> }) {
   return (
     <div className="page-stack">
-      <PageHeader eyebrow="Workspace / History" title="Generation history" description="Reopen previous combinations, compare recipes and keep the stacks worth exporting." actions={<Button variant="outline"><ListFilter /> Filter</Button>} />
+      <PageHeader eyebrow="Workspace / History" title="Generation history" description="Reopen previous combinations, compare recipes and keep the stacks worth exporting." />
       {history.length ? (
         <div className="history-list">
           {history.map((entry) => (
@@ -1777,7 +1904,13 @@ function HistoryView({ history }: { history: HistoryEntry[] }) {
                 <span className="history-icon"><History /></span>
                 <div><strong>{entry.recipe} combination</strong><small>{entry.createdAt} · {entry.layerCount} layers</small></div>
                 <div className="history-spec"><Badge variant="secondary">{entry.recipe}</Badge><span>{entry.bpm} BPM</span><span>{entry.keyName}</span></div>
-                <Button variant="outline" size="sm">Reopen</Button>
+                <div className="history-actions">
+                  <HistoryPlayButton entry={entry} />
+                  <Button variant="outline" size="sm" onClick={() => void window.stemSlicer?.revealPath(entry.generation.outputDirectory)}><FolderOpen /> Open</Button>
+                  <Button variant="outline" size="sm" draggable onClick={() => void window.stemSlicer?.revealPath(entry.generation.masterPath)} onDragStart={(event) => { event.preventDefault(); window.stemSlicer?.startFileDrag(entry.generation.masterPath) }}><Layers3 /> Drag</Button>
+                  <Button variant="outline" size="sm" onClick={() => onReopen(entry)}><RotateCcw /> Reopen</Button>
+                  <Button variant="ghost" size="icon" className="history-trash" aria-label={`Move ${entry.recipe} generation to Trash`} title="Move generated folder to Trash" onClick={() => void onTrash(entry)}><Trash2 /></Button>
+                </div>
               </CardContent>
             </Card>
           ))}
@@ -1844,11 +1977,22 @@ export function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [library, setLibrary] = useState<LibraryOverview>(FALLBACK_LIBRARY)
   const [layers, setLayers] = useState(INITIAL_LAYERS)
-  const [history, setHistory] = useState<HistoryEntry[]>([])
+  const [history, setHistory] = useState<HistoryEntry[]>(loadGenerateHistory)
+  const [currentGenerationResult, setCurrentGenerationResult] = useState<GenerateResult | null>(null)
   const [soloId, setSoloId] = useState<string | null>(null)
   const playback = usePlaybackClock(layers)
   const mainRef = useRef<HTMLElement>(null)
   const initialViewRef = useRef(true)
+
+  const addHistory = useCallback((entry: HistoryEntry) => {
+    setHistory((items) => [entry, ...items.filter((item) => item.generation.outputDirectory !== entry.generation.outputDirectory)])
+  }, [])
+
+  const updateHistory = useCallback((generation: GenerateResult, updatedLayers: GeneratedLayer[]) => {
+    setHistory((items) => items.map((item) => item.generation.outputDirectory === generation.outputDirectory
+      ? { ...item, generation, layers: updatedLayers }
+      : item))
+  }, [])
 
   const refreshLibrary = useCallback(async () => {
     const overview = await window.stemSlicer?.getLibraryOverview()
@@ -1860,6 +2004,14 @@ export function App() {
     if (!api) return
     void refreshLibrary()
   }, [refreshLibrary])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(history))
+    } catch {
+      // History persistence is best-effort; generated files remain on disk.
+    }
+  }, [history])
 
   useEffect(() => {
     document.title = `${NAVIGATION.find((item) => item.id === activeView)?.label ?? "Stem Slicer"} · Stem Slicer Prototype`
@@ -1885,6 +2037,24 @@ export function App() {
     return () => window.removeEventListener("keydown", onKeyDown)
   }, [])
 
+  const reopenHistory = (entry: HistoryEntry) => {
+    playback.stop()
+    setSoloId(null)
+    setLayers(entry.layers)
+    setCurrentGenerationResult(entry.generation)
+    setActiveView("generate")
+  }
+
+  const trashHistory = async (entry: HistoryEntry) => {
+    await window.stemSlicer?.trashPath(entry.generation.outputDirectory)
+    setHistory((items) => items.filter((item) => item.id !== entry.id))
+    if (currentGenerationResult?.outputDirectory === entry.generation.outputDirectory) {
+      playback.stop()
+      setCurrentGenerationResult(null)
+      setLayers(INITIAL_LAYERS)
+    }
+  }
+
   return (
     <div className="app-frame">
       <a className="skip-link" href="#main-content">Aller au contenu principal</a>
@@ -1895,9 +2065,9 @@ export function App() {
         </div>
         <main id="main-content" tabIndex={-1} ref={mainRef} className={cn(activeView === "generate" && "generate-main", activeView === "quick-tools" && "quick-tools-main", activeView === "stem-slicer" && "stem-slicer-main")}>
           <div hidden={activeView !== "stem-slicer"}><StemSlicerView /></div>
-          <div hidden={activeView !== "generate"}><GenerateView library={library} layers={layers} setLayers={setLayers} onAddHistory={(entry) => setHistory((items) => [entry, ...items])} onLibraryRefresh={refreshLibrary} playback={playback} soloId={soloId} setSoloId={setSoloId} /></div>
+          <div hidden={activeView !== "generate"}><GenerateView library={library} layers={layers} setLayers={setLayers} currentGenerationResult={currentGenerationResult} setCurrentGenerationResult={setCurrentGenerationResult} onAddHistory={addHistory} onUpdateHistory={updateHistory} onLibraryRefresh={refreshLibrary} playback={playback} soloId={soloId} setSoloId={setSoloId} /></div>
           <div hidden={activeView !== "quick-tools"}><QuickToolsView /></div>
-          <div hidden={activeView !== "history"}><HistoryView history={history} /></div>
+          <div hidden={activeView !== "history"}><HistoryView history={history} onReopen={reopenHistory} onTrash={trashHistory} /></div>
           <div hidden={activeView !== "cloud"}><CloudView /></div>
         </main>
         <GlobalPlayer layers={layers} playback={playback} soloId={soloId} setSoloId={setSoloId} />

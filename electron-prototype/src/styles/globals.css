@@ -1402,11 +1402,19 @@ main:focus {
 
 .generate-action {
   display: flex;
+  align-items: center;
+  gap: 5px;
   justify-content: flex-end;
 }
 
 .generate-action button {
   min-width: 132px;
+}
+
+.generate-action .previous-seed-button {
+  min-width: 78px;
+  height: 34px;
+  font-size: 8px;
 }
 
 .transport {
@@ -1565,6 +1573,47 @@ main:focus {
   min-height: 18px;
   padding-inline: 6px;
   font-size: 8px;
+}
+
+.layer-card-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 3px;
+}
+
+.layer-category-select {
+  width: 66px;
+  height: 20px;
+  border: 1px solid rgb(255 255 255 / 0.09);
+  border-radius: 999px;
+  background: rgb(16 19 16 / 0.88);
+  color: #aab1a6;
+  padding: 0 16px 0 6px;
+  font-size: 8px;
+}
+
+.layer-mini-action {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  min-height: 20px;
+  place-items: center;
+  border: 1px solid rgb(255 255 255 / 0.08);
+  border-radius: 6px;
+  background: rgb(10 13 10 / 0.75);
+  color: #7f887d;
+  padding: 0;
+}
+
+.layer-mini-action svg {
+  width: 10px;
+  height: 10px;
+}
+
+.layer-mini-action.is-active {
+  border-color: rgb(225 213 0 / 0.25);
+  color: var(--signal-yellow);
 }
 
 .layer-card.is-audible {
@@ -1746,7 +1795,7 @@ main:focus {
 
 .layer-controls {
   display: grid;
-  grid-template-columns: minmax(66px, 1fr) 58px 58px;
+  grid-template-columns: minmax(62px, 1fr) 52px 52px 52px;
   align-items: end;
   gap: 5px;
 }
@@ -1758,7 +1807,7 @@ main:focus {
 }
 
 .layer-card .layer-controls button {
-  width: 58px;
+  width: 52px;
   min-height: 26px;
   height: 26px;
   padding-inline: 6px;
@@ -2271,6 +2320,23 @@ td strong {
   gap: 14px;
   color: #9da695;
   font-size: 11px;
+}
+
+.history-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.history-actions button {
+  min-width: 0;
+  padding-inline: 8px;
+}
+
+.history-actions .history-trash {
+  width: 30px;
+  padding: 0;
+  color: #9d6f63;
 }
 
 .cloud-hero {
@@ -6553,7 +6619,8 @@ main.quick-tools-main {
   }
 
   .generate-action button {
-    width: 100%;
+    width: auto;
+    flex: 1;
   }
 
   .metric-grid {

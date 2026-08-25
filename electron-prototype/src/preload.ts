@@ -18,6 +18,7 @@ const api: StemSlicerDesktopApi = {
   },
   pathForFile: (file) => webUtils.getPathForFile(file),
   revealPath: (path) => ipcRenderer.invoke("shell:reveal-path", path),
+  trashPath: (path) => ipcRenderer.invoke("shell:trash-path", path),
   startFileDrag: (path) => ipcRenderer.send("drag:start", path),
   startFilesDrag: (paths) => ipcRenderer.send("drag:start-many", paths),
   mediaUrl: (path) => `stem-media://local/${encodeURIComponent(path)}`,

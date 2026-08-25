@@ -2,7 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, nativeImage, net, protocol, shell 
 import type { IpcMainInvokeEvent } from "electron"
 import path from "node:path"
 import { homedir } from "node:os"
-import { existsSync } from "node:fs"
+import { existsSync, statSync } from "node:fs"
 import { pathToFileURL } from "node:url"
 
 import { AudioEngineService } from "./main/audio-engine"
@@ -23,6 +23,12 @@ const prototypeCachePath = path.join(
   "Caches",
   "Stem Slicer",
   "electron-prototype",
+)
+const generatedOutputRoot = path.join(
+  homedir(),
+  "Documents",
+  "Stem Slicer",
+  "Generated Loops",
 )
 
 app.setPath("userData", path.join(prototypeCachePath, "electron-user-data"))
@@ -111,6 +117,15 @@ function registerIpc(): void {
   ipcMain.handle("shell:reveal-path", (_event: IpcMainInvokeEvent, targetPath: unknown) => {
     if (typeof targetPath !== "string" || targetPath.length === 0) return
     shell.showItemInFolder(targetPath)
+  })
+  ipcMain.handle("shell:trash-path", async (_event: IpcMainInvokeEvent, targetPath: unknown) => {
+    if (typeof targetPath !== "string" || targetPath.length === 0 || !existsSync(targetPath)) return
+    const resolvedTarget = path.resolve(targetPath)
+    const relativeTarget = path.relative(generatedOutputRoot, resolvedTarget)
+    if (!relativeTarget || relativeTarget.startsWith("..") || path.isAbsolute(relativeTarget) || path.dirname(resolvedTarget) !== generatedOutputRoot || !statSync(resolvedTarget).isDirectory()) {
+      throw new Error("Only an individual generated output folder can be moved to Trash.")
+    }
+    await shell.trashItem(resolvedTarget)
   })
   ipcMain.on("drag:start", (event, targetPath: unknown) => {
     if (typeof targetPath !== "string" || !existsSync(targetPath)) return
