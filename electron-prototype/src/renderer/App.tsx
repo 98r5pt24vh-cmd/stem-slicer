@@ -475,36 +475,33 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
   }, [commitPlaying, getCurrentProgress])
 
   useEffect(() => {
-    if (!playing) return
     let frame = 0
     const tick = () => {
-      if (scrubbingRef.current) {
-        frame = requestAnimationFrame(tick)
-        return
+      if (playingRef.current) {
+        const engine = engineRef.current
+        const duration = timelineDurationRef.current
+        if (!engine || duration <= 0) {
+          commitPlaying(false)
+        } else {
+          const elapsedPosition = startedOffsetSecondsRef.current + Math.max(0, engine.currentTime - startedAtRef.current)
+          if (!loopEnabledRef.current && elapsedPosition >= duration) {
+            playbackSessionRef.current += 1
+            engine.stop()
+            positionRef.current = 0
+            setProgress(0)
+            commitPlaying(false)
+          } else {
+            const nextProgress = getCurrentProgress()
+            positionRef.current = nextProgress
+            setProgress(nextProgress)
+          }
+        }
       }
-      const engine = engineRef.current
-      const duration = timelineDurationRef.current
-      if (!engine || duration <= 0) {
-        commitPlaying(false)
-        return
-      }
-      const elapsedPosition = startedOffsetSecondsRef.current + Math.max(0, engine.currentTime - startedAtRef.current)
-      if (!loopEnabledRef.current && elapsedPosition >= duration) {
-        playbackSessionRef.current += 1
-        engine.stop()
-        positionRef.current = 0
-        setProgress(0)
-        commitPlaying(false)
-        return
-      }
-      const nextProgress = getCurrentProgress()
-      positionRef.current = nextProgress
-      setProgress(nextProgress)
       frame = requestAnimationFrame(tick)
     }
     frame = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(frame)
-  }, [commitPlaying, getCurrentProgress, playing])
+  }, [commitPlaying, getCurrentProgress])
 
   const toggleMix = useCallback(async () => {
     if (!syncEnabledRef.current) return
@@ -604,6 +601,11 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
   }, [pausePlayback])
 
   const rewind = useCallback(() => {
+    scrubSessionRef.current += 1
+    scrubbingRef.current = false
+    scrubEndingRef.current = false
+    resumeAfterScrubRef.current = false
+    scrubTargetRef.current = null
     playbackSessionRef.current += 1
     engineRef.current?.stop()
     positionRef.current = 0
@@ -646,7 +648,6 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
   }, [commitLastSoloId, commitLoopEnabled, commitMode, commitMutedIds, commitPlaying, commitSyncEnabled])
 
   const beginScrub = useCallback((id: string) => {
-    if (scrubbingRef.current) return
     scrubSessionRef.current += 1
     scrubbingRef.current = true
     scrubEndingRef.current = false
@@ -676,11 +677,12 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
   const endScrub = useCallback(async () => {
     if (!scrubbingRef.current || scrubEndingRef.current) return
     scrubEndingRef.current = true
-    const session = scrubSessionRef.current
     const shouldResume = resumeAfterScrubRef.current
     const target = scrubTargetRef.current
     resumeAfterScrubRef.current = false
     scrubTargetRef.current = null
+    scrubbingRef.current = false
+    scrubEndingRef.current = false
 
     if (target) {
       positionRef.current = target.progress
@@ -688,8 +690,6 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
     }
 
     if (!shouldResume) {
-      scrubbingRef.current = false
-      scrubEndingRef.current = false
       return
     }
 
@@ -697,16 +697,11 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
       ? playableIdsRef.current
       : target && playableIdsRef.current.includes(target.id) ? [target.id] : []
     if (activeIds.length === 0) {
-      scrubbingRef.current = false
-      scrubEndingRef.current = false
       commitPlaying(false)
       return
     }
 
     await startPlayback(activeIds, target?.progress ?? positionRef.current)
-    if (session !== scrubSessionRef.current) return
-    scrubbingRef.current = false
-    scrubEndingRef.current = false
   }, [commitPlaying, startPlayback])
 
   const mutedIdSet = useMemo(() => new Set(mutedIds), [mutedIds])
