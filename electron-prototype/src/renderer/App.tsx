@@ -14,6 +14,7 @@ import {
   Gauge,
   History,
   Layers3,
+  Link2,
   Lock,
   Music2,
   Pause,
@@ -28,7 +29,6 @@ import {
   Sliders,
   SlidersHorizontal,
   Sparkles,
-  Square,
   Trash2,
   Unlock,
   WandSparkles,
@@ -111,19 +111,36 @@ const NAVIGATION: NavItem[] = [
   { id: "cloud", label: "Connected Libraries", icon: Cloud, badge: "WIP" },
 ]
 
-const GENERATE_KEYS = [
-  "C major", "C minor", "C♯ major", "C♯ minor", "D major", "D minor",
-  "E♭ major", "E♭ minor", "E major", "E minor", "F major", "F minor",
-  "F♯ major", "F♯ minor", "G major", "G minor", "A♭ major", "A♭ minor",
-  "A major", "A minor", "B♭ major", "B♭ minor", "B major", "B minor",
-]
-
 const TARGET_KEY_FAMILIES = [
   "C major / A minor", "C♯ major / A♯ minor", "D major / B minor",
   "D♯ major / C minor", "E major / C♯ minor", "F major / D minor",
   "F♯ major / D♯ minor", "G major / E minor", "G♯ major / F minor",
   "A major / F♯ minor", "A♯ major / G minor", "B major / G♯ minor",
 ]
+
+const ENHARMONIC_SHARPS: Record<string, string> = {
+  "D♭": "C♯",
+  "E♭": "D♯",
+  "G♭": "F♯",
+  "A♭": "G♯",
+  "B♭": "A♯",
+}
+
+function normalizeKeyName(value: string): string {
+  const [tonic, mode] = value.trim().split(/\s+/, 2)
+  return `${ENHARMONIC_SHARPS[tonic] ?? tonic} ${mode ?? ""}`.trim()
+}
+
+function keyFamilyForKey(keyName: string): string {
+  const normalizedKey = normalizeKeyName(keyName)
+  return TARGET_KEY_FAMILIES.find((family) => family.split("/").some((member) => normalizeKeyName(member) === normalizedKey))
+    ?? TARGET_KEY_FAMILIES[0]
+}
+
+function keyFromFamily(family: string, previousKey: string): string {
+  const members = family.split("/").map((member) => member.trim())
+  return previousKey.toLowerCase().endsWith(" minor") && members[1] ? members[1] : members[0]
+}
 
 const SHARP_CAMELOT_KEYS: Record<string, string> = {
   "1A": "G♯ minor", "2A": "D♯ minor", "3A": "A♯ minor", "4A": "F minor",
@@ -252,17 +269,51 @@ function loadGenerateHistory(): HistoryEntry[] {
   }
 }
 
+type PlaybackMode = "idle" | "solo" | "mix"
+
 function usePlaybackClock(layers: GeneratedLayer[]) {
   const [playing, setPlaying] = useState(false)
   const [progress, setProgress] = useState(0)
   const [masterVolume, setMasterVolume] = useState(78)
   const [error, setError] = useState("")
+  const [mode, setMode] = useState<PlaybackMode>("idle")
+  const [soloId, setSoloId] = useState<string | null>(null)
+  const [mutedIds, setMutedIds] = useState<string[]>([])
   const audioByIdRef = useRef(new Map<string, HTMLAudioElement>())
-  const targetIdRef = useRef<string | null>(null)
+  const modeRef = useRef<PlaybackMode>("idle")
+  const soloIdRef = useRef<string | null>(null)
+  const mutedIdsRef = useRef(new Set<string>())
   const layerSourcesJson = JSON.stringify(layers.map((layer) => ({ id: layer.id, path: layer.path ?? "" })))
 
   const pauseAll = useCallback(() => {
     for (const audio of audioByIdRef.current.values()) audio.pause()
+  }, [])
+
+  const commitMode = useCallback((nextMode: PlaybackMode, nextSoloId: string | null) => {
+    modeRef.current = nextMode
+    soloIdRef.current = nextSoloId
+    setMode(nextMode)
+    setSoloId(nextSoloId)
+  }, [])
+
+  const commitMutedIds = useCallback((nextMutedIds: Set<string>) => {
+    mutedIdsRef.current = nextMutedIds
+    for (const [id, audio] of audioByIdRef.current) audio.muted = nextMutedIds.has(id)
+    setMutedIds(Array.from(nextMutedIds))
+  }, [])
+
+  const currentAudioProgress = useCallback((audios: HTMLAudioElement[]) => {
+    const positions = audios
+      .filter((audio) => Number.isFinite(audio.duration) && audio.duration > 0)
+      .map((audio) => audio.currentTime / audio.duration)
+    return positions.length > 0 ? Math.max(...positions) : 0
+  }, [])
+
+  const synchronizeAudios = useCallback((audios: HTMLAudioElement[], nextProgress: number) => {
+    const clampedProgress = Math.max(0, Math.min(nextProgress, 1))
+    for (const audio of audios) {
+      if (Number.isFinite(audio.duration) && audio.duration > 0) audio.currentTime = clampedProgress * audio.duration
+    }
   }, [])
 
   useEffect(() => {
@@ -289,9 +340,10 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
     setError("")
     setPlaying(false)
     setProgress(0)
-    targetIdRef.current = null
+    commitMode("idle", null)
+    commitMutedIds(new Set())
     return pauseAll
-  }, [layerSourcesJson, pauseAll])
+  }, [commitMode, commitMutedIds, layerSourcesJson, pauseAll])
 
   useEffect(() => {
     for (const layer of layers) {
@@ -304,9 +356,8 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
     if (!playing) return
     let frame = 0
     const tick = () => {
-      const targetId = targetIdRef.current
-      const active = targetId
-        ? [audioByIdRef.current.get(targetId)].filter((audio): audio is HTMLAudioElement => Boolean(audio))
+      const active = modeRef.current === "solo" && soloIdRef.current
+        ? [audioByIdRef.current.get(soloIdRef.current)].filter((audio): audio is HTMLAudioElement => Boolean(audio))
         : Array.from(audioByIdRef.current.values())
       const audible = active.filter((audio) => !audio.paused && !audio.ended)
       if (active.length > 0) {
@@ -314,7 +365,7 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
         setProgress(Number.isFinite(next) ? next : 0)
       }
       if (active.length > 0 && audible.length === 0) {
-        setProgress(0)
+        if (active.every((audio) => audio.ended)) setProgress(0)
         setPlaying(false)
         return
       }
@@ -324,57 +375,165 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
     return () => cancelAnimationFrame(frame)
   }, [playing])
 
-  const play = useCallback(async (targetId: string | null) => {
-    const active = targetId
-      ? [audioByIdRef.current.get(targetId)].filter((audio): audio is HTMLAudioElement => Boolean(audio))
-      : Array.from(audioByIdRef.current.values())
-    if (active.length === 0) {
-      setError("Generate real audio before starting playback.")
+  const toggleMix = useCallback(async () => {
+    if (modeRef.current === "mix" && playing) {
+      pauseAll()
+      setPlaying(false)
       return
     }
-    pauseAll()
-    targetIdRef.current = targetId
+
+    const startingMix = modeRef.current !== "mix"
+    if (startingMix) {
+      pauseAll()
+      for (const audio of audioByIdRef.current.values()) audio.currentTime = 0
+      setProgress(0)
+      commitMode("mix", null)
+      commitMutedIds(new Set())
+    }
+
+    const active = Array.from(audioByIdRef.current.values())
+    if (active.length === 0) {
+      setError("Generate or extract real audio before starting playback.")
+      return
+    }
+
+    const resumeProgress = startingMix ? 0 : currentAudioProgress(active)
+    synchronizeAudios(active, resumeProgress)
     setError("")
     try {
       await Promise.all(active.map((audio) => audio.play()))
+      const synchronizedProgress = currentAudioProgress(active)
+      synchronizeAudios(active, synchronizedProgress)
+      setProgress(synchronizedProgress)
       setPlaying(true)
     } catch (playError) {
       pauseAll()
       setPlaying(false)
       setError(playError instanceof Error ? playError.message : "Audio playback failed.")
     }
-  }, [pauseAll])
+  }, [commitMode, commitMutedIds, currentAudioProgress, pauseAll, playing, synchronizeAudios])
 
-  const toggle = useCallback(() => {
-    if (playing) {
-      pauseAll()
-      setPlaying(false)
+  const toggleSyncMode = useCallback(() => {
+    pauseAll()
+    for (const audio of audioByIdRef.current.values()) audio.currentTime = 0
+    setProgress(0)
+    setPlaying(false)
+    setError("")
+    if (modeRef.current === "mix") {
+      commitMode("idle", null)
+      commitMutedIds(new Set())
       return
     }
-    void play(targetIdRef.current)
-  }, [pauseAll, play, playing])
+    commitMode("mix", null)
+    commitMutedIds(new Set())
+  }, [commitMode, commitMutedIds, pauseAll])
+
+  const toggleLayer = useCallback(async (id: string) => {
+    const audio = audioByIdRef.current.get(id)
+    if (!audio) {
+      setError("This layer has no playable audio file.")
+      return
+    }
+
+    if (modeRef.current === "mix") {
+      const nextMutedIds = new Set(mutedIdsRef.current)
+      if (nextMutedIds.has(id)) {
+        nextMutedIds.delete(id)
+        commitMutedIds(nextMutedIds)
+        if (playing && audio.paused) {
+          try {
+            await audio.play()
+            setError("")
+          } catch (playError) {
+            nextMutedIds.add(id)
+            commitMutedIds(nextMutedIds)
+            setError(playError instanceof Error ? playError.message : "Audio playback failed.")
+            return
+          }
+        }
+      } else {
+        nextMutedIds.add(id)
+        commitMutedIds(nextMutedIds)
+      }
+      return
+    }
+
+    if (modeRef.current === "solo" && soloIdRef.current === id) {
+      if (playing) {
+        audio.pause()
+        setPlaying(false)
+      } else {
+        setError("")
+        try {
+          await audio.play()
+          setPlaying(true)
+        } catch (playError) {
+          setError(playError instanceof Error ? playError.message : "Audio playback failed.")
+        }
+      }
+      return
+    }
+
+    pauseAll()
+    audio.currentTime = 0
+    setProgress(0)
+    commitMode("solo", id)
+    commitMutedIds(new Set())
+    setError("")
+    try {
+      await audio.play()
+      setPlaying(true)
+    } catch (playError) {
+      setPlaying(false)
+      setError(playError instanceof Error ? playError.message : "Audio playback failed.")
+    }
+  }, [commitMode, commitMutedIds, pauseAll, playing])
 
   const stop = useCallback(() => {
     pauseAll()
     for (const audio of audioByIdRef.current.values()) audio.currentTime = 0
     setProgress(0)
     setPlaying(false)
-  }, [pauseAll])
+    commitMode("idle", null)
+    commitMutedIds(new Set())
+  }, [commitMode, commitMutedIds, pauseAll])
 
-  const seek = useCallback((nextProgress: number, selectedTarget?: string | null) => {
+  const seekLayer = useCallback((id: string, nextProgress: number) => {
     const clampedProgress = Math.max(0, Math.min(nextProgress, 1))
-    if (selectedTarget !== undefined) targetIdRef.current = selectedTarget
-    const targetId = selectedTarget !== undefined ? selectedTarget : targetIdRef.current
-    const active = targetId
-      ? [audioByIdRef.current.get(targetId)].filter((audio): audio is HTMLAudioElement => Boolean(audio))
-      : Array.from(audioByIdRef.current.values())
+    let active: HTMLAudioElement[]
+    if (modeRef.current === "mix") {
+      active = Array.from(audioByIdRef.current.values())
+    } else {
+      if (modeRef.current !== "solo" || soloIdRef.current !== id) {
+        pauseAll()
+        setPlaying(false)
+        commitMode("solo", id)
+        commitMutedIds(new Set())
+      }
+      active = [audioByIdRef.current.get(id)].filter((audio): audio is HTMLAudioElement => Boolean(audio))
+    }
     for (const audio of active) {
       if (Number.isFinite(audio.duration) && audio.duration > 0) audio.currentTime = clampedProgress * audio.duration
     }
     setProgress(clampedProgress)
-  }, [])
+  }, [commitMode, commitMutedIds, pauseAll])
 
-  return { playing, progress, seek, toggle, stop, play, masterVolume, setMasterVolume, error }
+  const mutedIdSet = useMemo(() => new Set(mutedIds), [mutedIds])
+  return {
+    playing,
+    progress,
+    mode,
+    soloId,
+    mutedIds: mutedIdSet,
+    seekLayer,
+    toggleMix,
+    toggleSyncMode,
+    toggleLayer,
+    stop,
+    masterVolume,
+    setMasterVolume,
+    error,
+  }
 }
 
 type PlaybackClock = ReturnType<typeof usePlaybackClock>
@@ -593,6 +752,56 @@ function Select({
   )
 }
 
+function LayerCategorySelect({
+  id,
+  value,
+  options,
+  disabled,
+  onChange,
+}: {
+  id: string
+  value: string
+  options: string[]
+  disabled: boolean
+  onChange: (value: string) => void
+}) {
+  const items = Array.from(new Set([value, ...options]))
+  return (
+    <BaseSelect.Root
+      id={id}
+      items={items.map((option) => ({ label: option, value: option }))}
+      value={value}
+      disabled={disabled}
+      onValueChange={(nextValue) => nextValue && onChange(nextValue)}
+    >
+      <BaseSelect.Trigger className="custom-select-trigger layer-category-trigger" aria-label={`Category: ${value}`}>
+        <BaseSelect.Value />
+        <BaseSelect.Icon><ChevronDown aria-hidden="true" /></BaseSelect.Icon>
+      </BaseSelect.Trigger>
+      <BaseSelect.Portal>
+        <BaseSelect.Positioner
+          className="custom-select-positioner"
+          side="bottom"
+          align="end"
+          sideOffset={5}
+          alignItemWithTrigger={false}
+          collisionAvoidance={{ side: "none", align: "shift", fallbackAxisSide: "none" }}
+        >
+          <BaseSelect.Popup className="custom-select-popup layer-category-popup">
+            <BaseSelect.List className="custom-select-list">
+              {items.map((option) => (
+                <BaseSelect.Item className="custom-select-item" key={option} value={option}>
+                  <BaseSelect.ItemText>{option}</BaseSelect.ItemText>
+                </BaseSelect.Item>
+              ))}
+            </BaseSelect.List>
+          </BaseSelect.Popup>
+        </BaseSelect.Positioner>
+      </BaseSelect.Portal>
+    </BaseSelect.Root>
+  )
+}
+
 function AppSidebar({
   activeView,
   collapsed,
@@ -708,6 +917,8 @@ function LayerCard({
   progress,
   playing,
   isAudible,
+  mixActive,
+  isMuted,
   onPlay,
   onSeek,
   onChange,
@@ -723,6 +934,8 @@ function LayerCard({
   progress: number
   playing: boolean
   isAudible: boolean
+  mixActive: boolean
+  isMuted: boolean
   onPlay: () => void
   onSeek: (progress: number) => void
   onChange: (layer: GeneratedLayer) => void
@@ -735,6 +948,7 @@ function LayerCard({
   variant?: "generate" | "extract"
 }) {
   const isGenerateCard = variant === "generate"
+  const visibleProgress = mixActive || isAudible ? progress : 0
   const beginDrag = (event: React.DragEvent, path: string | undefined) => {
     if (!path) return
     event.preventDefault()
@@ -742,30 +956,29 @@ function LayerCard({
   }
 
   return (
-    <Card className={cn("layer-card", isGenerateCard ? "layer-tone-spectral" : "layer-tone-extract", !isGenerateCard && "is-extract", isAudible && "is-audible")} aria-label={`${layer.role}, ${layer.category}`}>
+    <Card className={cn("layer-card", isGenerateCard ? "layer-tone-spectral" : "layer-tone-extract", !isGenerateCard && "is-extract", isAudible && "is-audible", isMuted && "is-muted")} aria-label={`${layer.category}, ${layer.file}`}>
       <CardHeader>
         <div className="layer-heading">
-          <div className="layer-index">{layer.role.slice(0, 1)}</div>
+          <div className="layer-index">{layer.category.slice(0, 1)}</div>
           <div className="min-w-0">
-            <CardTitle>{layer.role}</CardTitle>
+            {isGenerateCard ? (
+              <LayerCategorySelect
+                id={`layer-category-${layer.id}`}
+                value={layer.category}
+                disabled={updating}
+                options={categoryOptions ?? []}
+                onChange={(category) => onChange({ ...layer, category, locked: false })}
+              />
+            ) : <CardTitle>{layer.category}</CardTitle>}
             <CardDescription className="truncate" title={layer.file}>
               {layer.file}
             </CardDescription>
           </div>
         </div>
         {isGenerateCard ? <div className="layer-card-actions">
-          <select
-            className="layer-category-select"
-            aria-label={`Catégorie de ${layer.role}`}
-            value={layer.category}
-            disabled={updating}
-            onChange={(event) => onChange({ ...layer, category: event.target.value, locked: false })}
-          >
-            {Array.from(new Set([layer.category, ...(categoryOptions ?? [])])).map((category) => <option key={category} value={category}>{category}</option>)}
-          </select>
           <button type="button" className={cn("layer-mini-action", layer.locked && "is-active")} disabled={!layer.identity || updating} aria-pressed={Boolean(layer.locked)} aria-label={`${layer.locked ? "Libérer" : "Garder"} ${layer.role} pour la prochaine génération`} onClick={onToggleLock}>{layer.locked ? <Lock aria-hidden="true" /> : <Unlock aria-hidden="true" />}</button>
           <button type="button" className="layer-mini-action" disabled={!canRemove || updating} aria-label={`Supprimer la card ${layer.role}`} onClick={onRemove}><X aria-hidden="true" /></button>
-        </div> : <span className="layer-static-kind">Extracted layer</span>}
+        </div> : null}
       </CardHeader>
       <CardContent>
         <div className="layer-transport">
@@ -773,13 +986,16 @@ function LayerCard({
             type="button"
             className="card-play-button"
             onClick={onPlay}
-            aria-label={playing && isAudible ? `Mettre ${layer.role} en pause` : `Lire ${layer.role} en solo`}
+            aria-pressed={mixActive ? !isMuted : playing && isAudible}
+            aria-label={mixActive
+              ? isMuted ? `Réactiver ${layer.role} dans le mix` : `Mettre ${layer.role} en pause dans le mix`
+              : playing && isAudible ? `Mettre ${layer.role} en pause` : `Lire ${layer.role} en solo`}
           >
-            {playing && isAudible ? <Pause /> : <Play className="play-glyph" />}
+            {mixActive ? !isMuted ? <Pause /> : <Play className="play-glyph" /> : playing && isAudible ? <Pause /> : <Play className="play-glyph" />}
           </button>
           <div className="waveform-reader">
             <Waveform
-              progress={isAudible ? progress : 0}
+              progress={visibleProgress}
               label={`Forme d’onde de ${layer.role}`}
               bars={layer.bars}
             />
@@ -788,12 +1004,12 @@ function LayerCard({
               type="range"
               min="0"
               max="1000"
-              value={Math.round((isAudible ? progress : 0) * 1000)}
+              value={Math.round(visibleProgress * 1000)}
               aria-label={`Position de lecture de ${layer.role}`}
               onChange={(event) => onSeek(Number(event.target.value) / 1000)}
             />
             <span className="wave-time tabular" aria-hidden="true">
-              {((isAudible ? progress : 0) * layer.duration).toFixed(1)} / {layer.duration.toFixed(1)} s
+              {(visibleProgress * layer.duration).toFixed(1)} / {layer.duration.toFixed(1)} s
             </span>
           </div>
         </div>
@@ -811,8 +1027,8 @@ function LayerCard({
         </div>
 
         <div className="layer-controls">
-          <label>
-            <span>Volume</span>
+          <label className="layer-volume-control">
+            <span className="layer-volume-heading"><span>Volume</span><output className="tabular">{layer.volume}%</output></span>
             <input
               type="range"
               min="0"
@@ -821,10 +1037,9 @@ function LayerCard({
               aria-label={`Volume de ${layer.role}`}
               onChange={(event) => onChange({ ...layer, volume: Number(event.target.value) })}
             />
-            <output className="tabular">{layer.volume}%</output>
           </label>
-          {isGenerateCard ? <label>
-            <span>Octave</span>
+          {isGenerateCard ? <label className="layer-octave-control">
+            <span>OCT</span>
             <select
               aria-label={`Octave de ${layer.role}`}
               value={layer.octave}
@@ -976,8 +1191,6 @@ function GenerateView({
   onUpdateHistory,
   onLibraryRefresh,
   playback,
-  soloId,
-  setSoloId,
 }: {
   library: LibraryOverview
   layers: GeneratedLayer[]
@@ -988,8 +1201,6 @@ function GenerateView({
   onUpdateHistory: (generation: GenerateResult, layers: GeneratedLayer[]) => void
   onLibraryRefresh: () => Promise<void>
   playback: PlaybackClock
-  soloId: string | null
-  setSoloId: React.Dispatch<React.SetStateAction<string | null>>
 }) {
   const [bpm, setBpm] = useState(129)
   const [keyName, setKeyName] = useState("F minor")
@@ -1010,7 +1221,7 @@ function GenerateView({
   const libraryScanJob = useAudioJob("library-scan")
   const generationResult = generateJob.result as GenerateResult | null
   const generationUpdateResult = generateUpdateJob.result as GenerateResult | null
-  const allPlaying = playback.playing && soloId === null
+  const mixActive = playback.mode === "mix"
   const selectedLibrarySet = new Set(selectedLibraryPaths)
   const selectedRoots = library.roots.filter((root) => selectedLibrarySet.has(root.path))
   const selectedLayerCount = selectedRoots.reduce((sum, root) => sum + root.layerCount, 0)
@@ -1053,7 +1264,6 @@ function GenerateView({
     setCurrentGenerationResult(generationResult)
     setRecipeDirty(false)
     playback.stop()
-    setSoloId(null)
     const nextLayers = generationResult.layers.map((artifact, index): GeneratedLayer => ({
       id: `${generationResult.seed}-${index}-${artifact.category ?? "layer"}`,
       role: artifact.category ?? `Layer ${index + 1}`,
@@ -1086,7 +1296,7 @@ function GenerateView({
       generation: generationResult,
       layers: nextLayers,
     })
-  }, [generationResult, onAddHistory, playback, recipe, setCurrentGenerationResult, setLayers, setSoloId])
+  }, [generationResult, onAddHistory, playback, recipe, setCurrentGenerationResult, setLayers])
 
   useEffect(() => {
     if (!generationUpdateResult) return
@@ -1095,7 +1305,6 @@ function GenerateView({
     handledUpdateRef.current = resultIdentity
     setCurrentGenerationResult(generationUpdateResult)
     playback.stop()
-    setSoloId(null)
     const nextLayers = generationUpdateResult.layers.map((artifact, index): GeneratedLayer => {
       const previous = layers.find((layer) => layer.identity === artifact.identity) ?? layers[index]
       return {
@@ -1121,7 +1330,7 @@ function GenerateView({
     setLayers(nextLayers)
     onUpdateHistory(generationUpdateResult, nextLayers)
     setStatus("Generated layer and master updated")
-  }, [generationUpdateResult, layers, onUpdateHistory, playback, setCurrentGenerationResult, setLayers, setSoloId])
+  }, [generationUpdateResult, layers, onUpdateHistory, playback, setCurrentGenerationResult, setLayers])
 
   useEffect(() => {
     if (generateUpdateJob.error) setStatus(generateUpdateJob.error)
@@ -1184,15 +1393,6 @@ function GenerateView({
         ? layers.filter((layer) => !layer.locked && layer.identity).map((layer) => layer.identity as string)
         : [],
     }).catch(() => undefined)
-  }
-
-  const toggleSolo = (id: string) => {
-    if (soloId === id && playback.playing) {
-      playback.toggle()
-      return
-    }
-    setSoloId(id)
-    void playback.play(id)
   }
 
   const updateGeneratedLayer = (slotIndex: number, next: GeneratedLayer) => {
@@ -1285,7 +1485,7 @@ function GenerateView({
               onChange={(event) => setBpm(Number(event.target.value))}
             />
           </label>
-          <Select id="target-key" label="Target key" value={keyName} onChange={setKeyName} options={GENERATE_KEYS} forceBelow />
+          <Select id="target-key" label="Target key" value={keyFamilyForKey(keyName)} onChange={(family) => setKeyName(keyFromFamily(family, keyName))} options={TARGET_KEY_FAMILIES} forceBelow />
           <Select id="recipe" label="Recipe" value={recipe} onChange={setRecipe} options={["Balanced", "Melodic", "Minimal", "Dense"]} forceBelow />
           <div className="generate-action">
             <span className="sr-only" aria-live="polite">{generateJob.error || (generateJob.busy ? generateJob.message : status)}</span>
@@ -1365,12 +1565,11 @@ function GenerateView({
                 layer={layer}
                 progress={playback.progress}
                 playing={playback.playing}
-                isAudible={allPlaying || soloId === layer.id}
-                onPlay={() => toggleSolo(layer.id)}
-                onSeek={(nextProgress) => {
-                  if (!allPlaying && soloId !== layer.id) setSoloId(layer.id)
-                  playback.seek(nextProgress, allPlaying ? null : layer.id)
-                }}
+                mixActive={mixActive}
+                isMuted={playback.mode === "mix" && playback.mutedIds.has(layer.id)}
+                isAudible={playback.mode === "mix" ? !playback.mutedIds.has(layer.id) : playback.soloId === layer.id}
+                onPlay={() => void playback.toggleLayer(layer.id)}
+                onSeek={(nextProgress) => playback.seekLayer(layer.id, nextProgress)}
                 onChange={(next) => updateGeneratedLayer(index, next)}
                 onToggleAlternateKey={() => toggleAlternateKey(index)}
                 onToggleLock={() => toggleLayerLock(index)}
@@ -1655,14 +1854,10 @@ function QuickToolsView({
   previewLayers,
   setPreviewLayers,
   playback,
-  soloId,
-  setSoloId,
 }: {
   previewLayers: GeneratedLayer[]
   setPreviewLayers: React.Dispatch<React.SetStateAction<GeneratedLayer[]>>
   playback: PlaybackClock
-  soloId: string | null
-  setSoloId: React.Dispatch<React.SetStateAction<string | null>>
 }) {
   type QuickToolId = "extract" | "scan" | "convert"
 
@@ -1692,7 +1887,7 @@ function QuickToolsView({
   const extractResult = extractJob.result as QuickExtractResult | null
   const convertResult = convertJob.result as QuickConvertResult | null
   const extractedLayers = extractResult?.layers ?? extractJob.artifacts
-  const allExtractedPlaying = playback.playing && soloId === null
+  const extractedMixActive = playback.mode === "mix"
 
   useEffect(() => {
     setPreviewLayers((current) => {
@@ -1717,15 +1912,6 @@ function QuickToolsView({
       })
     })
   }, [extractedLayers, setPreviewLayers])
-
-  const toggleExtractedLayer = (id: string) => {
-    if (soloId === id && playback.playing) {
-      playback.toggle()
-      return
-    }
-    setSoloId(id)
-    void playback.play(id)
-  }
 
   const pickAudio = async (setPath: (path: string) => void) => {
     const result = await window.stemSlicer?.pickAudioFiles()
@@ -1852,12 +2038,11 @@ function QuickToolsView({
                 variant="extract"
                 progress={playback.progress}
                 playing={playback.playing}
-                isAudible={allExtractedPlaying || soloId === layer.id}
-                onPlay={() => toggleExtractedLayer(layer.id)}
-                onSeek={(nextProgress) => {
-                  if (!allExtractedPlaying && soloId !== layer.id) setSoloId(layer.id)
-                  playback.seek(nextProgress, allExtractedPlaying ? null : layer.id)
-                }}
+                mixActive={extractedMixActive}
+                isMuted={playback.mode === "mix" && playback.mutedIds.has(layer.id)}
+                isAudible={playback.mode === "mix" ? !playback.mutedIds.has(layer.id) : playback.soloId === layer.id}
+                onPlay={() => void playback.toggleLayer(layer.id)}
+                onSeek={(nextProgress) => playback.seekLayer(layer.id, nextProgress)}
                 onChange={(next) => setPreviewLayers((current) => current.map((item, itemIndex) => itemIndex === index ? next : item))}
               />)}</div> : <div className="quick-layer-empty">
                 <span className="quick-empty-icon"><Layers3 aria-hidden="true" /></span>
@@ -2016,32 +2201,24 @@ function CloudView() {
   )
 }
 
-function GlobalPlayer({ layers, playback, soloId, setSoloId, contextLabel }: { layers: GeneratedLayer[]; playback: PlaybackClock; soloId: string | null; setSoloId: React.Dispatch<React.SetStateAction<string | null>>; contextLabel: string }) {
-  const currentLayer = layers.find((layer) => layer.id === soloId) ?? layers[0]
-  const allPlaying = playback.playing && soloId === null
+function GlobalPlayer({ layers, playback, contextLabel }: { layers: GeneratedLayer[]; playback: PlaybackClock; contextLabel: string }) {
+  const currentLayer = layers.find((layer) => layer.id === playback.soloId) ?? layers[0]
+  const mixPlaying = playback.playing && playback.mode === "mix"
+  const syncEnabled = playback.mode === "mix"
   const duration = currentLayer?.duration ?? 0
-
-  const toggleMix = () => {
-    if (soloId !== null) {
-      setSoloId(null)
-      void playback.play(null)
-      return
-    }
-    playback.toggle()
-  }
 
   return (
     <footer className="global-player app-no-drag" aria-label="Global audio preview">
       <div className="player-current">
         <span className="player-art"><AudioLines aria-hidden="true" /></span>
-        <div><strong>{soloId ? currentLayer?.role : contextLabel}</strong><small>{currentLayer ? `${currentLayer.bpm} BPM · ${currentLayer.keyName}` : "No audio layers"}</small></div>
+        <div><strong>{playback.soloId ? currentLayer?.role : contextLabel}</strong><small>{currentLayer ? `${currentLayer.bpm} BPM · ${currentLayer.keyName}` : "No audio layers"}</small></div>
         <Badge variant={playback.error ? "warning" : "secondary"} title={playback.error || undefined}>{playback.error ? "Audio unavailable" : "Local audio"}</Badge>
       </div>
       <div className="player-core">
         <div className="player-controls">
-          <button type="button" className="player-key" onClick={playback.stop} aria-label="Return to start"><SkipBack aria-hidden="true" /></button>
-          <button type="button" className={cn("player-key player-key-primary", playback.playing && "is-active")} onClick={toggleMix} aria-label={allPlaying ? "Pause all layers" : "Play all layers"}>{allPlaying ? <Pause aria-hidden="true" /> : <Play className="play-glyph" aria-hidden="true" />}</button>
-          <button type="button" className="player-key" onClick={playback.stop} aria-label="Stop preview"><Square aria-hidden="true" /></button>
+          <button type="button" className={cn("player-key player-sync-key", syncEnabled && "is-active")} onClick={playback.toggleSyncMode} aria-pressed={syncEnabled} aria-label={syncEnabled ? "Disable synchronized playback" : "Enable synchronized playback"}><Link2 aria-hidden="true" /></button>
+          <button type="button" className={cn("player-key player-key-primary", mixPlaying && "is-active")} onClick={() => void playback.toggleMix()} aria-label={mixPlaying ? "Pause all layers" : "Play all layers"}>{mixPlaying ? <Pause aria-hidden="true" /> : <Play className="play-glyph" aria-hidden="true" />}</button>
+          <button type="button" className="player-key" onClick={playback.stop} aria-label="Stop and return to start"><SkipBack aria-hidden="true" /></button>
         </div>
         <div className="player-timeline"><Waveform progress={playback.progress} compact label={`${contextLabel} waveform`} /><span className="tabular">{(playback.progress * duration).toFixed(1)} / {duration.toFixed(1)} s</span></div>
       </div>
@@ -2058,10 +2235,10 @@ export function App() {
   const [quickPreviewLayers, setQuickPreviewLayers] = useState<GeneratedLayer[]>([])
   const [history, setHistory] = useState<HistoryEntry[]>(loadGenerateHistory)
   const [currentGenerationResult, setCurrentGenerationResult] = useState<GenerateResult | null>(null)
-  const [soloId, setSoloId] = useState<string | null>(null)
   const quickPreviewActive = activeView === "quick-tools" && quickPreviewLayers.length > 0
   const playerLayers = useMemo(() => quickPreviewActive ? quickPreviewLayers : layers, [layers, quickPreviewActive, quickPreviewLayers])
   const playback = usePlaybackClock(playerLayers)
+  const stopPlayback = playback.stop
   const mainRef = useRef<HTMLElement>(null)
   const initialViewRef = useRef(true)
 
@@ -2096,13 +2273,13 @@ export function App() {
 
   useEffect(() => {
     document.title = `${NAVIGATION.find((item) => item.id === activeView)?.label ?? "Stem Slicer"} · Stem Slicer Prototype`
-    setSoloId(null)
+    stopPlayback()
     if (initialViewRef.current) {
       initialViewRef.current = false
       return
     }
     mainRef.current?.focus()
-  }, [activeView])
+  }, [activeView, stopPlayback])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -2121,7 +2298,6 @@ export function App() {
 
   const reopenHistory = (entry: HistoryEntry) => {
     playback.stop()
-    setSoloId(null)
     setLayers(entry.layers)
     setCurrentGenerationResult(entry.generation)
     setActiveView("generate")
@@ -2147,12 +2323,12 @@ export function App() {
         </div>
         <main id="main-content" tabIndex={-1} ref={mainRef} className={cn(activeView === "generate" && "generate-main", activeView === "quick-tools" && "quick-tools-main", activeView === "stem-slicer" && "stem-slicer-main")}>
           <div hidden={activeView !== "stem-slicer"}><StemSlicerView /></div>
-          <div hidden={activeView !== "generate"}><GenerateView library={library} layers={layers} setLayers={setLayers} currentGenerationResult={currentGenerationResult} setCurrentGenerationResult={setCurrentGenerationResult} onAddHistory={addHistory} onUpdateHistory={updateHistory} onLibraryRefresh={refreshLibrary} playback={playback} soloId={soloId} setSoloId={setSoloId} /></div>
-          <div hidden={activeView !== "quick-tools"}><QuickToolsView previewLayers={quickPreviewLayers} setPreviewLayers={setQuickPreviewLayers} playback={playback} soloId={soloId} setSoloId={setSoloId} /></div>
+          <div hidden={activeView !== "generate"}><GenerateView library={library} layers={layers} setLayers={setLayers} currentGenerationResult={currentGenerationResult} setCurrentGenerationResult={setCurrentGenerationResult} onAddHistory={addHistory} onUpdateHistory={updateHistory} onLibraryRefresh={refreshLibrary} playback={playback} /></div>
+          <div hidden={activeView !== "quick-tools"}><QuickToolsView previewLayers={quickPreviewLayers} setPreviewLayers={setQuickPreviewLayers} playback={playback} /></div>
           <div hidden={activeView !== "history"}><HistoryView history={history} onReopen={reopenHistory} onTrash={trashHistory} /></div>
           <div hidden={activeView !== "cloud"}><CloudView /></div>
         </main>
-        <GlobalPlayer layers={playerLayers} playback={playback} soloId={soloId} setSoloId={setSoloId} contextLabel={quickPreviewActive ? "Extracted stack" : "Generated stack"} />
+        <GlobalPlayer layers={playerLayers} playback={playback} contextLabel={quickPreviewActive ? "Extracted stack" : "Generated stack"} />
       </div>
     </div>
   )

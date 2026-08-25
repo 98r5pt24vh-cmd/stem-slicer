@@ -50,6 +50,11 @@ export function Waveform({
       >
         <WaveBars bars={bars} className="text-success" />
       </div>
+      <span
+        className="wave-playhead"
+        style={{ insetInlineStart: `${clampedProgress * 100}%` }}
+        aria-hidden="true"
+      />
     </div>
   )
 }
