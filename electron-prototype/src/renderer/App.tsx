@@ -5,7 +5,6 @@ import {
   Check,
   ChevronDown,
   ChevronLeft,
-  ChevronUp,
   CircleAlert,
   Cloud,
   CloudCog,
@@ -845,22 +844,40 @@ function OperationSwitch({ checked, onChange, label, accent }: { checked: boolea
 }
 
 function StemSlicerView() {
+  type BatchStepId = "source" | "extract" | "key" | "convert"
+
   const [sourceFolder, setSourceFolder] = useState("")
   const [outputFolder, setOutputFolder] = useState("/Users/nrgy/Documents/Stem Slicer/Extracted Layers/Loop Pack Name")
+  const [activeStep, setActiveStep] = useState<BatchStepId>("source")
   const [layerExtraction, setLayerExtraction] = useState(true)
   const [keyAnalysis, setKeyAnalysis] = useState(true)
-  const [keyExpanded, setKeyExpanded] = useState(true)
   const [keyMode, setKeyMode] = useState("Detected")
   const [keyNotation, setKeyNotation] = useState("Sharps #")
   const [keyDestination, setKeyDestination] = useState("Copy to analyzed loops")
   const [nameTokens, setNameTokens] = useState(["Key", "Loop name", "BPM", "Prod name"])
   const [draggedToken, setDraggedToken] = useState<string | null>(null)
   const [conversion, setConversion] = useState(false)
-  const [conversionExpanded, setConversionExpanded] = useState(false)
   const [targetBpmEnabled, setTargetBpmEnabled] = useState(true)
   const [targetKeyEnabled, setTargetKeyEnabled] = useState(true)
   const [targetBpm, setTargetBpm] = useState(120)
   const [targetKey, setTargetKey] = useState(TARGET_KEY_FAMILIES[0])
+  const stepRefs = useRef<Array<HTMLButtonElement | null>>([])
+
+  const batchSteps: Array<{ id: BatchStepId; label: string; description: string; icon: LucideIcon }> = [
+    { id: "source", label: "Source", description: sourceFolder ? basename(sourceFolder) : "Choose a loop folder", icon: FolderOpen },
+    { id: "extract", label: "Extraction", description: layerExtraction ? "Enabled" : "Disabled", icon: Layers3 },
+    { id: "key", label: "Key & naming", description: keyAnalysis ? "Enabled" : "Disabled", icon: ScanLine },
+    { id: "convert", label: "Conversion", description: conversion ? "Enabled" : "Disabled", icon: Repeat2 },
+  ]
+
+  const enabledOperationCount = [layerExtraction, keyAnalysis, conversion].filter(Boolean).length
+  const previewValues: Record<string, string> = {
+    Key: keyNotation === "Sharps #" ? "A♯m" : "B♭m",
+    "Loop name": "CALLMEUR3",
+    BPM: "137",
+    "Prod name": "+NRGY_L1",
+  }
+  const namePreview = `${nameTokens.map((token) => previewValues[token]).join(" ")}.mp3`
 
   const pickSourceFolder = async () => {
     const result = await window.stemSlicer?.pickLibraryFolder()
@@ -896,68 +913,113 @@ function StemSlicerView() {
     setDraggedToken(null)
   }
 
+  const moveBetweenSteps = (currentIndex: number, key: string) => {
+    let nextIndex = currentIndex
+    if (key === "ArrowRight") nextIndex = (currentIndex + 1) % batchSteps.length
+    if (key === "ArrowLeft") nextIndex = (currentIndex - 1 + batchSteps.length) % batchSteps.length
+    if (key === "Home") nextIndex = 0
+    if (key === "End") nextIndex = batchSteps.length - 1
+    if (nextIndex === currentIndex) return
+    const nextStep = batchSteps[nextIndex]
+    setActiveStep(nextStep.id)
+    stepRefs.current[nextIndex]?.focus()
+  }
+
   return (
     <div className="page-stack stem-slicer-page">
       <PageHeader
         eyebrow="Workspace / Stem Slicer"
-        title="Batch extraction"
-        description="The accepted 1.9B batch workflow, reorganized for the Electron prototype."
+        title="Stem Slicer"
+        description="Configure one batch from its source folder through extraction, key naming and conversion."
       />
 
-      <section className="workflow-section workflow-red" aria-labelledby="source-folder-title">
-        <header className="workflow-section-heading">
-          <FolderOpen aria-hidden="true" />
-          <div><h2 id="source-folder-title">Source folder</h2><p>Drop a folder containing loops to configure the batch.</p></div>
-        </header>
-        <div className="source-folder-grid">
-          <button type="button" className="workflow-drop" onClick={pickSourceFolder}>
-            <FolderOpen aria-hidden="true" />
-            <span><strong>Drop a loop folder here</strong><small>or click to browse</small></span>
-            <span className="workflow-browse">Browse folder</span>
-          </button>
-          <div className="source-path-box" title={sourceFolder || undefined}>
-            <FolderOpen aria-hidden="true" />
-            <strong>{sourceFolder || "No folder selected"}</strong>
-          </div>
+      <section className="batch-workflow-shell" aria-label="Stem Slicer batch workflow">
+        <div className="batch-step-tabs" role="tablist" aria-label="Batch configuration steps">
+          {batchSteps.map(({ id, label, description, icon: Icon }, index) => (
+            <button
+              key={id}
+              ref={(element) => { stepRefs.current[index] = element }}
+              id={`batch-step-tab-${id}`}
+              type="button"
+              role="tab"
+              className="batch-step-tab"
+              data-step={id}
+              aria-selected={activeStep === id}
+              aria-controls={`batch-step-panel-${id}`}
+              tabIndex={activeStep === id ? 0 : -1}
+              onClick={() => setActiveStep(id)}
+              onKeyDown={(event) => {
+                if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return
+                event.preventDefault()
+                moveBetweenSteps(index, event.key)
+              }}
+            >
+              <span className="batch-step-number" aria-hidden="true">{index + 1}</span>
+              <span className="batch-step-icon"><Icon aria-hidden="true" /></span>
+              <span><strong>{label}</strong><small>{description}</small></span>
+            </button>
+          ))}
         </div>
-      </section>
 
-      <section className="workflow-section operations-section" aria-labelledby="operations-title">
-        <header className="workflow-section-heading workflow-red">
-          <Settings2 aria-hidden="true" />
-          <div><h2 id="operations-title">Operations</h2><p>Enable only the operations required for this batch.</p></div>
-        </header>
-
-        <div className={cn("operation-card operation-red", !layerExtraction && "is-disabled")}>
-          <div className="operation-header">
-            <OperationSwitch checked={layerExtraction} onChange={setLayerExtraction} label="Enable Layer Extraction" accent="red" />
-            <Layers3 aria-hidden="true" />
-            <div className="operation-copy"><strong>Layer extraction</strong><small>Extract every detected layer from each loop.</small></div>
-            <div className="operation-location">
-              <span>Output location</span>
-              <FolderOpen aria-hidden="true" />
-              <strong title={outputFolder}>{outputFolder}</strong>
-              <Button variant="outline" size="sm" onClick={pickOutputFolder}>Change</Button>
-              <Button variant="outline" size="sm" onClick={() => void window.stemSlicer?.revealPath(outputFolder)}>Open folder</Button>
+        {activeStep === "source" ? (
+          <div id="batch-step-panel-source" className="batch-step-panel batch-source-panel" role="tabpanel" aria-labelledby="batch-step-tab-source">
+            <header className="batch-panel-heading">
+              <div><span className="batch-panel-kicker">Batch input</span><h2>Choose the source folder</h2></div>
+              <span className="batch-panel-status">{sourceFolder ? "Source selected" : "Source required"}</span>
+            </header>
+            <div className="batch-source-layout">
+              <button type="button" className="batch-folder-drop" onClick={pickSourceFolder}>
+                <span className="batch-folder-icon"><FolderOpen aria-hidden="true" /></span>
+                <span><strong>{sourceFolder ? basename(sourceFolder) : "Choose a loop folder"}</strong><small>{sourceFolder || "Drop a folder here or browse your files"}</small></span>
+                <span className="batch-browse-action">Browse folder</span>
+              </button>
+              <div className="batch-plan-card">
+                <div className="batch-plan-heading"><Settings2 aria-hidden="true" /><div><h3>Batch plan</h3><span>Current configuration before processing</span></div></div>
+                <dl>
+                  <div><dt>Source</dt><dd title={sourceFolder || undefined}>{sourceFolder ? basename(sourceFolder) : "Not selected"}</dd></div>
+                  <div><dt>Operations</dt><dd>{enabledOperationCount} enabled</dd></div>
+                  <div><dt>Output</dt><dd>{layerExtraction ? basename(outputFolder) : "Configured per operation"}</dd></div>
+                  <div><dt>Original files</dt><dd>{keyDestination === "Rename originals" ? "Rename enabled" : "Preserved"}</dd></div>
+                </dl>
+              </div>
             </div>
           </div>
-        </div>
+        ) : null}
 
-        <div className={cn("operation-card operation-yellow", !keyAnalysis && "is-disabled")}>
-          <div className="operation-header">
-            <OperationSwitch checked={keyAnalysis} onChange={setKeyAnalysis} label="Enable Key Analysis" accent="yellow" />
-            <ScanLine aria-hidden="true" />
-            <div className="operation-copy"><strong>Key analysis</strong><small>Detect keys and apply the selected output naming structure.</small></div>
-            <button type="button" className="operation-chevron" onClick={() => setKeyExpanded((value) => !value)} aria-expanded={keyExpanded} aria-label={keyExpanded ? "Collapse Key Analysis" : "Expand Key Analysis"}>
-              {keyExpanded ? <ChevronUp aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}
-            </button>
+        {activeStep === "extract" ? (
+          <div id="batch-step-panel-extract" className={cn("batch-step-panel batch-extract-panel", !layerExtraction && "is-disabled")} role="tabpanel" aria-labelledby="batch-step-tab-extract">
+            <header className="batch-panel-heading">
+              <div><span className="batch-panel-kicker">Operation 1</span><h2>Extract layers</h2><p>Extract every detected layer from each loop in the source folder.</p></div>
+              <div className="batch-operation-toggle"><span>{layerExtraction ? "Enabled" : "Disabled"}</span><OperationSwitch checked={layerExtraction} onChange={setLayerExtraction} label="Enable layer extraction" accent="red" /></div>
+            </header>
+            <div className="batch-extract-layout">
+              <div className="batch-operation-hero">
+                <span className="batch-operation-icon"><Layers3 aria-hidden="true" /></span>
+                <div><strong>Layer extraction</strong><small>Each source loop produces a set of individually playable layers.</small></div>
+                <span className="batch-operation-state">{sourceFolder ? basename(sourceFolder) : "Waiting for a source folder"}</span>
+              </div>
+              <div className="batch-output-card">
+                <div className="batch-output-heading"><span>Output location</span><small>Extracted layers are written to this folder.</small></div>
+                <div className="batch-output-path"><FolderOpen aria-hidden="true" /><strong title={outputFolder}>{outputFolder}</strong></div>
+                <div className="batch-output-actions"><Button variant="outline" size="sm" onClick={pickOutputFolder}>Change folder</Button><Button variant="outline" size="sm" onClick={() => void window.stemSlicer?.revealPath(outputFolder)}>Open folder</Button></div>
+              </div>
+            </div>
           </div>
-          {keyExpanded ? (
-            <div className="key-analysis-settings">
-              <SegmentedChoice label="Key mode" value={keyMode} options={["Detected", "Relative minor", "Relative major"]} onChange={setKeyMode} />
-              <SegmentedChoice label="Key notation" value={keyNotation} options={["Sharps #", "Flats ♭"]} onChange={setKeyNotation} />
-              <div className="naming-field">
-                <span>Output name structure · drag to reorder</span>
+        ) : null}
+
+        {activeStep === "key" ? (
+          <div id="batch-step-panel-key" className={cn("batch-step-panel batch-key-panel", !keyAnalysis && "is-disabled")} role="tabpanel" aria-labelledby="batch-step-tab-key">
+            <header className="batch-panel-heading">
+              <div><span className="batch-panel-kicker">Operation 2</span><h2>Analyze keys and name files</h2><p>Choose the musical relationship and the exact output naming order.</p></div>
+              <div className="batch-operation-toggle"><span>{keyAnalysis ? "Enabled" : "Disabled"}</span><OperationSwitch checked={keyAnalysis} onChange={setKeyAnalysis} label="Enable key analysis" accent="yellow" /></div>
+            </header>
+            <div className="batch-key-settings">
+              <div className="batch-key-choice-row">
+                <SegmentedChoice label="Key mode" value={keyMode} options={["Detected", "Relative minor", "Relative major"]} onChange={setKeyMode} />
+                <SegmentedChoice label="Key notation" value={keyNotation} options={["Sharps #", "Flats ♭"]} onChange={setKeyNotation} />
+              </div>
+              <div className="batch-naming-card">
+                <div className="batch-naming-heading"><div><span>Output name structure</span><small>Drag the tokens or use the arrow keys to reorder them.</small></div><strong>{nameTokens.length} fields</strong></div>
                 <div className="naming-token-list">
                   {nameTokens.map((token, index) => (
                     <button
@@ -980,35 +1042,48 @@ function StemSlicerView() {
                   ))}
                 </div>
               </div>
-              <SegmentedChoice label="Key analysis destination" value={keyDestination} options={["Copy to analyzed loops", "Rename originals"]} onChange={setKeyDestination} />
-              <div className="name-preview"><span>Preview</span><strong>{keyNotation === "Sharps #" ? "A♯m" : "B♭m"} CALLMEUR3 137 +NRGY_L1.mp3</strong></div>
+              <div className="batch-key-footer">
+                <SegmentedChoice label="Destination" value={keyDestination} options={["Copy to analyzed loops", "Rename originals"]} onChange={setKeyDestination} />
+                <div className="batch-name-preview"><span>Filename preview</span><strong>{namePreview}</strong></div>
+              </div>
             </div>
-          ) : null}
-        </div>
-
-        <div className={cn("operation-card operation-orange", !conversion && "is-disabled")}>
-          <div className="operation-header">
-            <OperationSwitch checked={conversion} onChange={(checked) => { setConversion(checked); if (checked) setConversionExpanded(true) }} label="Enable Convert BPM and Key" accent="orange" />
-            <Repeat2 aria-hidden="true" />
-            <div className="operation-copy"><strong>Convert BPM &amp; key</strong><small>Convert extracted layers, or every source loop when extraction is disabled.</small></div>
-            <button type="button" className="operation-chevron" onClick={() => setConversionExpanded((value) => !value)} aria-expanded={conversionExpanded} aria-label={conversionExpanded ? "Collapse Convert BPM and Key" : "Expand Convert BPM and Key"}>
-              {conversionExpanded ? <ChevronUp aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}
-            </button>
           </div>
-          {conversionExpanded ? (
-            <div className="conversion-settings">
-              <label className="target-option"><input type="checkbox" checked={targetBpmEnabled} onChange={(event) => setTargetBpmEnabled(event.target.checked)} /><span>Target BPM</span><Input type="number" min="40" max="300" value={targetBpm} disabled={!targetBpmEnabled} onChange={(event) => setTargetBpm(Number(event.target.value))} /></label>
-              <div className="target-option"><label className="target-toggle"><input type="checkbox" checked={targetKeyEnabled} onChange={(event) => setTargetKeyEnabled(event.target.checked)} /><span>Target key</span></label><Select id="stem-target-key" label="Target key" value={targetKey} onChange={setTargetKey} options={TARGET_KEY_FAMILIES} disabled={!targetKeyEnabled} className="inline-select" /></div>
-            </div>
-          ) : null}
-        </div>
-      </section>
+        ) : null}
 
-      <section className="process-strip" aria-label="Batch process status">
-        <div><span>Process status</span><strong>Interface ready · engine connection pending</strong></div>
-        <div className="process-stats"><span>0 files</span><span>0 successful</span><span>0 errors</span></div>
-        <div className="process-progress" aria-hidden="true"><span /></div>
-        <Button className="hardware-button" disabled>Process loops</Button>
+        {activeStep === "convert" ? (
+          <div id="batch-step-panel-convert" className={cn("batch-step-panel batch-convert-panel", !conversion && "is-disabled")} role="tabpanel" aria-labelledby="batch-step-tab-convert">
+            <header className="batch-panel-heading">
+              <div><span className="batch-panel-kicker">Operation 3</span><h2>Convert BPM and key</h2><p>Convert extracted layers, or every source loop when extraction is disabled.</p></div>
+              <div className="batch-operation-toggle"><span>{conversion ? "Enabled" : "Disabled"}</span><OperationSwitch checked={conversion} onChange={setConversion} label="Enable BPM and key conversion" accent="orange" /></div>
+            </header>
+            <div className="batch-convert-layout">
+              <label className="batch-target-card">
+                <span className="batch-target-heading"><input type="checkbox" checked={targetBpmEnabled} onChange={(event) => setTargetBpmEnabled(event.target.checked)} /><b>Target BPM</b></span>
+                <Input aria-label="Stem Slicer target BPM" type="number" min="40" max="300" value={targetBpm} disabled={!targetBpmEnabled} onChange={(event) => setTargetBpm(Number(event.target.value))} />
+                <small>Preserves the loop duration relationship while retiming the audio.</small>
+              </label>
+              <div className="batch-target-card">
+                <label className="batch-target-heading"><input type="checkbox" checked={targetKeyEnabled} onChange={(event) => setTargetKeyEnabled(event.target.checked)} /><b>Target key</b></label>
+                <Select id="stem-target-key" label="Stem Slicer target key" value={targetKey} onChange={setTargetKey} options={TARGET_KEY_FAMILIES} disabled={!targetKeyEnabled} className="inline-select" />
+                <small>Applies the selected major and minor key family.</small>
+              </div>
+              <div className="batch-convert-route">
+                <Repeat2 aria-hidden="true" />
+                <div><span>Conversion input</span><strong>{layerExtraction ? "Extracted layers" : "Source loops"}</strong><small>Determined by the Extraction operation.</small></div>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        <div className="batch-process-bar" aria-label="Batch process status">
+          <div className="batch-process-copy"><span>Process status</span><strong>{sourceFolder ? `${basename(sourceFolder)} ready` : "Choose a source folder to begin"}</strong></div>
+          <div className="batch-operation-summary" aria-label={`${enabledOperationCount} operations enabled`}>
+            <span data-enabled={layerExtraction}>Extract</span><span data-enabled={keyAnalysis}>Key</span><span data-enabled={conversion}>Convert</span>
+          </div>
+          <div className="batch-progress"><span /></div>
+          <div className="batch-process-stats"><span>0 files</span><span>0 complete</span><span>0 errors</span></div>
+          <Button className="hardware-button" disabled>Process loops</Button>
+        </div>
       </section>
     </div>
   )
@@ -1356,7 +1431,7 @@ export function App() {
         <div className="window-dragbar app-drag-region">
           <span className="prototype-pill app-no-drag"><span /> Electron prototype</span>
         </div>
-        <main id="main-content" tabIndex={-1} ref={mainRef} className={cn(activeView === "generate" && "generate-main", activeView === "quick-tools" && "quick-tools-main")}>
+        <main id="main-content" tabIndex={-1} ref={mainRef} className={cn(activeView === "generate" && "generate-main", activeView === "quick-tools" && "quick-tools-main", activeView === "stem-slicer" && "stem-slicer-main")}>
           {activeView === "stem-slicer" ? <StemSlicerView /> : null}
           {activeView === "generate" ? <GenerateView library={library} layers={layers} setLayers={setLayers} onAddHistory={(entry) => setHistory((items) => [entry, ...items])} playback={playback} soloId={soloId} setSoloId={setSoloId} /> : null}
           {activeView === "quick-tools" ? <QuickToolsView /> : null}
