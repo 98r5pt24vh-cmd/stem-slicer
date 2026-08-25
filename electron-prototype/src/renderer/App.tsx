@@ -27,7 +27,6 @@ import {
   Settings2,
   SkipBack,
   SlidersHorizontal,
-  Square,
   Sparkles,
   Trash2,
   Unlock,
@@ -51,6 +50,7 @@ import {
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { basename, cn, formatCount } from "@/lib/utils"
+import { SharedWebAudioEngine, transportProgress } from "@/renderer/shared-web-audio-engine"
 import type {
   AudioArtifact,
   AudioJobKind,
@@ -307,22 +307,35 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
   const [syncEnabled, setSyncEnabled] = useState(false)
   const [loopEnabled, setLoopEnabled] = useState(false)
   const [mutedIds, setMutedIds] = useState<string[]>([])
-  const audioByIdRef = useRef(new Map<string, HTMLAudioElement>())
+  const engineRef = useRef<SharedWebAudioEngine | null>(null)
+  if (!engineRef.current) engineRef.current = new SharedWebAudioEngine()
+  const playableIdsRef = useRef<string[]>([])
   const modeRef = useRef<PlaybackMode>("idle")
   const soloIdRef = useRef<string | null>(null)
   const lastSoloIdRef = useRef<string | null>(null)
   const syncEnabledRef = useRef(false)
   const loopEnabledRef = useRef(false)
   const mutedIdsRef = useRef(new Set<string>())
+  const playingRef = useRef(false)
+  const positionRef = useRef(0)
+  const startedAtRef = useRef(0)
+  const startedOffsetSecondsRef = useRef(0)
+  const timelineDurationRef = useRef(0)
+  const playbackSessionRef = useRef(0)
   const scrubbingRef = useRef(false)
   const scrubEndingRef = useRef(false)
   const scrubSessionRef = useRef(0)
   const resumeAfterScrubRef = useRef(false)
   const scrubTargetRef = useRef<{ id: string; progress: number } | null>(null)
-  const layerSourcesJson = JSON.stringify(layers.map((layer) => ({ id: layer.id, path: layer.path ?? "" })))
+  const layerSourcesJson = JSON.stringify(layers.map((layer) => ({
+    id: layer.id,
+    path: layer.path ?? "",
+    duration: layer.duration,
+  })))
 
-  const pauseAll = useCallback(() => {
-    for (const audio of audioByIdRef.current.values()) audio.pause()
+  const commitPlaying = useCallback((nextPlaying: boolean) => {
+    playingRef.current = nextPlaying
+    setPlaying(nextPlaying)
   }, [])
 
   const commitMode = useCallback((nextMode: PlaybackMode, nextSoloId: string | null) => {
@@ -344,54 +357,48 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
 
   const commitLoopEnabled = useCallback((nextEnabled: boolean) => {
     loopEnabledRef.current = nextEnabled
-    for (const audio of audioByIdRef.current.values()) audio.loop = nextEnabled
     setLoopEnabled(nextEnabled)
   }, [])
 
   const commitMutedIds = useCallback((nextMutedIds: Set<string>) => {
     mutedIdsRef.current = nextMutedIds
-    for (const [id, audio] of audioByIdRef.current) audio.muted = nextMutedIds.has(id)
+    engineRef.current?.setMutedIds(nextMutedIds)
     setMutedIds(Array.from(nextMutedIds))
   }, [])
 
-  const currentAudioProgress = useCallback((audios: HTMLAudioElement[]) => {
-    const positions = audios
-      .filter((audio) => Number.isFinite(audio.duration) && audio.duration > 0)
-      .map((audio) => audio.currentTime / audio.duration)
-    return positions.length > 0 ? Math.max(...positions) : 0
-  }, [])
-
-  const synchronizeAudios = useCallback((audios: HTMLAudioElement[], nextProgress: number) => {
-    const clampedProgress = Math.max(0, Math.min(nextProgress, 1))
-    for (const audio of audios) {
-      if (Number.isFinite(audio.duration) && audio.duration > 0) audio.currentTime = clampedProgress * audio.duration
-    }
+  const getCurrentProgress = useCallback(() => {
+    if (!playingRef.current || timelineDurationRef.current <= 0) return positionRef.current
+    return transportProgress(
+      startedAtRef.current,
+      engineRef.current?.currentTime ?? startedAtRef.current,
+      startedOffsetSecondsRef.current,
+      timelineDurationRef.current,
+      loopEnabledRef.current,
+    )
   }, [])
 
   useEffect(() => {
-    pauseAll()
-    const previous = audioByIdRef.current
-    const next = new Map<string, HTMLAudioElement>()
+    const engine = engineRef.current
+    if (!engine) return
+    playbackSessionRef.current += 1
+    engine.stop()
     const sources = JSON.parse(layerSourcesJson) as Array<{ id: string; path: string }>
-    for (const source of sources) {
-      if (!source.path || !window.stemSlicer) continue
-      const existing = previous.get(source.id)
-      const mediaUrl = window.stemSlicer.mediaUrl(source.path)
-      const audio = existing?.src === mediaUrl ? existing : new Audio(mediaUrl)
-      audio.preload = "auto"
-      audio.loop = loopEnabledRef.current
-      audio.onerror = () => setError(`Audio file could not be loaded: ${basename(source.path)}`)
-      next.set(source.id, audio)
-    }
-    for (const [id, audio] of previous) {
-      if (next.has(id)) continue
-      audio.pause()
-      audio.removeAttribute("src")
-      audio.load()
-    }
-    audioByIdRef.current = next
+    const mediaApi = window.stemSlicer
+    const playable = mediaApi ? sources.filter((source) => source.path) : []
+    playableIdsRef.current = playable.map((source) => source.id)
+    engine.configureLayers(playable.map((source) => {
+      const layer = layers.find((candidate) => candidate.id === source.id)
+      return {
+        id: source.id,
+        url: mediaApi?.mediaUrl(source.path) ?? "",
+        duration: layer?.duration ?? 0,
+        gain: Math.max(0, Math.min(1, (layer?.volume ?? 100) / 100)),
+      }
+    }))
+    engine.setMasterVolume(masterVolume / 100)
     setError("")
-    setPlaying(false)
+    commitPlaying(false)
+    positionRef.current = 0
     setProgress(0)
     commitMode("idle", null)
     commitLastSoloId(null)
@@ -403,15 +410,69 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
     scrubSessionRef.current += 1
     resumeAfterScrubRef.current = false
     scrubTargetRef.current = null
-    return pauseAll
-  }, [commitLastSoloId, commitLoopEnabled, commitMode, commitMutedIds, commitSyncEnabled, layerSourcesJson, pauseAll])
+    let cancelled = false
+    void engine.preload().catch((loadError) => {
+      if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Audio decoding failed.")
+    })
+    return () => {
+      cancelled = true
+      engine.stop()
+    }
+  // The serialized source list deliberately excludes volume so slider changes do not reset playback.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [commitLastSoloId, commitLoopEnabled, commitMode, commitMutedIds, commitPlaying, commitSyncEnabled, layerSourcesJson])
+
+  useEffect(() => () => {
+    void engineRef.current?.close()
+  }, [])
 
   useEffect(() => {
     for (const layer of layers) {
-      const audio = audioByIdRef.current.get(layer.id)
-      if (audio) audio.volume = Math.max(0, Math.min(1, (layer.volume / 100) * (masterVolume / 100)))
+      engineRef.current?.setLayerGain(layer.id, layer.volume / 100)
     }
+    engineRef.current?.setMasterVolume(masterVolume / 100)
   }, [layers, masterVolume])
+
+  const activePlaybackIds = useCallback(() => {
+    if (modeRef.current === "mix") return playableIdsRef.current
+    if (modeRef.current === "solo" && soloIdRef.current && playableIdsRef.current.includes(soloIdRef.current)) return [soloIdRef.current]
+    return []
+  }, [])
+
+  const startPlayback = useCallback(async (ids: string[], nextProgress: number) => {
+    const engine = engineRef.current
+    if (!engine || ids.length === 0) return false
+    const session = playbackSessionRef.current + 1
+    playbackSessionRef.current = session
+    commitPlaying(false)
+    setError("")
+    try {
+      const started = await engine.start(ids, nextProgress, loopEnabledRef.current)
+      if (!started || session !== playbackSessionRef.current) return false
+      startedAtRef.current = started.startedAt
+      startedOffsetSecondsRef.current = started.offsetSeconds
+      timelineDurationRef.current = started.timelineDuration
+      positionRef.current = started.offsetSeconds / started.timelineDuration
+      setProgress(positionRef.current)
+      commitPlaying(true)
+      return true
+    } catch (playError) {
+      if (session !== playbackSessionRef.current) return false
+      engine.stop()
+      commitPlaying(false)
+      setError(playError instanceof Error ? playError.message : "Audio playback failed.")
+      return false
+    }
+  }, [commitPlaying])
+
+  const pausePlayback = useCallback(() => {
+    const nextProgress = getCurrentProgress()
+    playbackSessionRef.current += 1
+    engineRef.current?.stop()
+    positionRef.current = nextProgress
+    setProgress(nextProgress)
+    commitPlaying(false)
+  }, [commitPlaying, getCurrentProgress])
 
   useEffect(() => {
     if (!playing) return
@@ -421,69 +482,61 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
         frame = requestAnimationFrame(tick)
         return
       }
-      const active = modeRef.current === "solo" && soloIdRef.current
-        ? [audioByIdRef.current.get(soloIdRef.current)].filter((audio): audio is HTMLAudioElement => Boolean(audio))
-        : Array.from(audioByIdRef.current.values())
-      const audible = active.filter((audio) => !audio.paused && !audio.ended)
-      if (active.length > 0) {
-        const next = Math.max(...active.map((audio) => audio.duration > 0 ? audio.currentTime / audio.duration : 0))
-        setProgress(Number.isFinite(next) ? next : 0)
-      }
-      if (active.length > 0 && audible.length === 0) {
-        if (active.every((audio) => audio.ended)) setProgress(0)
-        setPlaying(false)
+      const engine = engineRef.current
+      const duration = timelineDurationRef.current
+      if (!engine || duration <= 0) {
+        commitPlaying(false)
         return
       }
+      const elapsedPosition = startedOffsetSecondsRef.current + Math.max(0, engine.currentTime - startedAtRef.current)
+      if (!loopEnabledRef.current && elapsedPosition >= duration) {
+        playbackSessionRef.current += 1
+        engine.stop()
+        positionRef.current = 0
+        setProgress(0)
+        commitPlaying(false)
+        return
+      }
+      const nextProgress = getCurrentProgress()
+      positionRef.current = nextProgress
+      setProgress(nextProgress)
       frame = requestAnimationFrame(tick)
     }
     frame = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(frame)
-  }, [playing])
+  }, [commitPlaying, getCurrentProgress, playing])
 
   const toggleMix = useCallback(async () => {
     if (!syncEnabledRef.current) return
-    if (modeRef.current === "mix" && playing) {
-      pauseAll()
-      setPlaying(false)
+    if (modeRef.current === "mix" && playingRef.current) {
+      pausePlayback()
       return
     }
 
     const startingMix = modeRef.current !== "mix"
     if (startingMix) {
-      pauseAll()
-      for (const audio of audioByIdRef.current.values()) audio.currentTime = 0
+      playbackSessionRef.current += 1
+      engineRef.current?.stop()
+      positionRef.current = 0
       setProgress(0)
       commitMode("mix", null)
       commitMutedIds(new Set())
     }
 
-    const active = Array.from(audioByIdRef.current.values())
-    if (active.length === 0) {
+    const activeIds = playableIdsRef.current
+    if (activeIds.length === 0) {
       setError("Generate or extract real audio before starting playback.")
       return
     }
-
-    const resumeProgress = startingMix ? 0 : currentAudioProgress(active)
-    synchronizeAudios(active, resumeProgress)
-    setError("")
-    try {
-      await Promise.all(active.map((audio) => audio.play()))
-      const synchronizedProgress = currentAudioProgress(active)
-      synchronizeAudios(active, synchronizedProgress)
-      setProgress(synchronizedProgress)
-      setPlaying(true)
-    } catch (playError) {
-      pauseAll()
-      setPlaying(false)
-      setError(playError instanceof Error ? playError.message : "Audio playback failed.")
-    }
-  }, [commitMode, commitMutedIds, currentAudioProgress, pauseAll, playing, synchronizeAudios])
+    await startPlayback(activeIds, startingMix ? 0 : positionRef.current)
+  }, [commitMode, commitMutedIds, pausePlayback, startPlayback])
 
   const toggleSyncMode = useCallback(() => {
-    pauseAll()
-    for (const audio of audioByIdRef.current.values()) audio.currentTime = 0
+    playbackSessionRef.current += 1
+    engineRef.current?.stop()
+    positionRef.current = 0
     setProgress(0)
-    setPlaying(false)
+    commitPlaying(false)
     setError("")
     const nextEnabled = !syncEnabledRef.current
     commitSyncEnabled(nextEnabled)
@@ -493,13 +546,12 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
       return
     }
     const previousSoloId = lastSoloIdRef.current
-    const hasPreviousSolo = Boolean(previousSoloId && audioByIdRef.current.has(previousSoloId))
+    const hasPreviousSolo = Boolean(previousSoloId && playableIdsRef.current.includes(previousSoloId))
     commitMode(hasPreviousSolo ? "solo" : "idle", hasPreviousSolo ? previousSoloId : null)
-  }, [commitMode, commitMutedIds, commitSyncEnabled, pauseAll])
+  }, [commitMode, commitMutedIds, commitPlaying, commitSyncEnabled])
 
   const toggleLayer = useCallback(async (id: string) => {
-    const audio = audioByIdRef.current.get(id)
-    if (!audio) {
+    if (!playableIdsRef.current.includes(id)) {
       setError("This layer has no playable audio file.")
       return
     }
@@ -509,17 +561,6 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
       if (nextMutedIds.has(id)) {
         nextMutedIds.delete(id)
         commitMutedIds(nextMutedIds)
-        if (playing && audio.paused) {
-          try {
-            await audio.play()
-            setError("")
-          } catch (playError) {
-            nextMutedIds.add(id)
-            commitMutedIds(nextMutedIds)
-            setError(playError instanceof Error ? playError.message : "Audio playback failed.")
-            return
-          }
-        }
       } else {
         nextMutedIds.add(id)
         commitMutedIds(nextMutedIds)
@@ -529,35 +570,19 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
 
     commitLastSoloId(id)
     if (modeRef.current === "solo" && soloIdRef.current === id) {
-      if (playing) {
-        audio.pause()
-        setPlaying(false)
-      } else {
-        setError("")
-        try {
-          await audio.play()
-          setPlaying(true)
-        } catch (playError) {
-          setError(playError instanceof Error ? playError.message : "Audio playback failed.")
-        }
-      }
+      if (playingRef.current) pausePlayback()
+      else await startPlayback([id], positionRef.current)
       return
     }
 
-    pauseAll()
-    audio.currentTime = 0
+    playbackSessionRef.current += 1
+    engineRef.current?.stop()
+    positionRef.current = 0
     setProgress(0)
     commitMode("solo", id)
     commitMutedIds(new Set())
-    setError("")
-    try {
-      await audio.play()
-      setPlaying(true)
-    } catch (playError) {
-      setPlaying(false)
-      setError(playError instanceof Error ? playError.message : "Audio playback failed.")
-    }
-  }, [commitLastSoloId, commitMode, commitMutedIds, pauseAll, playing])
+    await startPlayback([id], 0)
+  }, [commitLastSoloId, commitMode, commitMutedIds, pausePlayback, startPlayback])
 
   const togglePrimary = useCallback(async () => {
     if (syncEnabledRef.current) {
@@ -565,7 +590,7 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
       return
     }
     const previousSoloId = lastSoloIdRef.current
-    if (!previousSoloId || !audioByIdRef.current.has(previousSoloId)) return
+    if (!previousSoloId || !playableIdsRef.current.includes(previousSoloId)) return
     await toggleLayer(previousSoloId)
   }, [toggleLayer, toggleMix])
 
@@ -575,18 +600,31 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
     scrubEndingRef.current = false
     resumeAfterScrubRef.current = false
     scrubTargetRef.current = null
-    pauseAll()
-    setPlaying(false)
-  }, [pauseAll])
+    pausePlayback()
+  }, [pausePlayback])
 
   const rewind = useCallback(() => {
-    for (const audio of audioByIdRef.current.values()) audio.currentTime = 0
+    playbackSessionRef.current += 1
+    engineRef.current?.stop()
+    positionRef.current = 0
     setProgress(0)
-  }, [])
+    commitPlaying(false)
+  }, [commitPlaying])
 
-  const toggleLoopMode = useCallback(() => {
-    commitLoopEnabled(!loopEnabledRef.current)
-  }, [commitLoopEnabled])
+  const toggleLoopMode = useCallback(async () => {
+    const nextEnabled = !loopEnabledRef.current
+    if (!playingRef.current) {
+      commitLoopEnabled(nextEnabled)
+      return
+    }
+    const nextProgress = getCurrentProgress()
+    const ids = activePlaybackIds()
+    playbackSessionRef.current += 1
+    engineRef.current?.stop()
+    positionRef.current = nextProgress
+    commitLoopEnabled(nextEnabled)
+    await startPlayback(ids, nextProgress)
+  }, [activePlaybackIds, commitLoopEnabled, getCurrentProgress, startPlayback])
 
   const reset = useCallback(() => {
     scrubSessionRef.current += 1
@@ -594,37 +632,44 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
     scrubEndingRef.current = false
     resumeAfterScrubRef.current = false
     scrubTargetRef.current = null
-    pauseAll()
-    for (const audio of audioByIdRef.current.values()) audio.currentTime = 0
+    playbackSessionRef.current += 1
+    engineRef.current?.stop()
+    positionRef.current = 0
     setProgress(0)
-    setPlaying(false)
+    commitPlaying(false)
     setError("")
     commitSyncEnabled(false)
     commitLoopEnabled(false)
     commitMutedIds(new Set())
     commitLastSoloId(null)
     commitMode("idle", null)
-  }, [commitLastSoloId, commitLoopEnabled, commitMode, commitMutedIds, commitSyncEnabled, pauseAll])
+  }, [commitLastSoloId, commitLoopEnabled, commitMode, commitMutedIds, commitPlaying, commitSyncEnabled])
 
   const beginScrub = useCallback((id: string) => {
     if (scrubbingRef.current) return
     scrubSessionRef.current += 1
     scrubbingRef.current = true
     scrubEndingRef.current = false
-    resumeAfterScrubRef.current = playing
-    scrubTargetRef.current = { id, progress }
-    pauseAll()
+    const currentProgress = getCurrentProgress()
+    resumeAfterScrubRef.current = playingRef.current
+    scrubTargetRef.current = { id, progress: currentProgress }
+    playbackSessionRef.current += 1
+    engineRef.current?.stop()
+    positionRef.current = currentProgress
+    setProgress(currentProgress)
+    commitPlaying(false)
 
     if (!syncEnabledRef.current && (modeRef.current !== "solo" || soloIdRef.current !== id)) {
       commitMode("solo", id)
       commitLastSoloId(id)
       commitMutedIds(new Set())
     }
-  }, [commitLastSoloId, commitMode, commitMutedIds, pauseAll, playing, progress])
+  }, [commitLastSoloId, commitMode, commitMutedIds, commitPlaying, getCurrentProgress])
 
   const previewScrub = useCallback((id: string, nextProgress: number) => {
     const clampedProgress = Math.max(0, Math.min(nextProgress, 1))
     scrubTargetRef.current = { id, progress: clampedProgress }
+    positionRef.current = clampedProgress
     setProgress(clampedProgress)
   }, [])
 
@@ -637,16 +682,8 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
     resumeAfterScrubRef.current = false
     scrubTargetRef.current = null
 
-    const active = target
-      ? syncEnabledRef.current
-        ? Array.from(audioByIdRef.current.values())
-        : [audioByIdRef.current.get(target.id)].filter((audio): audio is HTMLAudioElement => Boolean(audio))
-      : []
-
     if (target) {
-      for (const audio of active) {
-        if (Number.isFinite(audio.duration) && audio.duration > 0) audio.currentTime = target.progress * audio.duration
-      }
+      positionRef.current = target.progress
       setProgress(target.progress)
     }
 
@@ -656,29 +693,21 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
       return
     }
 
-    if (active.length === 0) {
+    const activeIds = syncEnabledRef.current
+      ? playableIdsRef.current
+      : target && playableIdsRef.current.includes(target.id) ? [target.id] : []
+    if (activeIds.length === 0) {
       scrubbingRef.current = false
       scrubEndingRef.current = false
-      setPlaying(false)
+      commitPlaying(false)
       return
     }
 
-    setError("")
-    try {
-      await Promise.all(active.map((audio) => audio.play()))
-      if (session !== scrubSessionRef.current) return
-      scrubbingRef.current = false
-      scrubEndingRef.current = false
-      setPlaying(true)
-    } catch (playError) {
-      if (session !== scrubSessionRef.current) return
-      scrubbingRef.current = false
-      scrubEndingRef.current = false
-      pauseAll()
-      setPlaying(false)
-      setError(playError instanceof Error ? playError.message : "Audio playback failed.")
-    }
-  }, [pauseAll])
+    await startPlayback(activeIds, target?.progress ?? positionRef.current)
+    if (session !== scrubSessionRef.current) return
+    scrubbingRef.current = false
+    scrubEndingRef.current = false
+  }, [commitPlaying, startPlayback])
 
   const mutedIdSet = useMemo(() => new Set(mutedIds), [mutedIds])
   return {
@@ -2480,10 +2509,9 @@ function GlobalPlayer({ layers, playback, contextLabel, syncAvailable }: { layer
       <div className="player-core">
         <div className="player-controls">
           <button type="button" className={cn("player-key player-sync-key", syncEnabled && "is-active")} disabled={!syncAvailable} onClick={playback.toggleSyncMode} aria-pressed={syncEnabled} aria-label={syncAvailable ? syncEnabled ? "Disable synchronized playback" : "Enable synchronized playback" : "Synchronized playback is only available for generated or extracted layer cards"}><Link2 aria-hidden="true" /><span>Sync</span></button>
+          <button type="button" className={cn("player-key player-loop-key", playback.loopEnabled && "is-active")} disabled={!layers.some((layer) => layer.path)} onClick={() => void playback.toggleLoopMode()} aria-pressed={playback.loopEnabled} aria-label={playback.loopEnabled ? "Disable loop playback" : "Enable loop playback"}><Repeat2 aria-hidden="true" /></button>
           <button type="button" className={cn("player-key player-key-primary", primaryPlaying && "is-active")} disabled={!canPlayPrimary} onClick={() => void playback.togglePrimary()} aria-label={syncEnabled ? mixPlaying ? "Pause all layers" : "Play all layers" : primaryPlaying ? "Pause selected layer" : "Play selected layer"}>{primaryPlaying ? <Pause aria-hidden="true" /> : <Play className="play-glyph" aria-hidden="true" />}</button>
-          <button type="button" className="player-key" disabled={!primaryPlaying} onClick={playback.stop} aria-label="Stop playback"><Square aria-hidden="true" /></button>
-          <button type="button" className="player-key" disabled={!timelineLayer} onClick={playback.rewind} aria-label="Return to beginning"><SkipBack aria-hidden="true" /></button>
-          <button type="button" className={cn("player-key player-loop-key", playback.loopEnabled && "is-active")} disabled={!layers.some((layer) => layer.path)} onClick={playback.toggleLoopMode} aria-pressed={playback.loopEnabled} aria-label={playback.loopEnabled ? "Disable loop playback" : "Enable loop playback"}><Repeat2 aria-hidden="true" /></button>
+          <button type="button" className="player-key" disabled={!timelineLayer} onClick={playback.rewind} aria-label="Stop and return to beginning"><SkipBack aria-hidden="true" /></button>
         </div>
         <div className="player-timeline">
           <div

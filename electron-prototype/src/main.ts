@@ -38,6 +38,7 @@ async function createMediaResponse(request: Request, targetPath: string): Promis
   const contentType = mediaMimeType(path.extname(targetPath))
   const commonHeaders = {
     "Accept-Ranges": "bytes",
+    "Access-Control-Allow-Origin": "*",
     "Content-Type": contentType,
   }
   const rangeHeader = request.headers.get("range")
@@ -98,7 +99,7 @@ app.setName("Stem Slicer Electron Prototype")
 protocol.registerSchemesAsPrivileged([
   {
     scheme: "stem-media",
-    privileges: { secure: true, standard: true, supportFetchAPI: true, stream: true },
+    privileges: { corsEnabled: true, secure: true, standard: true, supportFetchAPI: true, stream: true },
   },
 ])
 
