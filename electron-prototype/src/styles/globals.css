@@ -5775,25 +5775,14 @@ main.quick-tools-main {
   flex: 1;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid rgb(255 255 255 / 0.09);
-  border-radius: 16px;
-  background:
-    linear-gradient(145deg, rgb(255 255 255 / 0.055), transparent 34%),
-    rgb(10 13 11 / 0.88);
-  box-shadow:
-    0 1px 0 rgb(255 255 255 / 0.08) inset,
-    0 18px 42px rgb(0 0 0 / 0.34);
-  backdrop-filter: blur(24px) saturate(132%);
 }
 
 .quick-tool-tabs {
   display: grid;
   flex: 0 0 auto;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 7px;
-  border-block-end: 1px solid rgb(255 255 255 / 0.075);
-  background: rgb(0 0 0 / 0.18);
-  padding: 8px;
+  gap: 9px;
+  padding-block-end: 10px;
 }
 
 .quick-tool-tab {
@@ -5833,7 +5822,7 @@ main.quick-tools-main {
   pointer-events: none;
 }
 
-.quick-tool-tab[aria-selected="true"] {
+.quick-tool-tab[aria-pressed="true"] {
   border-color: rgb(var(--tool-rgb) / 0.32);
   background:
     linear-gradient(145deg, rgb(var(--tool-rgb) / 0.13), transparent 72%),
@@ -5845,7 +5834,7 @@ main.quick-tools-main {
     0 0 20px rgb(var(--tool-rgb) / 0.055);
 }
 
-.quick-tool-tab[aria-selected="true"]::after {
+.quick-tool-tab[aria-pressed="true"]::after {
   opacity: 1;
 }
 
@@ -5901,13 +5890,26 @@ main.quick-tools-main {
 .quick-tool-panel {
   --panel-accent: var(--signal-yellow);
   --panel-rgb: 225 213 0;
+  position: relative;
+  isolation: isolate;
   display: flex;
   min-height: 0;
   flex: 1;
   flex-direction: column;
   gap: 10px;
   overflow: hidden;
-  padding: 12px;
+}
+
+.quick-tool-panel::before {
+  position: absolute;
+  z-index: -1;
+  inset: 164px -10px -28px;
+  background:
+    radial-gradient(ellipse 80% 46% at 50% 0%, rgb(var(--panel-rgb) / 0.035), transparent 72%),
+    linear-gradient(180deg, rgb(0 0 0 / 0.14), transparent 78%);
+  box-shadow: 0 -16px 42px -34px rgb(var(--panel-rgb) / 0.34);
+  content: "";
+  pointer-events: none;
 }
 
 .quick-tool-panel.extract-panel { --panel-accent: var(--destructive); --panel-rgb: 230 57 0; }
@@ -6157,14 +6159,7 @@ main.quick-tools-main {
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior-y: contain;
-  border: 1px solid rgb(255 255 255 / 0.075);
-  border-radius: 13px;
-  background:
-    linear-gradient(rgb(255 255 255 / 0.018) 1px, transparent 1px),
-    linear-gradient(90deg, rgb(255 255 255 / 0.018) 1px, transparent 1px),
-    rgb(2 6 3 / 0.34);
-  background-size: 24px 24px;
-  padding: 10px;
+  padding: 1px 6px 12px 1px;
   scrollbar-gutter: stable;
 }
 
@@ -6759,7 +6754,7 @@ main.quick-tools-main {
 }
 
 @media (hover: hover) {
-  .quick-tool-tab:hover:not([aria-selected="true"]) {
+  .quick-tool-tab:hover:not([aria-pressed="true"]) {
     border-color: rgb(255 255 255 / 0.11);
     background-color: rgb(255 255 255 / 0.035);
     color: var(--foreground);
