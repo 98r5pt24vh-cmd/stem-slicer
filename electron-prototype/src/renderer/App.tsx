@@ -36,7 +36,7 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react"
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import { Waveform } from "@/components/waveform"
 import { Badge } from "@/components/ui/badge"
@@ -275,7 +275,8 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
       const existing = previous.get(source.id)
       const mediaUrl = window.stemSlicer.mediaUrl(source.path)
       const audio = existing?.src === mediaUrl ? existing : new Audio(mediaUrl)
-      audio.preload = "metadata"
+      audio.preload = "auto"
+      audio.onerror = () => setError(`Audio file could not be loaded: ${basename(source.path)}`)
       next.set(source.id, audio)
     }
     for (const [id, audio] of previous) {
@@ -285,6 +286,7 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
       audio.load()
     }
     audioByIdRef.current = next
+    setError("")
     setPlaying(false)
     setProgress(0)
     targetIdRef.current = null
@@ -337,6 +339,7 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
       await Promise.all(active.map((audio) => audio.play()))
       setPlaying(true)
     } catch (playError) {
+      pauseAll()
       setPlaying(false)
       setError(playError instanceof Error ? playError.message : "Audio playback failed.")
     }
@@ -358,9 +361,10 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
     setPlaying(false)
   }, [pauseAll])
 
-  const seek = useCallback((nextProgress: number) => {
+  const seek = useCallback((nextProgress: number, selectedTarget?: string | null) => {
     const clampedProgress = Math.max(0, Math.min(nextProgress, 1))
-    const targetId = targetIdRef.current
+    if (selectedTarget !== undefined) targetIdRef.current = selectedTarget
+    const targetId = selectedTarget !== undefined ? selectedTarget : targetIdRef.current
     const active = targetId
       ? [audioByIdRef.current.get(targetId)].filter((audio): audio is HTMLAudioElement => Boolean(audio))
       : Array.from(audioByIdRef.current.values())
@@ -475,13 +479,22 @@ function AudioArtifactCard({ artifact, compact = false }: { artifact: AudioArtif
   const audioRef = useRef<HTMLAudioElement>(null)
   const [playing, setPlaying] = useState(false)
   const [progress, setProgress] = useState(0)
+  const [playbackError, setPlaybackError] = useState("")
   const mediaUrl = window.stemSlicer?.mediaUrl(artifact.path) ?? ""
 
-  const togglePlayback = () => {
+  const togglePlayback = async () => {
     const audio = audioRef.current
     if (!audio) return
-    if (audio.paused) void audio.play()
-    else audio.pause()
+    if (!audio.paused) {
+      audio.pause()
+      return
+    }
+    setPlaybackError("")
+    try {
+      await audio.play()
+    } catch (error) {
+      setPlaybackError(error instanceof Error ? error.message : "Audio playback failed.")
+    }
   }
 
   const beginDrag = (event: React.DragEvent, path: string) => {
@@ -494,16 +507,17 @@ function AudioArtifactCard({ artifact, compact = false }: { artifact: AudioArtif
       <audio
         ref={audioRef}
         src={mediaUrl}
-        preload="metadata"
+        preload="auto"
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
+        onError={() => setPlaybackError(`Audio file could not be loaded: ${artifact.name}`)}
         onEnded={() => { setPlaying(false); setProgress(0) }}
         onTimeUpdate={(event) => {
           const audio = event.currentTarget
           setProgress(audio.duration > 0 ? audio.currentTime / audio.duration : 0)
         }}
       />
-      <header><div><strong title={artifact.name}>{artifact.displayName}</strong><small>{artifact.category ? `${artifact.category} · ` : ""}{artifact.bpm} BPM · {artifact.key}</small></div><span>{artifact.duration.toFixed(1)}s</span></header>
+      <header title={playbackError || undefined}><div><strong title={artifact.name}>{artifact.displayName}</strong><small>{playbackError || `${artifact.category ? `${artifact.category} · ` : ""}${artifact.bpm} BPM · ${artifact.key}`}</small></div><span>{artifact.duration.toFixed(1)}s</span></header>
       <div className="artifact-wave-row">
         <button type="button" onClick={togglePlayback} aria-label={playing ? `Pause ${artifact.displayName}` : `Play ${artifact.displayName}`}>{playing ? <Pause aria-hidden="true" /> : <Play className="play-glyph" aria-hidden="true" />}</button>
         <Waveform progress={progress} compact label={`Waveform for ${artifact.displayName}`} bars={artifact.peaks.map((value) => Math.max(8, value * 100))} />
@@ -703,6 +717,7 @@ function LayerCard({
   categoryOptions,
   canRemove,
   updating = false,
+  variant = "generate",
 }: {
   layer: GeneratedLayer
   progress: number
@@ -711,13 +726,15 @@ function LayerCard({
   onPlay: () => void
   onSeek: (progress: number) => void
   onChange: (layer: GeneratedLayer) => void
-  onToggleAlternateKey: () => void
-  onToggleLock: () => void
-  onRemove: () => void
-  categoryOptions: string[]
-  canRemove: boolean
+  onToggleAlternateKey?: () => void
+  onToggleLock?: () => void
+  onRemove?: () => void
+  categoryOptions?: string[]
+  canRemove?: boolean
   updating?: boolean
+  variant?: "generate" | "extract"
 }) {
+  const isGenerateCard = variant === "generate"
   const beginDrag = (event: React.DragEvent, path: string | undefined) => {
     if (!path) return
     event.preventDefault()
@@ -725,7 +742,7 @@ function LayerCard({
   }
 
   return (
-    <Card className={cn("layer-card", "layer-tone-spectral", isAudible && "is-audible")} aria-label={`${layer.role}, ${layer.category}`}>
+    <Card className={cn("layer-card", isGenerateCard ? "layer-tone-spectral" : "layer-tone-extract", !isGenerateCard && "is-extract", isAudible && "is-audible")} aria-label={`${layer.role}, ${layer.category}`}>
       <CardHeader>
         <div className="layer-heading">
           <div className="layer-index">{layer.role.slice(0, 1)}</div>
@@ -736,7 +753,7 @@ function LayerCard({
             </CardDescription>
           </div>
         </div>
-        <div className="layer-card-actions">
+        {isGenerateCard ? <div className="layer-card-actions">
           <select
             className="layer-category-select"
             aria-label={`Catégorie de ${layer.role}`}
@@ -744,11 +761,11 @@ function LayerCard({
             disabled={updating}
             onChange={(event) => onChange({ ...layer, category: event.target.value, locked: false })}
           >
-            {Array.from(new Set([layer.category, ...categoryOptions])).map((category) => <option key={category} value={category}>{category}</option>)}
+            {Array.from(new Set([layer.category, ...(categoryOptions ?? [])])).map((category) => <option key={category} value={category}>{category}</option>)}
           </select>
           <button type="button" className={cn("layer-mini-action", layer.locked && "is-active")} disabled={!layer.identity || updating} aria-pressed={Boolean(layer.locked)} aria-label={`${layer.locked ? "Libérer" : "Garder"} ${layer.role} pour la prochaine génération`} onClick={onToggleLock}>{layer.locked ? <Lock aria-hidden="true" /> : <Unlock aria-hidden="true" />}</button>
           <button type="button" className="layer-mini-action" disabled={!canRemove || updating} aria-label={`Supprimer la card ${layer.role}`} onClick={onRemove}><X aria-hidden="true" /></button>
-        </div>
+        </div> : <span className="layer-static-kind">Extracted layer</span>}
       </CardHeader>
       <CardContent>
         <div className="layer-transport">
@@ -784,7 +801,7 @@ function LayerCard({
         <div className="layer-metadata">
           <span><Gauge aria-hidden="true" /> {layer.bpm} BPM</span>
           <span><Music2 aria-hidden="true" /> {layer.keyName}</span>
-          {layer.alternateKey && layer.identity ? (
+          {layer.alternateKey && layer.identity && onToggleAlternateKey ? (
             <button type="button" className="layer-alt-key" disabled={updating} title="Basculer entre la clé Top-1 et Top-2" onClick={onToggleAlternateKey}>
               <Radio aria-hidden="true" /> {layer.sourceKeyRank === 2 ? "Top-1" : layer.alternateKey}
             </button>
@@ -806,7 +823,7 @@ function LayerCard({
             />
             <output className="tabular">{layer.volume}%</output>
           </label>
-          <label>
+          {isGenerateCard ? <label>
             <span>Octave</span>
             <select
               aria-label={`Octave de ${layer.role}`}
@@ -818,14 +835,14 @@ function LayerCard({
               <option value="0">0</option>
               <option value="1">+1</option>
             </select>
-          </label>
+          </label> : null}
           <Button
             variant="outline"
             size="sm"
             disabled={!layer.path}
             draggable={Boolean(layer.path)}
             aria-label={`Exporter ${layer.role}`}
-            title={layer.path ? "Drag audio or click to reveal it" : "Generate this layer before exporting it"}
+            title={layer.path ? "Drag audio or click to reveal it" : "Render this layer before exporting it"}
             onClick={() => layer.path && void window.stemSlicer?.revealPath(layer.path)}
             onDragStart={(event) => beginDrag(event, layer.path)}
           >
@@ -1057,7 +1074,8 @@ function GenerateView({
       bars: artifact.peaks.map((peak) => Math.max(8, Math.round(peak * 100))),
     }))
     setLayers(nextLayers)
-    setStatus(`${generationResult.layers.length} real layers generated`)
+    const elapsedLabel = generationResult.elapsedSeconds ? ` in ${generationResult.elapsedSeconds.toFixed(1)}s` : ""
+    setStatus(`${generationResult.layers.length} real layers generated${elapsedLabel}`)
     onAddHistory({
       id: crypto.randomUUID(),
       bpm: generationResult.targetBpm,
@@ -1351,7 +1369,7 @@ function GenerateView({
                 onPlay={() => toggleSolo(layer.id)}
                 onSeek={(nextProgress) => {
                   if (!allPlaying && soloId !== layer.id) setSoloId(layer.id)
-                  playback.seek(nextProgress)
+                  playback.seek(nextProgress, allPlaying ? null : layer.id)
                 }}
                 onChange={(next) => updateGeneratedLayer(index, next)}
                 onToggleAlternateKey={() => toggleAlternateKey(index)}
@@ -1633,7 +1651,19 @@ function SegmentedChoice({ label, value, options, onChange }: { label: string; v
   )
 }
 
-function QuickToolsView() {
+function QuickToolsView({
+  previewLayers,
+  setPreviewLayers,
+  playback,
+  soloId,
+  setSoloId,
+}: {
+  previewLayers: GeneratedLayer[]
+  setPreviewLayers: React.Dispatch<React.SetStateAction<GeneratedLayer[]>>
+  playback: PlaybackClock
+  soloId: string | null
+  setSoloId: React.Dispatch<React.SetStateAction<string | null>>
+}) {
   type QuickToolId = "extract" | "scan" | "convert"
 
   const quickTools: Array<{ id: QuickToolId; label: string; description: string; icon: LucideIcon }> = [
@@ -1662,6 +1692,40 @@ function QuickToolsView() {
   const extractResult = extractJob.result as QuickExtractResult | null
   const convertResult = convertJob.result as QuickConvertResult | null
   const extractedLayers = extractResult?.layers ?? extractJob.artifacts
+  const allExtractedPlaying = playback.playing && soloId === null
+
+  useEffect(() => {
+    setPreviewLayers((current) => {
+      const currentByPath = new Map(current.map((layer) => [layer.path, layer]))
+      return extractedLayers.map((artifact, index) => {
+        const retained = currentByPath.get(artifact.path)
+        return {
+          id: `quick-extract-${artifact.path}`,
+          role: `Layer ${index + 1}`,
+          file: artifact.name,
+          category: artifact.category ?? "Extracted",
+          bpm: artifact.bpm,
+          keyName: artifact.key || "—",
+          octave: 0,
+          volume: retained?.volume ?? 78,
+          duration: artifact.duration,
+          path: artifact.path,
+          midiPath: artifact.midiPath,
+          sourcePath: artifact.sourcePath,
+          bars: artifact.peaks.map((value) => Math.max(8, Math.round(value * 100))),
+        }
+      })
+    })
+  }, [extractedLayers, setPreviewLayers])
+
+  const toggleExtractedLayer = (id: string) => {
+    if (soloId === id && playback.playing) {
+      playback.toggle()
+      return
+    }
+    setSoloId(id)
+    void playback.play(id)
+  }
 
   const pickAudio = async (setPath: (path: string) => void) => {
     const result = await window.stemSlicer?.pickAudioFiles()
@@ -1753,7 +1817,7 @@ function QuickToolsView() {
           <div id="quick-tool-panel-extract" className="quick-tool-panel extract-panel" role="tabpanel" aria-labelledby="quick-tool-tab-extract">
             <header className="quick-panel-heading">
               <div><span className="quick-panel-kicker">One loop · multiple layers</span><h2>Extract layers</h2></div>
-              <div className="quick-panel-actions"><span className="quick-panel-status">{extractJob.busy ? `${extractJob.percent}% · ${extractJob.message}` : `${extractedLayers.length} layers`}</span><Button variant="outline" size="sm" disabled={extractedLayers.length === 0} onClick={() => window.stemSlicer?.startFilesDrag(extractedLayers.map((layer) => layer.path))}><Layers3 /> Drag all</Button></div>
+              <div className="quick-panel-actions"><span className="quick-panel-status">{extractJob.busy ? `${extractJob.percent}% · ${extractJob.message}` : `${previewLayers.length} layers`}</span><Button variant="outline" size="sm" disabled={previewLayers.length === 0} onClick={() => window.stemSlicer?.startFilesDrag(previewLayers.flatMap((layer) => layer.path ? [layer.path] : []))}><Layers3 /> Drag all</Button></div>
             </header>
 
             <div className="quick-extract-controls">
@@ -1782,7 +1846,20 @@ function QuickToolsView() {
               <span>{extractFile ? `${basename(extractFile)} selected` : "Waiting for one source loop"}</span>
             </div>
             <div className="quick-layer-area" aria-live="polite">
-              {extractedLayers.length > 0 ? <div className="quick-artifact-grid">{extractedLayers.map((artifact) => <AudioArtifactCard key={artifact.path} artifact={artifact} compact />)}</div> : <div className="quick-layer-empty">
+              {previewLayers.length > 0 ? <div className="quick-artifact-grid">{previewLayers.map((layer, index) => <LayerCard
+                key={layer.id}
+                layer={layer}
+                variant="extract"
+                progress={playback.progress}
+                playing={playback.playing}
+                isAudible={allExtractedPlaying || soloId === layer.id}
+                onPlay={() => toggleExtractedLayer(layer.id)}
+                onSeek={(nextProgress) => {
+                  if (!allExtractedPlaying && soloId !== layer.id) setSoloId(layer.id)
+                  playback.seek(nextProgress, allExtractedPlaying ? null : layer.id)
+                }}
+                onChange={(next) => setPreviewLayers((current) => current.map((item, itemIndex) => itemIndex === index ? next : item))}
+              />)}</div> : <div className="quick-layer-empty">
                 <span className="quick-empty-icon"><Layers3 aria-hidden="true" /></span>
                 <strong>{extractJob.error || (extractJob.busy ? extractJob.message : "No extracted layers yet")}</strong>
                 <span>{extractJob.busy ? `${extractJob.percent}% complete` : "Choose a loop to create playable cards with waveform, MIDI drag and individual export."}</span>
@@ -1939,9 +2016,10 @@ function CloudView() {
   )
 }
 
-function GlobalPlayer({ layers, playback, soloId, setSoloId }: { layers: GeneratedLayer[]; playback: PlaybackClock; soloId: string | null; setSoloId: React.Dispatch<React.SetStateAction<string | null>> }) {
+function GlobalPlayer({ layers, playback, soloId, setSoloId, contextLabel }: { layers: GeneratedLayer[]; playback: PlaybackClock; soloId: string | null; setSoloId: React.Dispatch<React.SetStateAction<string | null>>; contextLabel: string }) {
   const currentLayer = layers.find((layer) => layer.id === soloId) ?? layers[0]
   const allPlaying = playback.playing && soloId === null
+  const duration = currentLayer?.duration ?? 0
 
   const toggleMix = () => {
     if (soloId !== null) {
@@ -1956,8 +2034,8 @@ function GlobalPlayer({ layers, playback, soloId, setSoloId }: { layers: Generat
     <footer className="global-player app-no-drag" aria-label="Global audio preview">
       <div className="player-current">
         <span className="player-art"><AudioLines aria-hidden="true" /></span>
-        <div><strong>{soloId ? currentLayer?.role : "Generated stack"}</strong><small>{currentLayer ? `${currentLayer.bpm} BPM · ${currentLayer.keyName}` : "No generated layers"}</small></div>
-        <Badge variant={playback.error ? "warning" : "secondary"}>{playback.error ? "Audio unavailable" : "Local audio"}</Badge>
+        <div><strong>{soloId ? currentLayer?.role : contextLabel}</strong><small>{currentLayer ? `${currentLayer.bpm} BPM · ${currentLayer.keyName}` : "No audio layers"}</small></div>
+        <Badge variant={playback.error ? "warning" : "secondary"} title={playback.error || undefined}>{playback.error ? "Audio unavailable" : "Local audio"}</Badge>
       </div>
       <div className="player-core">
         <div className="player-controls">
@@ -1965,7 +2043,7 @@ function GlobalPlayer({ layers, playback, soloId, setSoloId }: { layers: Generat
           <button type="button" className={cn("player-key player-key-primary", playback.playing && "is-active")} onClick={toggleMix} aria-label={allPlaying ? "Pause all layers" : "Play all layers"}>{allPlaying ? <Pause aria-hidden="true" /> : <Play className="play-glyph" aria-hidden="true" />}</button>
           <button type="button" className="player-key" onClick={playback.stop} aria-label="Stop preview"><Square aria-hidden="true" /></button>
         </div>
-        <div className="player-timeline"><Waveform progress={playback.progress} compact label="Generated stack waveform" /><span className="tabular">{(playback.progress * 7.44).toFixed(1)} / 7.4 s</span></div>
+        <div className="player-timeline"><Waveform progress={playback.progress} compact label={`${contextLabel} waveform`} /><span className="tabular">{(playback.progress * duration).toFixed(1)} / {duration.toFixed(1)} s</span></div>
       </div>
       <label className="player-volume"><Sliders aria-hidden="true" /><span className="sr-only">Preview volume</span><input type="range" min="0" max="100" value={playback.masterVolume} onChange={(event) => playback.setMasterVolume(Number(event.target.value))} /><output className="tabular">{playback.masterVolume}%</output></label>
     </footer>
@@ -1977,10 +2055,13 @@ export function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [library, setLibrary] = useState<LibraryOverview>(FALLBACK_LIBRARY)
   const [layers, setLayers] = useState(INITIAL_LAYERS)
+  const [quickPreviewLayers, setQuickPreviewLayers] = useState<GeneratedLayer[]>([])
   const [history, setHistory] = useState<HistoryEntry[]>(loadGenerateHistory)
   const [currentGenerationResult, setCurrentGenerationResult] = useState<GenerateResult | null>(null)
   const [soloId, setSoloId] = useState<string | null>(null)
-  const playback = usePlaybackClock(layers)
+  const quickPreviewActive = activeView === "quick-tools" && quickPreviewLayers.length > 0
+  const playerLayers = useMemo(() => quickPreviewActive ? quickPreviewLayers : layers, [layers, quickPreviewActive, quickPreviewLayers])
+  const playback = usePlaybackClock(playerLayers)
   const mainRef = useRef<HTMLElement>(null)
   const initialViewRef = useRef(true)
 
@@ -2015,6 +2096,7 @@ export function App() {
 
   useEffect(() => {
     document.title = `${NAVIGATION.find((item) => item.id === activeView)?.label ?? "Stem Slicer"} · Stem Slicer Prototype`
+    setSoloId(null)
     if (initialViewRef.current) {
       initialViewRef.current = false
       return
@@ -2066,11 +2148,11 @@ export function App() {
         <main id="main-content" tabIndex={-1} ref={mainRef} className={cn(activeView === "generate" && "generate-main", activeView === "quick-tools" && "quick-tools-main", activeView === "stem-slicer" && "stem-slicer-main")}>
           <div hidden={activeView !== "stem-slicer"}><StemSlicerView /></div>
           <div hidden={activeView !== "generate"}><GenerateView library={library} layers={layers} setLayers={setLayers} currentGenerationResult={currentGenerationResult} setCurrentGenerationResult={setCurrentGenerationResult} onAddHistory={addHistory} onUpdateHistory={updateHistory} onLibraryRefresh={refreshLibrary} playback={playback} soloId={soloId} setSoloId={setSoloId} /></div>
-          <div hidden={activeView !== "quick-tools"}><QuickToolsView /></div>
+          <div hidden={activeView !== "quick-tools"}><QuickToolsView previewLayers={quickPreviewLayers} setPreviewLayers={setQuickPreviewLayers} playback={playback} soloId={soloId} setSoloId={setSoloId} /></div>
           <div hidden={activeView !== "history"}><HistoryView history={history} onReopen={reopenHistory} onTrash={trashHistory} /></div>
           <div hidden={activeView !== "cloud"}><CloudView /></div>
         </main>
-        <GlobalPlayer layers={layers} playback={playback} soloId={soloId} setSoloId={setSoloId} />
+        <GlobalPlayer layers={playerLayers} playback={playback} soloId={soloId} setSoloId={setSoloId} contextLabel={quickPreviewActive ? "Extracted stack" : "Generated stack"} />
       </div>
     </div>
   )

@@ -200,6 +200,8 @@ export interface GenerateResult {
   seed: number
   targetBpm: number
   targetKey: string
+  elapsedSeconds?: number
+  selectionSeconds?: number
   layers: AudioArtifact[]
 }
 

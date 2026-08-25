@@ -837,6 +837,7 @@ def generation(job_id: str, payload: dict) -> dict:
         render_generation,
     )
 
+    generation_started = time.perf_counter()
     database = Path(str(payload.get("databasePath") or "")).expanduser().resolve()
     if not database.is_file():
         raise ValueError("The Generate library cache is unavailable.")
@@ -880,8 +881,15 @@ def generation(job_id: str, payload: dict) -> dict:
         8,
         "selection",
     )
+    selection_started = time.perf_counter()
     plan = select_generation(candidates, request)
-    progress_percent(job_id, f"Selected {len(plan.selections)} compatible layers", 12, "selection")
+    selection_seconds = time.perf_counter() - selection_started
+    progress_percent(
+        job_id,
+        f"Selected {len(plan.selections)} compatible layers in {selection_seconds:.2f}s",
+        12,
+        "selection",
+    )
 
     class ReportingBackend:
         def __init__(self) -> None:
@@ -968,6 +976,7 @@ def generation(job_id: str, payload: dict) -> dict:
     while len(_generation_sessions) > 4:
         _generation_sessions.pop(next(iter(_generation_sessions)))
     progress(job_id, "Generation complete", 10, 10, "complete")
+    elapsed_seconds = time.perf_counter() - generation_started
     return {
         "outputDirectory": str(rendered.output_directory),
         "masterPath": str(rendered.master_path),
@@ -975,6 +984,8 @@ def generation(job_id: str, payload: dict) -> dict:
         "seed": request.seed,
         "targetBpm": request.target_bpm,
         "targetKey": request.target_key,
+        "elapsedSeconds": elapsed_seconds,
+        "selectionSeconds": selection_seconds,
         "layers": artifacts,
     }
 
