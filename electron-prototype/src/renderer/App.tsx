@@ -21,6 +21,7 @@ import {
   Play,
   Plus,
   Radio,
+  RefreshCw,
   Repeat2,
   RotateCcw,
   ScanLine,
@@ -278,10 +279,14 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
   const [error, setError] = useState("")
   const [mode, setMode] = useState<PlaybackMode>("idle")
   const [soloId, setSoloId] = useState<string | null>(null)
+  const [lastSoloId, setLastSoloId] = useState<string | null>(null)
+  const [syncEnabled, setSyncEnabled] = useState(false)
   const [mutedIds, setMutedIds] = useState<string[]>([])
   const audioByIdRef = useRef(new Map<string, HTMLAudioElement>())
   const modeRef = useRef<PlaybackMode>("idle")
   const soloIdRef = useRef<string | null>(null)
+  const lastSoloIdRef = useRef<string | null>(null)
+  const syncEnabledRef = useRef(false)
   const mutedIdsRef = useRef(new Set<string>())
   const layerSourcesJson = JSON.stringify(layers.map((layer) => ({ id: layer.id, path: layer.path ?? "" })))
 
@@ -294,6 +299,16 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
     soloIdRef.current = nextSoloId
     setMode(nextMode)
     setSoloId(nextSoloId)
+  }, [])
+
+  const commitLastSoloId = useCallback((nextSoloId: string | null) => {
+    lastSoloIdRef.current = nextSoloId
+    setLastSoloId(nextSoloId)
+  }, [])
+
+  const commitSyncEnabled = useCallback((nextEnabled: boolean) => {
+    syncEnabledRef.current = nextEnabled
+    setSyncEnabled(nextEnabled)
   }, [])
 
   const commitMutedIds = useCallback((nextMutedIds: Set<string>) => {
@@ -341,9 +356,11 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
     setPlaying(false)
     setProgress(0)
     commitMode("idle", null)
+    commitLastSoloId(null)
+    commitSyncEnabled(false)
     commitMutedIds(new Set())
     return pauseAll
-  }, [commitMode, commitMutedIds, layerSourcesJson, pauseAll])
+  }, [commitLastSoloId, commitMode, commitMutedIds, commitSyncEnabled, layerSourcesJson, pauseAll])
 
   useEffect(() => {
     for (const layer of layers) {
@@ -376,6 +393,7 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
   }, [playing])
 
   const toggleMix = useCallback(async () => {
+    if (!syncEnabledRef.current) return
     if (modeRef.current === "mix" && playing) {
       pauseAll()
       setPlaying(false)
@@ -419,14 +437,17 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
     setProgress(0)
     setPlaying(false)
     setError("")
-    if (modeRef.current === "mix") {
-      commitMode("idle", null)
-      commitMutedIds(new Set())
+    const nextEnabled = !syncEnabledRef.current
+    commitSyncEnabled(nextEnabled)
+    commitMutedIds(new Set())
+    if (nextEnabled) {
+      commitMode("mix", null)
       return
     }
-    commitMode("mix", null)
-    commitMutedIds(new Set())
-  }, [commitMode, commitMutedIds, pauseAll])
+    const previousSoloId = lastSoloIdRef.current
+    const hasPreviousSolo = Boolean(previousSoloId && audioByIdRef.current.has(previousSoloId))
+    commitMode(hasPreviousSolo ? "solo" : "idle", hasPreviousSolo ? previousSoloId : null)
+  }, [commitMode, commitMutedIds, commitSyncEnabled, pauseAll])
 
   const toggleLayer = useCallback(async (id: string) => {
     const audio = audioByIdRef.current.get(id)
@@ -435,7 +456,7 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
       return
     }
 
-    if (modeRef.current === "mix") {
+    if (syncEnabledRef.current) {
       const nextMutedIds = new Set(mutedIdsRef.current)
       if (nextMutedIds.has(id)) {
         nextMutedIds.delete(id)
@@ -458,6 +479,7 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
       return
     }
 
+    commitLastSoloId(id)
     if (modeRef.current === "solo" && soloIdRef.current === id) {
       if (playing) {
         audio.pause()
@@ -487,27 +509,44 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
       setPlaying(false)
       setError(playError instanceof Error ? playError.message : "Audio playback failed.")
     }
-  }, [commitMode, commitMutedIds, pauseAll, playing])
+  }, [commitLastSoloId, commitMode, commitMutedIds, pauseAll, playing])
+
+  const togglePrimary = useCallback(async () => {
+    if (syncEnabledRef.current) {
+      await toggleMix()
+      return
+    }
+    const previousSoloId = lastSoloIdRef.current
+    if (!previousSoloId || !audioByIdRef.current.has(previousSoloId)) return
+    await toggleLayer(previousSoloId)
+  }, [toggleLayer, toggleMix])
 
   const stop = useCallback(() => {
     pauseAll()
     for (const audio of audioByIdRef.current.values()) audio.currentTime = 0
     setProgress(0)
     setPlaying(false)
-    commitMode("idle", null)
     commitMutedIds(new Set())
+    if (syncEnabledRef.current) {
+      commitMode("mix", null)
+      return
+    }
+    const previousSoloId = lastSoloIdRef.current
+    const hasPreviousSolo = Boolean(previousSoloId && audioByIdRef.current.has(previousSoloId))
+    commitMode(hasPreviousSolo ? "solo" : "idle", hasPreviousSolo ? previousSoloId : null)
   }, [commitMode, commitMutedIds, pauseAll])
 
   const seekLayer = useCallback((id: string, nextProgress: number) => {
     const clampedProgress = Math.max(0, Math.min(nextProgress, 1))
     let active: HTMLAudioElement[]
-    if (modeRef.current === "mix") {
+    if (syncEnabledRef.current) {
       active = Array.from(audioByIdRef.current.values())
     } else {
       if (modeRef.current !== "solo" || soloIdRef.current !== id) {
         pauseAll()
         setPlaying(false)
         commitMode("solo", id)
+        commitLastSoloId(id)
         commitMutedIds(new Set())
       }
       active = [audioByIdRef.current.get(id)].filter((audio): audio is HTMLAudioElement => Boolean(audio))
@@ -516,7 +555,7 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
       if (Number.isFinite(audio.duration) && audio.duration > 0) audio.currentTime = clampedProgress * audio.duration
     }
     setProgress(clampedProgress)
-  }, [commitMode, commitMutedIds, pauseAll])
+  }, [commitLastSoloId, commitMode, commitMutedIds, pauseAll])
 
   const mutedIdSet = useMemo(() => new Set(mutedIds), [mutedIds])
   return {
@@ -524,9 +563,11 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
     progress,
     mode,
     soloId,
+    lastSoloId,
+    syncEnabled,
     mutedIds: mutedIdSet,
     seekLayer,
-    toggleMix,
+    togglePrimary,
     toggleSyncMode,
     toggleLayer,
     stop,
@@ -782,7 +823,7 @@ function LayerCategorySelect({
         <BaseSelect.Positioner
           className="custom-select-positioner"
           side="bottom"
-          align="end"
+          align="start"
           sideOffset={5}
           alignItemWithTrigger={false}
           collisionAvoidance={{ side: "none", align: "shift", fallbackAxisSide: "none" }}
@@ -959,25 +1000,22 @@ function LayerCard({
     <Card className={cn("layer-card", isGenerateCard ? "layer-tone-spectral" : "layer-tone-extract", !isGenerateCard && "is-extract", isAudible && "is-audible", isMuted && "is-muted")} aria-label={`${layer.category}, ${layer.file}`}>
       <CardHeader>
         <div className="layer-heading">
-          <div className="layer-index">{layer.category.slice(0, 1)}</div>
-          <div className="min-w-0">
-            {isGenerateCard ? (
-              <LayerCategorySelect
-                id={`layer-category-${layer.id}`}
-                value={layer.category}
-                disabled={updating}
-                options={categoryOptions ?? []}
-                onChange={(category) => onChange({ ...layer, category, locked: false })}
-              />
-            ) : <CardTitle>{layer.category}</CardTitle>}
-            <CardDescription className="truncate" title={layer.file}>
-              {layer.file}
-            </CardDescription>
-          </div>
+          {isGenerateCard ? (
+            <LayerCategorySelect
+              id={`layer-category-${layer.id}`}
+              value={layer.category}
+              disabled={updating}
+              options={categoryOptions ?? []}
+              onChange={(category) => onChange({ ...layer, category, locked: false })}
+            />
+          ) : <CardTitle className="layer-category-static">{layer.category}</CardTitle>}
+          <CardDescription className="truncate" title={layer.file}>
+            {layer.file}
+          </CardDescription>
         </div>
         {isGenerateCard ? <div className="layer-card-actions">
-          <button type="button" className={cn("layer-mini-action", layer.locked && "is-active")} disabled={!layer.identity || updating} aria-pressed={Boolean(layer.locked)} aria-label={`${layer.locked ? "Libérer" : "Garder"} ${layer.role} pour la prochaine génération`} onClick={onToggleLock}>{layer.locked ? <Lock aria-hidden="true" /> : <Unlock aria-hidden="true" />}</button>
-          <button type="button" className="layer-mini-action" disabled={!canRemove || updating} aria-label={`Supprimer la card ${layer.role}`} onClick={onRemove}><X aria-hidden="true" /></button>
+          <button type="button" className={cn("layer-mini-action layer-lock-action", layer.locked && "is-active")} disabled={!layer.identity || updating} aria-pressed={Boolean(layer.locked)} aria-label={`${layer.locked ? "Libérer" : "Garder"} ${layer.role} pour la prochaine génération`} onClick={onToggleLock}>{layer.locked ? <Lock aria-hidden="true" /> : <Unlock aria-hidden="true" />}<span>Lock</span></button>
+          <button type="button" className="layer-mini-action layer-remove-action" disabled={!canRemove || updating} aria-label={`Supprimer la card ${layer.role}`} onClick={onRemove}><X aria-hidden="true" /></button>
         </div> : null}
       </CardHeader>
       <CardContent>
@@ -2134,27 +2172,65 @@ function QuickToolsView({
   )
 }
 
-function HistoryPlayButton({ entry }: { entry: HistoryEntry }) {
-  const audioRef = useRef<HTMLAudioElement>(null)
-  const [playing, setPlaying] = useState(false)
-  const source = window.stemSlicer?.mediaUrl(entry.generation.masterPath) ?? ""
-
-  const toggle = () => {
-    const audio = audioRef.current
-    if (!audio) return
-    if (audio.paused) void audio.play()
-    else audio.pause()
-  }
-
+function HistoryPlayButton({ entry, playing, onToggle }: { entry: HistoryEntry; playing: boolean; onToggle: () => void }) {
   return (
-    <>
-      <audio ref={audioRef} src={source} preload="metadata" onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)} />
-      <Button variant="outline" size="sm" onClick={toggle} aria-label={`${playing ? "Pause" : "Play"} ${entry.recipe} generation`}>{playing ? <Pause /> : <Play className="play-glyph" />}</Button>
-    </>
+    <Button variant="outline" size="sm" onClick={onToggle} aria-label={`${playing ? "Pause" : "Play"} ${entry.recipe} generation`}>{playing ? <Pause /> : <Play className="play-glyph" />}</Button>
   )
 }
 
 function HistoryView({ history, onReopen, onTrash }: { history: HistoryEntry[]; onReopen: (entry: HistoryEntry) => void; onTrash: (entry: HistoryEntry) => Promise<void> }) {
+  const historyAudioRef = useRef<HTMLAudioElement | null>(null)
+  const [playingEntryId, setPlayingEntryId] = useState<string | null>(null)
+
+  const stopHistoryAudio = useCallback(() => {
+    const audio = historyAudioRef.current
+    if (audio) {
+      audio.pause()
+      audio.currentTime = 0
+    }
+    setPlayingEntryId(null)
+  }, [])
+
+  useEffect(() => stopHistoryAudio, [stopHistoryAudio])
+
+  const toggleHistoryEntry = useCallback(async (entry: HistoryEntry) => {
+    const source = window.stemSlicer?.mediaUrl(entry.generation.masterPath)
+    if (!source) return
+    const currentAudio = historyAudioRef.current
+    if (playingEntryId === entry.id && currentAudio) {
+      if (currentAudio.paused) {
+        try {
+          await currentAudio.play()
+          if (historyAudioRef.current === currentAudio && !currentAudio.paused) setPlayingEntryId(entry.id)
+        } catch {
+          setPlayingEntryId(null)
+        }
+      } else {
+        currentAudio.pause()
+        setPlayingEntryId(null)
+      }
+      return
+    }
+
+    if (currentAudio) {
+      currentAudio.pause()
+      currentAudio.currentTime = 0
+    }
+    const nextAudio = new Audio(source)
+    nextAudio.preload = "metadata"
+    nextAudio.onended = () => setPlayingEntryId(null)
+    nextAudio.onpause = () => {
+      if (nextAudio.ended) setPlayingEntryId(null)
+    }
+    historyAudioRef.current = nextAudio
+    try {
+      await nextAudio.play()
+      if (historyAudioRef.current === nextAudio && !nextAudio.paused) setPlayingEntryId(entry.id)
+    } catch {
+      if (historyAudioRef.current === nextAudio) setPlayingEntryId(null)
+    }
+  }, [playingEntryId])
+
   return (
     <div className="page-stack">
       <PageHeader eyebrow="Workspace / History" title="Generation history" description="Reopen previous combinations, compare recipes and keep the stacks worth exporting." />
@@ -2167,10 +2243,10 @@ function HistoryView({ history, onReopen, onTrash }: { history: HistoryEntry[]; 
                 <div><strong>{entry.recipe} combination</strong><small>{entry.createdAt} · {entry.layerCount} layers</small></div>
                 <div className="history-spec"><Badge variant="secondary">{entry.recipe}</Badge><span>{entry.bpm} BPM</span><span>{entry.keyName}</span></div>
                 <div className="history-actions">
-                  <HistoryPlayButton entry={entry} />
+                  <HistoryPlayButton entry={entry} playing={playingEntryId === entry.id} onToggle={() => void toggleHistoryEntry(entry)} />
                   <Button variant="outline" size="sm" onClick={() => void window.stemSlicer?.revealPath(entry.generation.outputDirectory)}><FolderOpen /> Open</Button>
+                  <Button variant="outline" className="history-reload" size="sm" onClick={() => onReopen(entry)}><RefreshCw /> Reload</Button>
                   <Button variant="outline" size="sm" draggable onClick={() => void window.stemSlicer?.revealPath(entry.generation.masterPath)} onDragStart={(event) => { event.preventDefault(); window.stemSlicer?.startFileDrag(entry.generation.masterPath) }}><Layers3 /> Drag</Button>
-                  <Button variant="outline" size="sm" onClick={() => onReopen(entry)}><RotateCcw /> Reopen</Button>
                   <Button variant="ghost" size="icon" className="history-trash" aria-label={`Move ${entry.recipe} generation to Trash`} title="Move generated folder to Trash" onClick={() => void onTrash(entry)}><Trash2 /></Button>
                 </div>
               </CardContent>
@@ -2213,8 +2289,11 @@ function GlobalPlayer({ layers, playback, contextLabel }: { layers: GeneratedLay
     : []
   const currentLayer = soloLayer ?? activeLayers[0] ?? layers[0]
   const mixPlaying = playback.playing && playback.mode === "mix"
-  const syncEnabled = playback.mode === "mix"
-  const duration = currentLayer?.duration ?? 0
+  const syncEnabled = playback.syncEnabled
+  const primaryPlaying = playback.playing && (syncEnabled ? playback.mode === "mix" : playback.mode === "solo")
+  const timelineLayer = syncEnabled ? layers.find((layer) => layer.path) : soloLayer
+  const duration = timelineLayer?.duration ?? currentLayer?.duration ?? 0
+  const canPlayPrimary = syncEnabled ? layers.some((layer) => layer.path) : Boolean(playback.lastSoloId && soloLayer?.path)
   const activeFileNames = activeLayers.map((layer) => layer.file).join(" · ")
   const playerTitle = activeLayers.length === 1
     ? activeLayers[0].file
@@ -2241,11 +2320,26 @@ function GlobalPlayer({ layers, playback, contextLabel }: { layers: GeneratedLay
       </div>
       <div className="player-core">
         <div className="player-controls">
-          <button type="button" className={cn("player-key player-sync-key", syncEnabled && "is-active")} onClick={playback.toggleSyncMode} aria-pressed={syncEnabled} aria-label={syncEnabled ? "Disable synchronized playback" : "Enable synchronized playback"}><Link2 aria-hidden="true" /></button>
-          <button type="button" className={cn("player-key player-key-primary", mixPlaying && "is-active")} onClick={() => void playback.toggleMix()} aria-label={mixPlaying ? "Pause all layers" : "Play all layers"}>{mixPlaying ? <Pause aria-hidden="true" /> : <Play className="play-glyph" aria-hidden="true" />}</button>
+          <button type="button" className={cn("player-key player-sync-key", syncEnabled && "is-active")} onClick={playback.toggleSyncMode} aria-pressed={syncEnabled} aria-label={syncEnabled ? "Disable synchronized playback" : "Enable synchronized playback"}><Link2 aria-hidden="true" /><span>Sync</span></button>
+          <button type="button" className={cn("player-key player-key-primary", primaryPlaying && "is-active")} disabled={!canPlayPrimary} onClick={() => void playback.togglePrimary()} aria-label={syncEnabled ? mixPlaying ? "Pause all layers" : "Play all layers" : primaryPlaying ? "Pause selected layer" : "Play selected layer"}>{primaryPlaying ? <Pause aria-hidden="true" /> : <Play className="play-glyph" aria-hidden="true" />}</button>
           <button type="button" className="player-key" onClick={playback.stop} aria-label="Stop and return to start"><SkipBack aria-hidden="true" /></button>
         </div>
-        <div className="player-timeline"><Waveform progress={playback.progress} compact label={`${contextLabel} waveform`} /><span className="tabular">{(playback.progress * duration).toFixed(1)} / {duration.toFixed(1)} s</span></div>
+        <div className="player-timeline">
+          <div className="global-waveform-reader">
+            <Waveform progress={timelineLayer ? playback.progress : 0} compact label={`${contextLabel} waveform`} />
+            <input
+              className="global-waveform-scrubber"
+              type="range"
+              min="0"
+              max="1000"
+              disabled={!timelineLayer}
+              value={Math.round((timelineLayer ? playback.progress : 0) * 1000)}
+              aria-label={`Position de lecture ${contextLabel}`}
+              onChange={(event) => timelineLayer && playback.seekLayer(timelineLayer.id, Number(event.target.value) / 1000)}
+            />
+          </div>
+          <span className="tabular">{((timelineLayer ? playback.progress : 0) * duration).toFixed(1)} / {duration.toFixed(1)} s</span>
+        </div>
       </div>
       <label className="player-volume"><Sliders aria-hidden="true" /><span className="sr-only">Preview volume</span><input type="range" min="0" max="100" value={playback.masterVolume} onChange={(event) => playback.setMasterVolume(Number(event.target.value))} /><output className="tabular">{playback.masterVolume}%</output></label>
     </footer>

@@ -37,3 +37,15 @@ dialogs are TypeScript-owned. FFmpeg and Bungee remain external binaries. MERT
 and key analysis remain behind a temporary Python adapter boundary until an
 ONNX/TypeScript port has demonstrated equal outputs on the retained truth
 corpora.
+
+## Deferred generated-loop naming contract
+
+The generic History label such as `Balanced combination` is temporary. A later
+Generate pass must assign a real loop name and display/export it using the
+project convention `L <loop name> <BPM> <producer names>`.
+
+Producer attribution must be derived from the source metadata of every layer
+actually used in the generated stack. When layers from several producers are
+combined, every distinct contributing producer belongs in the generated loop
+name. The exact loop-name generation strategy remains to be specified before
+implementation.
