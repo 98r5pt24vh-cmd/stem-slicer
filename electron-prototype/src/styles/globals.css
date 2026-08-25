@@ -6871,8 +6871,13 @@ main.quick-tools-main {
   height: 100%;
   appearance: none;
   background: transparent;
-  cursor: pointer;
+  cursor: grab;
+  touch-action: none;
   opacity: 0;
+}
+
+.global-waveform-scrubber:active {
+  cursor: grabbing;
 }
 
 .global-waveform-scrubber:disabled {

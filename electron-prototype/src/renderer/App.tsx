@@ -2382,6 +2382,13 @@ function GlobalPlayer({ layers, playback, contextLabel, syncAvailable }: { layer
       : layers.length > 0
         ? "Choose a card or start synchronized play"
         : "No audio layers"
+  const seekTimelineFromPointer = (event: React.PointerEvent<HTMLInputElement>) => {
+    if (!timelineLayer) return
+    const bounds = event.currentTarget.getBoundingClientRect()
+    if (bounds.width <= 0) return
+    const nextProgress = (event.clientX - bounds.left) / bounds.width
+    playback.seekLayer(timelineLayer.id, nextProgress)
+  }
 
   return (
     <footer className="global-player app-no-drag" aria-label="Global audio preview">
@@ -2413,6 +2420,18 @@ function GlobalPlayer({ layers, playback, contextLabel, syncAvailable }: { layer
               value={Math.round((timelineLayer ? playback.progress : 0) * 1000)}
               aria-label={`Position de lecture ${contextLabel}`}
               onChange={(event) => timelineLayer && playback.seekLayer(timelineLayer.id, Number(event.target.value) / 1000)}
+              onPointerDown={(event) => {
+                if (event.button !== 0) return
+                event.currentTarget.setPointerCapture(event.pointerId)
+                seekTimelineFromPointer(event)
+              }}
+              onPointerMove={(event) => {
+                if (event.currentTarget.hasPointerCapture(event.pointerId)) seekTimelineFromPointer(event)
+              }}
+              onPointerUp={(event) => {
+                seekTimelineFromPointer(event)
+                if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+              }}
             />
           </div>
           <span className="tabular">{((timelineLayer ? playback.progress : 0) * duration).toFixed(1)} / {duration.toFixed(1)} s</span>
