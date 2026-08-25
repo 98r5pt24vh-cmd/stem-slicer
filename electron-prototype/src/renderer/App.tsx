@@ -870,16 +870,26 @@ function AudioArtifactCard({ artifact, compact = false }: { artifact: AudioArtif
           setProgress(audio.duration > 0 ? audio.currentTime / audio.duration : 0)
         }}
       />
-      <header title={playbackError || undefined}><div><strong title={artifact.name}>{artifact.displayName}</strong><small>{playbackError || `${artifact.category ? `${artifact.category} · ` : ""}${artifact.bpm} BPM · ${artifact.key}`}</small></div><span>{artifact.duration.toFixed(1)}s</span></header>
-      <div className="artifact-wave-row">
-        <button type="button" onClick={togglePlayback} aria-label={playing ? `Pause ${artifact.displayName}` : `Play ${artifact.displayName}`}>{playing ? <Pause aria-hidden="true" /> : <Play className="play-glyph" aria-hidden="true" />}</button>
-        <Waveform progress={progress} compact label={`Waveform for ${artifact.displayName}`} bars={artifact.peaks.map((value) => Math.max(8, value * 100))} />
+      <div className="audio-artifact-main">
+        <header title={playbackError || undefined}>
+          <div>
+            <strong title={artifact.name}>{artifact.displayName}</strong>
+            {playbackError ? <small>{playbackError}</small> : <div className="artifact-metadata">
+              <span><MetronomeIcon /> {artifact.bpm} BPM</span>
+              <span><Music2 aria-hidden="true" /> {artifact.key}</span>
+            </div>}
+          </div>
+          <span className="artifact-duration">{artifact.duration.toFixed(1)}s</span>
+        </header>
+        <div className="artifact-wave-row">
+          <button type="button" onClick={togglePlayback} aria-label={playing ? `Pause ${artifact.displayName}` : `Play ${artifact.displayName}`}>{playing ? <Pause aria-hidden="true" /> : <Play className="play-glyph" aria-hidden="true" />}</button>
+          <Waveform progress={progress} compact label={`Waveform for ${artifact.displayName}`} bars={artifact.peaks.map((value) => Math.max(8, value * 100))} />
+        </div>
       </div>
-      <footer>
+      <div className="artifact-side-actions">
         <button type="button" draggable onDragStart={(event) => beginDrag(event, artifact.path)}><AudioLines aria-hidden="true" />Audio</button>
-        {artifact.midiPath ? <button type="button" draggable onDragStart={(event) => beginDrag(event, artifact.midiPath as string)}><MidiFileIcon />MIDI</button> : <span>MIDI unavailable</span>}
         <button type="button" onClick={() => void window.stemSlicer?.revealPath(artifact.path)}><FolderOpen aria-hidden="true" />Reveal</button>
-      </footer>
+      </div>
     </article>
   )
 }
@@ -2306,7 +2316,7 @@ function QuickToolsView({
             <div className="quick-scan-body">
               <button type="button" className="quick-file-source quick-file-source-tall" onClick={chooseScanFile} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { const path = pathFromDrop(event); if (!path) return; setScanFile(path); void scanJob.start({ source: path }).catch(() => undefined) }}>
                 <span className="quick-source-icon"><ScanLine aria-hidden="true" /></span>
-                <span className="quick-source-copy"><strong>{scanFile ? basename(scanFile) : "Choose one loop"}</strong><small>{scanFile || "Drop a loop here or browse your files"}</small></span>
+                <span className="quick-source-copy"><strong>{scanFile ? basename(scanFile) : "Choose one loop"}</strong>{scanFile ? null : <small>Drop a loop here or browse your files</small>}</span>
                 <span className="quick-source-action">Browse loop</span>
               </button>
 

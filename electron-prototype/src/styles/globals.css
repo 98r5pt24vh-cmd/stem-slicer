@@ -6142,14 +6142,10 @@ main.quick-tools-main {
 }
 
 .quick-layer-area {
-  display: grid;
+  display: block;
   min-height: 0;
   flex: 1;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  grid-auto-rows: minmax(142px, auto);
-  align-content: start;
-  gap: 10px;
-  overflow: auto;
+  overflow: hidden;
   border: 1px solid rgb(255 255 255 / 0.075);
   border-radius: 13px;
   background:
@@ -6161,7 +6157,7 @@ main.quick-tools-main {
 }
 
 .quick-layer-area:has(.quick-layer-empty) {
-  grid-template-rows: minmax(0, 1fr);
+  display: grid;
 }
 
 .quick-layer-empty {
@@ -6497,21 +6493,37 @@ main.quick-tools-main {
 
 .quick-convert-controls {
   min-height: 86px;
-  grid-template-columns: minmax(260px, 1.25fr) 112px minmax(230px, 1fr) 102px;
-  align-items: end;
+  grid-template-columns: minmax(280px, 1.2fr) 128px minmax(230px, 1fr) 108px;
+  align-items: stretch;
 }
 
 .quick-convert-controls .quick-file-source {
   height: 86px;
 }
 
-.quick-convert-field {
+.quick-convert-field,
+.quick-convert-controls > .control-field {
   display: grid;
-  gap: 5px;
+  height: 86px;
+  min-width: 0;
+  grid-template-rows: auto 40px;
+  align-content: center;
+  gap: 7px;
+  border: 1px solid rgb(255 255 255 / 0.075);
+  border-radius: 12px;
+  background: rgb(255 255 255 / 0.025);
+  padding: 10px;
 }
 
-.quick-convert-controls .control-field {
-  min-width: 0;
+.quick-convert-field > span,
+.quick-convert-controls > .control-field > span {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  text-transform: uppercase;
 }
 
 .quick-convert-controls [data-slot="input"],
@@ -6521,14 +6533,15 @@ main.quick-tools-main {
 }
 
 .quick-convert-controls .quick-run-button {
-  height: 40px;
-  min-height: 40px;
+  height: 86px;
+  min-height: 86px;
+  align-self: stretch;
 }
 
 .quick-tool-panel.convert-panel .quick-convert-result {
   display: grid;
-  min-height: 0;
-  flex: 1;
+  min-height: 138px;
+  flex: 0 0 138px;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-content: center;
   align-items: center;
@@ -6539,7 +6552,7 @@ main.quick-tools-main {
   background:
     radial-gradient(circle at 24% 50%, rgb(var(--panel-rgb) / 0.07), transparent 34%),
     rgb(2 7 5 / 0.36);
-  padding: 18px;
+  padding: 10px;
 }
 
 .quick-tool-panel.convert-panel .quick-convert-result > div:nth-child(2) {
@@ -6572,19 +6585,26 @@ main.quick-tools-main {
 
 .quick-artifact-grid {
   display: grid;
+  width: 100%;
+  height: 100%;
   min-width: 0;
-  grid-column: 1 / -1;
+  min-height: 0;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-auto-rows: minmax(142px, auto);
   align-content: start;
   gap: 9px;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  padding-inline-end: 3px;
+  scrollbar-gutter: stable;
 }
 
 .audio-artifact-card {
   display: grid;
   min-width: 0;
-  min-height: 152px;
-  grid-template-rows: auto minmax(44px, 1fr) auto;
-  gap: 8px;
+  min-height: 116px;
+  grid-template-columns: minmax(0, 1fr) 76px;
+  gap: 10px;
   overflow: hidden;
   border: 1px solid rgb(var(--panel-rgb, 115 189 0) / 0.2);
   border-radius: 12px;
@@ -6599,40 +6619,77 @@ main.quick-tools-main {
   display: none;
 }
 
-.audio-artifact-card > header,
-.audio-artifact-card > footer,
+.audio-artifact-main > header,
 .artifact-wave-row {
   display: flex;
   min-width: 0;
   align-items: center;
 }
 
-.audio-artifact-card > header {
+.audio-artifact-main {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: auto minmax(44px, 1fr);
+  gap: 8px;
+}
+
+.audio-artifact-main > header {
   justify-content: space-between;
   gap: 8px;
 }
 
-.audio-artifact-card > header > div {
+.audio-artifact-main > header > div {
   min-width: 0;
 }
 
-.audio-artifact-card > header strong,
-.audio-artifact-card > header small {
+.audio-artifact-main > header strong,
+.audio-artifact-main > header small {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.audio-artifact-card > header strong {
+.audio-artifact-main > header strong {
   color: var(--foreground);
-  font-size: 10px;
+  font-size: 11px;
 }
 
-.audio-artifact-card > header small,
-.audio-artifact-card > header > span {
+.audio-artifact-main > header small,
+.artifact-duration {
   color: var(--muted-foreground);
   font-size: 8px;
+}
+
+.artifact-duration {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.artifact-metadata {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  margin-block-start: 4px;
+  color: var(--muted-foreground);
+  font-size: 8px;
+}
+
+.artifact-metadata span {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.artifact-metadata svg {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 12px;
+  color: var(--signal-yellow);
 }
 
 .artifact-wave-row {
@@ -6665,31 +6722,33 @@ main.quick-tools-main {
   flex: 1;
 }
 
-.audio-artifact-card > footer {
-  gap: 5px;
+.artifact-side-actions {
+  display: grid;
+  min-width: 0;
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  gap: 7px;
 }
 
-.audio-artifact-card > footer button,
-.audio-artifact-card > footer span {
-  display: inline-flex;
-  min-width: 0;
-  min-height: 26px;
+.artifact-side-actions button {
+  display: flex;
+  min-height: 0;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  flex: 1;
+  flex-direction: column;
+  gap: 5px;
   border: 1px solid rgb(255 255 255 / 0.075);
-  border-radius: 7px;
-  background: rgb(255 255 255 / 0.025);
+  border-radius: 9px;
+  background: linear-gradient(145deg, rgb(var(--panel-rgb) / 0.075), rgb(255 255 255 / 0.018));
   color: var(--muted-foreground);
-  padding-inline: 6px;
-  font-size: 7px;
+  font-size: 8px;
+  font-weight: 700;
   white-space: nowrap;
 }
 
-.audio-artifact-card > footer button svg {
-  width: 11px;
-  height: 11px;
+.artifact-side-actions button svg {
+  width: 17px;
+  height: 17px;
+  color: var(--panel-accent);
 }
 
 .quick-tool-panel.convert-panel .quick-convert-result > .audio-artifact-card {
