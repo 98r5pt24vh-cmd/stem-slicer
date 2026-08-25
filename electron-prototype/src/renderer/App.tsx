@@ -1235,7 +1235,6 @@ function LayerCard({
             }}
             onPointerUp={(event) => {
               if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
-              seekWaveformFromPointer(event)
               event.currentTarget.releasePointerCapture(event.pointerId)
               void onScrubEnd()
             }}
@@ -2502,7 +2501,6 @@ function GlobalPlayer({ layers, playback, contextLabel, syncAvailable }: { layer
             }}
             onPointerUp={(event) => {
               if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
-              seekTimelineFromPointer(event)
               event.currentTarget.releasePointerCapture(event.pointerId)
               void playback.endScrub()
             }}

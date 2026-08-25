@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url"
 
 import { AudioEngineService } from "./main/audio-engine"
 import { readLibraryOverview } from "./main/library-cache"
+import { mediaMimeType, parseByteRange } from "./main/media-range"
 import { migrationModules } from "./main/migration-modules"
 import type { AudioJobKind, AudioJobRequest, AudioSelection } from "./shared/contracts"
 
@@ -31,6 +32,51 @@ const generatedOutputRoot = path.join(
   "Generated Loops",
 )
 const dragPreviewMaxSize = 40
+
+async function createMediaResponse(request: Request, targetPath: string): Promise<Response> {
+  const size = statSync(targetPath).size
+  const contentType = mediaMimeType(path.extname(targetPath))
+  const commonHeaders = {
+    "Accept-Ranges": "bytes",
+    "Content-Type": contentType,
+  }
+  const rangeHeader = request.headers.get("range")
+
+  if (request.method === "HEAD") {
+    return new Response(null, {
+      status: 200,
+      headers: { ...commonHeaders, "Content-Length": String(size) },
+    })
+  }
+
+  if (!rangeHeader) {
+    const source = await net.fetch(pathToFileURL(targetPath).toString())
+    return new Response(source.body, {
+      status: 200,
+      headers: { ...commonHeaders, "Content-Length": String(size) },
+    })
+  }
+
+  const range = parseByteRange(rangeHeader, size)
+  if (!range) {
+    return new Response(null, {
+      status: 416,
+      headers: { ...commonHeaders, "Content-Range": `bytes */${size}` },
+    })
+  }
+
+  const source = await net.fetch(pathToFileURL(targetPath).toString(), {
+    headers: { Range: `bytes=${range.start}-${range.end}` },
+  })
+  return new Response(source.body, {
+    status: 206,
+    headers: {
+      ...commonHeaders,
+      "Content-Length": String(range.end - range.start + 1),
+      "Content-Range": `bytes ${range.start}-${range.end}/${size}`,
+    },
+  })
+}
 
 function createDragPreviewIcon() {
   const iconPath = path.join(audioEngine.status().sourceRoot, "assets", "app-icon.png")
@@ -172,7 +218,7 @@ app.whenReady().then(() => {
     if (!path.isAbsolute(targetPath) || !existsSync(targetPath)) {
       return new Response("Media file unavailable.", { status: 404 })
     }
-    return net.fetch(pathToFileURL(targetPath).toString())
+    return createMediaResponse(request, targetPath)
   })
   registerIpc()
   createWindow()
