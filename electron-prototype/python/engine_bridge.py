@@ -61,6 +61,21 @@ def progress(job_id: str, message: str, current: int, total: int, phase: str) ->
     )
 
 
+def progress_percent(job_id: str, message: str, percent: int, phase: str) -> None:
+    value = max(0, min(int(percent), 100))
+    send(
+        {
+            "id": job_id,
+            "type": "progress",
+            "message": message,
+            "phase": phase,
+            "current": value,
+            "total": 100,
+            "percent": value,
+        }
+    )
+
+
 def require_file(value: object, *, mp3_only: bool = False) -> Path:
     path = Path(str(value or "")).expanduser().resolve()
     if not path.is_file():
@@ -412,6 +427,13 @@ def add_midi(
     for index, artifact in enumerate(artifacts, 1):
         audio_path = Path(artifact["path"])
         midi_path = unique_file(audio_path.with_suffix(".mid"))
+        starting_percent = start_percent + round(((index - 1) / total) * (end_percent - start_percent))
+        progress_percent(
+            job_id,
+            f"Creating MIDI {index}/{total}: {audio_path.name}",
+            starting_percent,
+            phase,
+        )
         try:
             with redirect_stdout(sys.stderr):
                 converter.convert(str(audio_path), str(midi_path), bpm=int(artifact["bpm"]))
@@ -436,7 +458,7 @@ def add_midi(
 
 def quick_scan(job_id: str, payload: dict) -> dict:
     source = require_file(payload.get("source"))
-    progress(job_id, "Loading the musical analysis engine", 0, 1, "engine")
+    progress(job_id, "Loading the musical analysis engine", 1, 20, "engine")
     raw = analyzer().analyze(source)
     result = scan_payload(source, raw)
     progress(job_id, f"Detected {result['bpm']} BPM · {result['detectedKey']}", 1, 1, "analysis")
@@ -808,7 +830,12 @@ def generation_artifacts(rendered, request, midi_by_identity: dict[str, str] | N
 
 def generation(job_id: str, payload: dict) -> dict:
     from generation_policy import GenerationRequest, LayerCandidate, select_generation
-    from generation_renderer import RenderRequest, render_generation
+    from generation_renderer import (
+        BungeePCMBackend,
+        FFmpegMP3Encoder,
+        RenderRequest,
+        render_generation,
+    )
 
     database = Path(str(payload.get("databasePath") or "")).expanduser().resolve()
     if not database.is_file():
@@ -824,6 +851,7 @@ def generation(job_id: str, payload: dict) -> dict:
         records = [dict(row) for row in connection.execute(query, parameters)]
     if not records:
         raise ValueError("No layer is available in the selected libraries.")
+    progress_percent(job_id, f"Loaded {len(records)} indexed layers", 3, "selection")
     categories = tuple(str(item) for item in payload.get("categories") or ())
     request = GenerationRequest(
         categories=categories,
@@ -846,21 +874,86 @@ def generation(job_id: str, payload: dict) -> dict:
             skipped += 1
     if not candidates:
         raise ValueError("No scanned layer has enough BPM/key metadata to generate.")
-    progress(job_id, f"Selecting compatible layers ({skipped} metadata rows skipped)", 1, 10, "selection")
+    progress_percent(
+        job_id,
+        f"Selecting compatible layers ({skipped} metadata rows skipped)",
+        8,
+        "selection",
+    )
     plan = select_generation(candidates, request)
+    progress_percent(job_id, f"Selected {len(plan.selections)} compatible layers", 12, "selection")
 
-    def report(message: str, completed: int, total: int) -> None:
-        mapped = 1 + round((completed / max(1, total)) * 8)
-        progress(job_id, message, mapped, 10, "render")
+    class ReportingBackend:
+        def __init__(self) -> None:
+            self.backend = BungeePCMBackend()
+            self.completed = 0
+            self.total = len(plan.selections)
+
+        def transform(self, selection, *, target_bpm: float, sample_rate: int, channels: int):
+            start = 15 + round((self.completed / max(1, self.total)) * 48)
+            progress_percent(
+                job_id,
+                f"Rendering layer {self.completed + 1}/{self.total}: {selection.category}",
+                start,
+                "render",
+            )
+            audio = self.backend.transform(
+                selection,
+                target_bpm=target_bpm,
+                sample_rate=sample_rate,
+                channels=channels,
+            )
+            self.completed += 1
+            completed = 15 + round((self.completed / max(1, self.total)) * 48)
+            progress_percent(
+                job_id,
+                f"Rendered layer {self.completed}/{self.total}: {selection.category}",
+                completed,
+                "render",
+            )
+            return audio
+
+    class ReportingEncoder:
+        def __init__(self) -> None:
+            self.encoder = FFmpegMP3Encoder()
+            self.completed = 0
+            self.total = len(plan.selections) + 1
+
+        def encode(self, destination, audio, *, sample_rate: int, bitrate_bps: int) -> None:
+            start = 64 + round((self.completed / max(1, self.total)) * 15)
+            progress_percent(
+                job_id,
+                f"Encoding audio {self.completed + 1}/{self.total}: {destination.name}",
+                start,
+                "encode",
+            )
+            self.encoder.encode(
+                destination,
+                audio,
+                sample_rate=sample_rate,
+                bitrate_bps=bitrate_bps,
+            )
+            self.completed += 1
+            completed = 64 + round((self.completed / max(1, self.total)) * 15)
+            progress_percent(
+                job_id,
+                f"Encoded audio {self.completed}/{self.total}: {destination.name}",
+                completed,
+                "encode",
+            )
 
     render_request = RenderRequest(
         plan=plan,
         output_root=Path.home() / "Documents" / "Stem Slicer" / "Generated Loops",
         generation_name="Generated Loop",
     )
-    rendered = render_generation(render_request, progress=report)
+    rendered = render_generation(
+        render_request,
+        backend=ReportingBackend(),
+        encoder=ReportingEncoder(),
+    )
     artifacts = generation_artifacts(rendered, render_request)
-    add_midi(job_id, artifacts, "midi", start_percent=90, end_percent=99)
+    add_midi(job_id, artifacts, "midi", start_percent=80, end_percent=99)
     midi_by_identity = {
         str(artifact.get("identity")): str(artifact["midiPath"])
         for artifact in artifacts

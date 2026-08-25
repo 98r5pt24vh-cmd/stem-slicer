@@ -45,6 +45,16 @@ const JOB_KINDS = new Set<AudioJobKind>([
   "generate-update",
 ])
 
+const JOB_LABELS: Record<AudioJobKind, string> = {
+  batch: "Stem Slicer",
+  "quick-scan": "Quick Scan",
+  "quick-extract": "Quick Extract",
+  "quick-convert": "Quick Convert",
+  "library-scan": "Library Scan",
+  generate: "Generate",
+  "generate-update": "Generate layer update",
+}
+
 export class AudioEngineService {
   private readonly appRoot: string
   private readonly prototypeCachePath: string
@@ -91,6 +101,11 @@ export class AudioEngineService {
     if (!JOB_KINDS.has(kind)) throw new Error(`Unsupported audio job: ${kind}`)
     if (!payload || typeof payload !== "object") throw new Error("Audio job payload must be an object.")
     await this.ensureStarted()
+    const runningJob = this.activeJobs.entries().next().value as [string, ActiveJob] | undefined
+    if (runningJob) {
+      const [, active] = runningJob
+      throw new Error(`${JOB_LABELS[active.kind]} is already running. Cancel or wait for it before starting ${JOB_LABELS[kind]}.`)
+    }
     const jobId = randomUUID()
     this.activeJobs.set(jobId, { kind, sender })
     this.process?.stdin.write(`${JSON.stringify({ id: jobId, kind, payload })}\n`)
