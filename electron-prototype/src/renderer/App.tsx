@@ -28,7 +28,6 @@ import {
   SkipBack,
   Sliders,
   SlidersHorizontal,
-  Sparkle,
   Sparkles,
   Square,
   WandSparkles,
@@ -1038,6 +1037,15 @@ function SegmentedChoice({ label, value, options, onChange }: { label: string; v
 }
 
 function QuickToolsView() {
+  type QuickToolId = "extract" | "scan" | "convert"
+
+  const quickTools: Array<{ id: QuickToolId; label: string; description: string; icon: LucideIcon }> = [
+    { id: "extract", label: "Quick Extract", description: "Split one loop into playable layers", icon: AudioLines },
+    { id: "scan", label: "Quick Scan", description: "Read BPM, key and relative modes", icon: ScanLine },
+    { id: "convert", label: "Quick Convert", description: "Retune and time-stretch one loop", icon: Repeat2 },
+  ]
+
+  const [activeTool, setActiveTool] = useState<QuickToolId>("extract")
   const [scanFile, setScanFile] = useState("")
   const [convertFile, setConvertFile] = useState("")
   const [extractFile, setExtractFile] = useState("")
@@ -1049,6 +1057,7 @@ function QuickToolsView() {
   const [extractKeyEnabled, setExtractKeyEnabled] = useState(false)
   const [extractBpm, setExtractBpm] = useState(120)
   const [extractKey, setExtractKey] = useState(TARGET_KEY_FAMILIES[0])
+  const tabRefs = useRef<Array<HTMLButtonElement | null>>([])
 
   const pickAudio = async (setPath: (path: string) => void) => {
     const result = await window.stemSlicer?.pickAudioFiles()
@@ -1056,83 +1065,151 @@ function QuickToolsView() {
     setPath(result.paths[0])
   }
 
+  const moveBetweenTools = (currentIndex: number, key: string) => {
+    let nextIndex = currentIndex
+    if (key === "ArrowRight") nextIndex = (currentIndex + 1) % quickTools.length
+    if (key === "ArrowLeft") nextIndex = (currentIndex - 1 + quickTools.length) % quickTools.length
+    if (key === "Home") nextIndex = 0
+    if (key === "End") nextIndex = quickTools.length - 1
+    if (nextIndex === currentIndex) return
+    const nextTool = quickTools[nextIndex]
+    setActiveTool(nextTool.id)
+    tabRefs.current[nextIndex]?.focus()
+  }
+
   return (
     <div className="page-stack quick-tools-page">
-      <PageHeader eyebrow="Workspace / Quick Tools" title="Quick workflow" description="Quick Extract, Quick Scan and Quick Convert follow the accepted 1.9B structure." />
+      <PageHeader eyebrow="Workspace / Quick Tools" title="Quick tools" description="Choose one focused operation. Every accepted 1.9B option stays available inside its tool." />
 
-      <section className="quick-workbench quick-extract-workbench accent-red" aria-labelledby="quick-extract-title">
-        <div className="quick-workbench-heading">
-          <span className="tool-icon keycap-icon red"><AudioLines aria-hidden="true" /></span>
-          <div><h2 id="quick-extract-title">Quick Extract</h2><p>Extract playable layers from one loop, with optional target transformation.</p></div>
-          <Button variant="outline" size="sm" disabled><Layers3 /> Drag all</Button>
-        </div>
-        <div className="quick-extract-body">
-          <div className="quick-extract-source">
-            <button type="button" className="quick-drop" onClick={() => pickAudio(setExtractFile)}>
-              <Music2 aria-hidden="true" /><span><strong>{extractFile ? basename(extractFile) : "Drop one MP3 loop here"}</strong><small>{extractFile || "or click to browse"}</small></span>
+      <section className="quick-tools-shell" aria-label="Quick tools workspace">
+        <div className="quick-tool-tabs" role="tablist" aria-label="Choose a quick tool">
+          {quickTools.map(({ id, label, description, icon: Icon }, index) => (
+            <button
+              key={id}
+              ref={(element) => { tabRefs.current[index] = element }}
+              id={`quick-tool-tab-${id}`}
+              type="button"
+              role="tab"
+              className="quick-tool-tab"
+              data-tool={id}
+              aria-selected={activeTool === id}
+              aria-controls={`quick-tool-panel-${id}`}
+              tabIndex={activeTool === id ? 0 : -1}
+              onClick={() => setActiveTool(id)}
+              onKeyDown={(event) => {
+                if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return
+                event.preventDefault()
+                moveBetweenTools(index, event.key)
+              }}
+            >
+              <span className="quick-tab-icon"><Icon aria-hidden="true" /></span>
+              <span><strong>{label}</strong><small>{description}</small></span>
             </button>
-            <div className="optional-target">
-              <span>Optional target</span>
-              <label><input type="checkbox" checked={extractBpmEnabled} onChange={(event) => setExtractBpmEnabled(event.target.checked)} /><b>BPM</b><Input type="number" min="40" max="300" value={extractBpm} disabled={!extractBpmEnabled} onChange={(event) => setExtractBpm(Number(event.target.value))} /></label>
-              <div className="optional-target-key"><label><input type="checkbox" checked={extractKeyEnabled} onChange={(event) => setExtractKeyEnabled(event.target.checked)} /><b>Key</b></label><Select id="quick-extract-key" label="Target key" value={extractKey} onChange={setExtractKey} options={TARGET_KEY_FAMILIES} disabled={!extractKeyEnabled} className="inline-select" /></div>
-            </div>
-          </div>
-          <div className="quick-layer-area" aria-live="polite">
-            <div className="quick-layer-empty">
-              <Sparkle aria-hidden="true" />
-              <strong>Layer cards appear here incrementally</strong>
-              <span>Audio playback · waveform · MIDI drag · individual export</span>
-            </div>
-          </div>
-        </div>
-        <div className="quick-section-footer">
-          <span>0 extractions · 0 o</span><span>{extractFile ? `${basename(extractFile)} selected` : "Ready for one MP3 loop."}</span>
-          <Button variant="outline" size="sm" disabled>Open output folder</Button><Button variant="outline" size="sm" disabled>Manage</Button>
-        </div>
-      </section>
-
-      <section className="quick-workbench quick-scan-workbench accent-yellow" aria-labelledby="quick-scan-title">
-        <div className="quick-workbench-heading">
-          <span className="tool-icon keycap-icon"><ScanLine aria-hidden="true" /></span>
-          <div><h2 id="quick-scan-title">Quick Scan</h2><p>Detect BPM, key relationships and relative modes from one loop.</p></div>
-        </div>
-        <div className="quick-scan-grid">
-          <button type="button" className="quick-drop scan-drop" onClick={() => pickAudio(setScanFile)}>
-            <Music2 aria-hidden="true" /><span><strong>{scanFile ? basename(scanFile) : "Drop one loop here"}</strong><small>{scanFile || "or click to browse"}</small></span>
-          </button>
-          {[["BPM", "—", ""], ["Detected key", "—", "—"], ["Relative key", "—", "—"]].map(([label, value, detail]) => (
-            <div className="scan-metric" key={label}><span>{label}</span><strong>{value}</strong>{detail ? <small>{detail}</small> : null}</div>
           ))}
-          <div className="relative-modes">
-            <span>Relative modes</span>
-            <div>{["I", "II", "III", "IV", "V"].map((degree) => <div key={degree}><strong>—</strong><small>—</small></div>)}</div>
-            <small>Scan a file to reveal its relative modes.</small>
-          </div>
-          <div className="quick-scan-status"><Music2 aria-hidden="true" /><strong>{scanFile ? basename(scanFile) : "Drop a file to begin."}</strong></div>
-          <div className="quick-scan-options">
-            <SegmentedChoice label="Degree reference" value={degreeReference} options={["Major", "Minor"]} onChange={setDegreeReference} />
-            <SegmentedChoice label="Key notation" value={notation} options={["Sharps #", "Flats ♭"]} onChange={setNotation} />
-          </div>
         </div>
-      </section>
 
-      <section className="quick-workbench quick-convert-workbench accent-orange" aria-labelledby="quick-convert-title">
-        <div className="quick-workbench-heading">
-          <span className="tool-icon keycap-icon orange"><Repeat2 aria-hidden="true" /></span>
-          <div><h2 id="quick-convert-title">Quick Convert</h2><p>Convert one loop to a selected BPM and key.</p></div>
-        </div>
-        <div className="quick-convert-row">
-          <button type="button" className="quick-drop convert-drop" onClick={() => pickAudio(setConvertFile)}>
-            <Repeat2 aria-hidden="true" /><span><strong>{convertFile ? basename(convertFile) : "Drop one loop here"}</strong><small>{convertFile || "or click to browse"}</small></span>
-          </button>
-          <div className="quick-convert-targets">
-            <label><span>BPM</span><Input type="number" min="40" max="300" value={convertBpm} onChange={(event) => setConvertBpm(Number(event.target.value))} /></label>
-            <Select id="quick-convert-key" label="Key" value={convertKey} onChange={setConvertKey} options={TARGET_KEY_FAMILIES} />
+        {activeTool === "extract" ? (
+          <div id="quick-tool-panel-extract" className="quick-tool-panel extract-panel" role="tabpanel" aria-labelledby="quick-tool-tab-extract">
+            <header className="quick-panel-heading">
+              <div><span className="quick-panel-kicker">One loop · multiple layers</span><h2>Extract layers</h2></div>
+              <div className="quick-panel-actions"><span className="quick-panel-status">0 layers</span><Button variant="outline" size="sm" disabled><Layers3 /> Drag all</Button></div>
+            </header>
+
+            <div className="quick-extract-controls">
+              <button type="button" className="quick-file-source" onClick={() => pickAudio(setExtractFile)}>
+                <span className="quick-source-icon"><Music2 aria-hidden="true" /></span>
+                <span className="quick-source-copy"><strong>{extractFile ? basename(extractFile) : "Choose an MP3 loop"}</strong><small>{extractFile || "Drop a loop here or browse your files"}</small></span>
+                <span className="quick-source-action">Browse loop</span>
+              </button>
+
+              <div className="quick-extract-settings" aria-label="Optional target transformation">
+                <label className="quick-setting-card">
+                  <span className="quick-setting-heading"><input type="checkbox" checked={extractBpmEnabled} onChange={(event) => setExtractBpmEnabled(event.target.checked)} /><b>Target BPM</b></span>
+                  <Input aria-label="Quick Extract target BPM" type="number" min="40" max="300" value={extractBpm} disabled={!extractBpmEnabled} onChange={(event) => setExtractBpm(Number(event.target.value))} />
+                </label>
+                <div className="quick-setting-card quick-setting-key">
+                  <label className="quick-setting-heading"><input type="checkbox" checked={extractKeyEnabled} onChange={(event) => setExtractKeyEnabled(event.target.checked)} /><b>Target key</b></label>
+                  <Select id="quick-extract-key" label="Quick Extract target key" value={extractKey} onChange={setExtractKey} options={TARGET_KEY_FAMILIES} disabled={!extractKeyEnabled} className="inline-select" />
+                </div>
+              </div>
+
+              <Button className="quick-run-button" disabled><Sparkles /> Extract</Button>
+            </div>
+
+            <div className="quick-results-heading">
+              <div><h3>Extracted layers</h3><span>Cards appear here as each layer becomes available.</span></div>
+              <span>{extractFile ? `${basename(extractFile)} selected` : "Waiting for one source loop"}</span>
+            </div>
+            <div className="quick-layer-area" aria-live="polite">
+              <div className="quick-layer-empty">
+                <span className="quick-empty-icon"><Layers3 aria-hidden="true" /></span>
+                <strong>No extracted layers yet</strong>
+                <span>Choose a loop to create playable cards with waveform, MIDI drag and individual export.</span>
+              </div>
+            </div>
           </div>
-          <Button className="convert-button" disabled>Convert</Button>
-          <div className="quick-convert-result"><strong>No converted file yet</strong><small>Result remains individually draggable.</small></div>
-        </div>
-        <div className="quick-section-footer"><span>0 conversions · 0 o</span><span>{convertFile ? `${basename(convertFile)} selected` : "Ready for one loop."}</span><Button variant="outline" size="sm" disabled>Open output folder</Button><Button variant="outline" size="sm" disabled>Manage</Button></div>
+        ) : null}
+
+        {activeTool === "scan" ? (
+          <div id="quick-tool-panel-scan" className="quick-tool-panel scan-panel" role="tabpanel" aria-labelledby="quick-tool-tab-scan">
+            <header className="quick-panel-heading">
+              <div><span className="quick-panel-kicker">One loop · full musical readout</span><h2>Scan BPM and key</h2></div>
+              <span className="quick-panel-status">Ready to scan</span>
+            </header>
+
+            <div className="quick-scan-body">
+              <button type="button" className="quick-file-source quick-file-source-tall" onClick={() => pickAudio(setScanFile)}>
+                <span className="quick-source-icon"><ScanLine aria-hidden="true" /></span>
+                <span className="quick-source-copy"><strong>{scanFile ? basename(scanFile) : "Choose one loop"}</strong><small>{scanFile || "Drop a loop here or browse your files"}</small></span>
+                <span className="quick-source-action">Browse loop</span>
+              </button>
+
+              <div className="quick-scan-analysis">
+                <div className="quick-scan-metrics">
+                  {[["BPM", "—", "Tempo"], ["Detected key", "—", "Top-1"], ["Relative key", "—", "Relationship"]].map(([label, value, detail]) => (
+                    <div className="scan-metric" key={label}><span>{label}</span><strong>{value}</strong><small>{detail}</small></div>
+                  ))}
+                </div>
+                <div className="relative-modes">
+                  <div className="relative-modes-heading"><span>Relative modes</span><small>Five related positions from the selected degree reference</small></div>
+                  <div className="relative-mode-grid">
+                    {["I", "II", "III", "IV", "V"].map((degree) => <div key={degree}><span>{degree}</span><strong>—</strong><small>—</small></div>)}
+                  </div>
+                </div>
+                <div className="quick-scan-options">
+                  <SegmentedChoice label="Degree reference" value={degreeReference} options={["Major", "Minor"]} onChange={setDegreeReference} />
+                  <SegmentedChoice label="Key notation" value={notation} options={["Sharps #", "Flats ♭"]} onChange={setNotation} />
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {activeTool === "convert" ? (
+          <div id="quick-tool-panel-convert" className="quick-tool-panel convert-panel" role="tabpanel" aria-labelledby="quick-tool-tab-convert">
+            <header className="quick-panel-heading">
+              <div><span className="quick-panel-kicker">One loop · new BPM and key</span><h2>Convert audio</h2></div>
+              <span className="quick-panel-status">0 conversions</span>
+            </header>
+
+            <div className="quick-convert-controls">
+              <button type="button" className="quick-file-source" onClick={() => pickAudio(setConvertFile)}>
+                <span className="quick-source-icon"><Repeat2 aria-hidden="true" /></span>
+                <span className="quick-source-copy"><strong>{convertFile ? basename(convertFile) : "Choose one loop"}</strong><small>{convertFile || "Drop a loop here or browse your files"}</small></span>
+                <span className="quick-source-action">Browse loop</span>
+              </button>
+              <label className="quick-convert-field"><span>Target BPM</span><Input aria-label="Quick Convert target BPM" type="number" min="40" max="300" value={convertBpm} onChange={(event) => setConvertBpm(Number(event.target.value))} /></label>
+              <Select id="quick-convert-key" label="Target key" value={convertKey} onChange={setConvertKey} options={TARGET_KEY_FAMILIES} />
+              <Button className="quick-run-button" disabled><Repeat2 /> Convert</Button>
+            </div>
+
+            <div className="quick-convert-result" aria-live="polite">
+              <span className="quick-empty-icon"><AudioLines aria-hidden="true" /></span>
+              <div><strong>No converted file yet</strong><small>The converted result will remain playable and individually draggable.</small></div>
+              <div className="quick-result-actions"><Button variant="outline" size="sm" disabled>Open output folder</Button><Button variant="outline" size="sm" disabled>Manage files</Button></div>
+            </div>
+          </div>
+        ) : null}
       </section>
     </div>
   )
