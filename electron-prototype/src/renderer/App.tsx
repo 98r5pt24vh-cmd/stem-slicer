@@ -296,6 +296,7 @@ function loadGenerateHistory(): HistoryEntry[] {
 }
 
 type PlaybackMode = "idle" | "solo" | "mix"
+const TIMELINE_SCRUB_KEYS = new Set(["ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown"])
 
 function usePlaybackClock(layers: GeneratedLayer[]) {
   const [playing, setPlaying] = useState(false)
@@ -315,6 +316,8 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
   const syncEnabledRef = useRef(false)
   const loopEnabledRef = useRef(false)
   const mutedIdsRef = useRef(new Set<string>())
+  const scrubbingRef = useRef(false)
+  const resumeAfterScrubRef = useRef(false)
   const layerSourcesJson = JSON.stringify(layers.map((layer) => ({ id: layer.id, path: layer.path ?? "" })))
 
   const pauseAll = useCallback(() => {
@@ -394,6 +397,8 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
     commitSyncEnabled(false)
     commitLoopEnabled(false)
     commitMutedIds(new Set())
+    scrubbingRef.current = false
+    resumeAfterScrubRef.current = false
     return pauseAll
   }, [commitLastSoloId, commitLoopEnabled, commitMode, commitMutedIds, commitSyncEnabled, layerSourcesJson, pauseAll])
 
@@ -408,6 +413,10 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
     if (!playing) return
     let frame = 0
     const tick = () => {
+      if (scrubbingRef.current) {
+        frame = requestAnimationFrame(tick)
+        return
+      }
       const active = modeRef.current === "solo" && soloIdRef.current
         ? [audioByIdRef.current.get(soloIdRef.current)].filter((audio): audio is HTMLAudioElement => Boolean(audio))
         : Array.from(audioByIdRef.current.values())
@@ -557,6 +566,8 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
   }, [toggleLayer, toggleMix])
 
   const stop = useCallback(() => {
+    scrubbingRef.current = false
+    resumeAfterScrubRef.current = false
     pauseAll()
     setPlaying(false)
   }, [pauseAll])
@@ -571,6 +582,8 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
   }, [commitLoopEnabled])
 
   const reset = useCallback(() => {
+    scrubbingRef.current = false
+    resumeAfterScrubRef.current = false
     pauseAll()
     for (const audio of audioByIdRef.current.values()) audio.currentTime = 0
     setProgress(0)
@@ -604,6 +617,44 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
     setProgress(clampedProgress)
   }, [commitLastSoloId, commitMode, commitMutedIds, pauseAll])
 
+  const beginScrub = useCallback(() => {
+    if (scrubbingRef.current) return
+    scrubbingRef.current = true
+    resumeAfterScrubRef.current = playing
+    if (playing) pauseAll()
+  }, [pauseAll, playing])
+
+  const endScrub = useCallback(async () => {
+    if (!scrubbingRef.current) return
+    const shouldResume = resumeAfterScrubRef.current
+    resumeAfterScrubRef.current = false
+    if (!shouldResume) {
+      scrubbingRef.current = false
+      return
+    }
+
+    const active = modeRef.current === "solo" && soloIdRef.current
+      ? [audioByIdRef.current.get(soloIdRef.current)].filter((audio): audio is HTMLAudioElement => Boolean(audio))
+      : Array.from(audioByIdRef.current.values())
+    if (active.length === 0) {
+      scrubbingRef.current = false
+      setPlaying(false)
+      return
+    }
+
+    setError("")
+    try {
+      await Promise.all(active.map((audio) => audio.play()))
+      scrubbingRef.current = false
+      setPlaying(true)
+    } catch (playError) {
+      scrubbingRef.current = false
+      pauseAll()
+      setPlaying(false)
+      setError(playError instanceof Error ? playError.message : "Audio playback failed.")
+    }
+  }, [pauseAll])
+
   const mutedIdSet = useMemo(() => new Set(mutedIds), [mutedIds])
   return {
     playing,
@@ -615,6 +666,8 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
     loopEnabled,
     mutedIds: mutedIdSet,
     seekLayer,
+    beginScrub,
+    endScrub,
     togglePrimary,
     toggleSyncMode,
     toggleLoopMode,
@@ -2415,6 +2468,7 @@ function GlobalPlayer({ layers, playback, contextLabel, syncAvailable }: { layer
             onPointerDown={(event) => {
               if (!timelineLayer || event.button !== 0) return
               timelineScrubberRef.current?.focus({ preventScroll: true })
+              playback.beginScrub()
               event.currentTarget.setPointerCapture(event.pointerId)
               seekTimelineFromPointer(event)
             }}
@@ -2425,6 +2479,11 @@ function GlobalPlayer({ layers, playback, contextLabel, syncAvailable }: { layer
               if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
               seekTimelineFromPointer(event)
               event.currentTarget.releasePointerCapture(event.pointerId)
+              void playback.endScrub()
+            }}
+            onPointerCancel={(event) => {
+              if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+              void playback.endScrub()
             }}
           >
             <Waveform progress={timelineLayer ? playback.progress : 0} compact label={`${contextLabel} waveform`} />
@@ -2438,6 +2497,13 @@ function GlobalPlayer({ layers, playback, contextLabel, syncAvailable }: { layer
               value={Math.round((timelineLayer ? playback.progress : 0) * 1000)}
               aria-label={`Position de lecture ${contextLabel}`}
               onChange={(event) => timelineLayer && playback.seekLayer(timelineLayer.id, Number(event.target.value) / 1000)}
+              onKeyDown={(event) => {
+                if (TIMELINE_SCRUB_KEYS.has(event.key)) playback.beginScrub()
+              }}
+              onKeyUp={(event) => {
+                if (TIMELINE_SCRUB_KEYS.has(event.key)) void playback.endScrub()
+              }}
+              onBlur={() => void playback.endScrub()}
             />
           </div>
           <span className="tabular">{((timelineLayer ? playback.progress : 0) * duration).toFixed(1)} / {duration.toFixed(1)} s</span>
