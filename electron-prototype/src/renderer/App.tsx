@@ -104,6 +104,8 @@ interface HistoryEntry {
   layers: GeneratedLayer[]
 }
 
+type QuickToolId = "extract" | "scan" | "convert"
+
 const NAVIGATION: NavItem[] = [
   { id: "stem-slicer", label: "Stem Slicer", icon: FolderCog, shortcut: "S" },
   { id: "quick-tools", label: "Quick Tools", icon: Wrench, shortcut: "Q" },
@@ -536,6 +538,18 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
     commitMode(hasPreviousSolo ? "solo" : "idle", hasPreviousSolo ? previousSoloId : null)
   }, [commitMode, commitMutedIds, pauseAll])
 
+  const reset = useCallback(() => {
+    pauseAll()
+    for (const audio of audioByIdRef.current.values()) audio.currentTime = 0
+    setProgress(0)
+    setPlaying(false)
+    setError("")
+    commitSyncEnabled(false)
+    commitMutedIds(new Set())
+    commitLastSoloId(null)
+    commitMode("idle", null)
+  }, [commitLastSoloId, commitMode, commitMutedIds, commitSyncEnabled, pauseAll])
+
   const seekLayer = useCallback((id: string, nextProgress: number) => {
     const clampedProgress = Math.max(0, Math.min(nextProgress, 1))
     let active: HTMLAudioElement[]
@@ -571,6 +585,7 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
     toggleSyncMode,
     toggleLayer,
     stop,
+    reset,
     masterVolume,
     setMasterVolume,
     error,
@@ -1892,13 +1907,13 @@ function QuickToolsView({
   previewLayers,
   setPreviewLayers,
   playback,
+  onActiveToolChange,
 }: {
   previewLayers: GeneratedLayer[]
   setPreviewLayers: React.Dispatch<React.SetStateAction<GeneratedLayer[]>>
   playback: PlaybackClock
+  onActiveToolChange: (tool: QuickToolId) => void
 }) {
-  type QuickToolId = "extract" | "scan" | "convert"
-
   const quickTools: Array<{ id: QuickToolId; label: string; description: string; icon: LucideIcon }> = [
     { id: "extract", label: "Quick Extract", description: "Split one loop into playable layers", icon: AudioLines },
     { id: "scan", label: "Quick Scan", description: "Read BPM, key and relative modes", icon: ScanLine },
@@ -1926,6 +1941,13 @@ function QuickToolsView({
   const convertResult = convertJob.result as QuickConvertResult | null
   const extractedLayers = extractResult?.layers ?? extractJob.artifacts
   const extractedMixActive = playback.mode === "mix"
+
+  const selectTool = (tool: QuickToolId) => {
+    if (tool === activeTool) return
+    playback.reset()
+    setActiveTool(tool)
+    onActiveToolChange(tool)
+  }
 
   useEffect(() => {
     setPreviewLayers((current) => {
@@ -2002,7 +2024,7 @@ function QuickToolsView({
     if (key === "End") nextIndex = quickTools.length - 1
     if (nextIndex === currentIndex) return
     const nextTool = quickTools[nextIndex]
-    setActiveTool(nextTool.id)
+    selectTool(nextTool.id)
     tabRefs.current[nextIndex]?.focus()
   }
 
@@ -2024,7 +2046,7 @@ function QuickToolsView({
               aria-selected={activeTool === id}
               aria-controls={`quick-tool-panel-${id}`}
               tabIndex={activeTool === id ? 0 : -1}
-              onClick={() => setActiveTool(id)}
+              onClick={() => selectTool(id)}
               onKeyDown={(event) => {
                 if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return
                 event.preventDefault()
@@ -2178,58 +2200,28 @@ function HistoryPlayButton({ entry, playing, onToggle }: { entry: HistoryEntry; 
   )
 }
 
-function HistoryView({ history, onReopen, onTrash }: { history: HistoryEntry[]; onReopen: (entry: HistoryEntry) => void; onTrash: (entry: HistoryEntry) => Promise<void> }) {
-  const historyAudioRef = useRef<HTMLAudioElement | null>(null)
-  const [playingEntryId, setPlayingEntryId] = useState<string | null>(null)
+function historyLayerId(entryId: string) {
+  return `history-${entryId}`
+}
 
-  const stopHistoryAudio = useCallback(() => {
-    const audio = historyAudioRef.current
-    if (audio) {
-      audio.pause()
-      audio.currentTime = 0
-    }
-    setPlayingEntryId(null)
-  }, [])
+function historyEntryToLayer(entry: HistoryEntry): GeneratedLayer {
+  const referenceLayer = entry.layers.find((layer) => layer.bars.length > 0) ?? entry.layers[0]
+  return {
+    id: historyLayerId(entry.id),
+    role: `${entry.recipe} combination`,
+    file: `${entry.recipe} combination`,
+    category: "History",
+    bpm: entry.bpm,
+    keyName: entry.keyName,
+    octave: 0,
+    volume: 100,
+    duration: Math.max(0, ...entry.layers.map((layer) => layer.duration)),
+    path: entry.generation.masterPath,
+    bars: referenceLayer?.bars ?? INITIAL_LAYERS[0].bars,
+  }
+}
 
-  useEffect(() => stopHistoryAudio, [stopHistoryAudio])
-
-  const toggleHistoryEntry = useCallback(async (entry: HistoryEntry) => {
-    const source = window.stemSlicer?.mediaUrl(entry.generation.masterPath)
-    if (!source) return
-    const currentAudio = historyAudioRef.current
-    if (playingEntryId === entry.id && currentAudio) {
-      if (currentAudio.paused) {
-        try {
-          await currentAudio.play()
-          if (historyAudioRef.current === currentAudio && !currentAudio.paused) setPlayingEntryId(entry.id)
-        } catch {
-          setPlayingEntryId(null)
-        }
-      } else {
-        currentAudio.pause()
-        setPlayingEntryId(null)
-      }
-      return
-    }
-
-    if (currentAudio) {
-      currentAudio.pause()
-      currentAudio.currentTime = 0
-    }
-    const nextAudio = new Audio(source)
-    nextAudio.preload = "metadata"
-    nextAudio.onended = () => setPlayingEntryId(null)
-    nextAudio.onpause = () => {
-      if (nextAudio.ended) setPlayingEntryId(null)
-    }
-    historyAudioRef.current = nextAudio
-    try {
-      await nextAudio.play()
-      if (historyAudioRef.current === nextAudio && !nextAudio.paused) setPlayingEntryId(entry.id)
-    } catch {
-      if (historyAudioRef.current === nextAudio) setPlayingEntryId(null)
-    }
-  }, [playingEntryId])
+function HistoryView({ history, playback, onReopen, onTrash }: { history: HistoryEntry[]; playback: PlaybackClock; onReopen: (entry: HistoryEntry) => void; onTrash: (entry: HistoryEntry) => Promise<void> }) {
 
   return (
     <div className="page-stack">
@@ -2243,7 +2235,7 @@ function HistoryView({ history, onReopen, onTrash }: { history: HistoryEntry[]; 
                 <div><strong>{entry.recipe} combination</strong><small>{entry.createdAt} · {entry.layerCount} layers</small></div>
                 <div className="history-spec"><Badge variant="secondary">{entry.recipe}</Badge><span>{entry.bpm} BPM</span><span>{entry.keyName}</span></div>
                 <div className="history-actions">
-                  <HistoryPlayButton entry={entry} playing={playingEntryId === entry.id} onToggle={() => void toggleHistoryEntry(entry)} />
+                  <HistoryPlayButton entry={entry} playing={playback.playing && playback.mode === "solo" && playback.soloId === historyLayerId(entry.id)} onToggle={() => void playback.toggleLayer(historyLayerId(entry.id))} />
                   <Button variant="outline" size="sm" onClick={() => void window.stemSlicer?.revealPath(entry.generation.outputDirectory)}><FolderOpen /> Open</Button>
                   <Button variant="outline" className="history-reload" size="sm" onClick={() => onReopen(entry)}><RefreshCw /> Reload</Button>
                   <Button variant="outline" size="sm" draggable onClick={() => void window.stemSlicer?.revealPath(entry.generation.masterPath)} onDragStart={(event) => { event.preventDefault(); window.stemSlicer?.startFileDrag(entry.generation.masterPath) }}><Layers3 /> Drag</Button>
@@ -2277,7 +2269,7 @@ function CloudView() {
   )
 }
 
-function GlobalPlayer({ layers, playback, contextLabel }: { layers: GeneratedLayer[]; playback: PlaybackClock; contextLabel: string }) {
+function GlobalPlayer({ layers, playback, contextLabel, syncAvailable }: { layers: GeneratedLayer[]; playback: PlaybackClock; contextLabel: string; syncAvailable: boolean }) {
   const soloLayer = layers.find((layer) => layer.id === playback.soloId)
   const audibleMixLayers = layers.filter((layer) => !playback.mutedIds.has(layer.id))
   const activeLayers = playback.playing
@@ -2320,7 +2312,7 @@ function GlobalPlayer({ layers, playback, contextLabel }: { layers: GeneratedLay
       </div>
       <div className="player-core">
         <div className="player-controls">
-          <button type="button" className={cn("player-key player-sync-key", syncEnabled && "is-active")} onClick={playback.toggleSyncMode} aria-pressed={syncEnabled} aria-label={syncEnabled ? "Disable synchronized playback" : "Enable synchronized playback"}><Link2 aria-hidden="true" /><span>Sync</span></button>
+          <button type="button" className={cn("player-key player-sync-key", syncEnabled && "is-active")} disabled={!syncAvailable} onClick={playback.toggleSyncMode} aria-pressed={syncEnabled} aria-label={syncAvailable ? syncEnabled ? "Disable synchronized playback" : "Enable synchronized playback" : "Synchronized playback is only available for generated or extracted layer cards"}><Link2 aria-hidden="true" /><span>Sync</span></button>
           <button type="button" className={cn("player-key player-key-primary", primaryPlaying && "is-active")} disabled={!canPlayPrimary} onClick={() => void playback.togglePrimary()} aria-label={syncEnabled ? mixPlaying ? "Pause all layers" : "Play all layers" : primaryPlaying ? "Pause selected layer" : "Play selected layer"}>{primaryPlaying ? <Pause aria-hidden="true" /> : <Play className="play-glyph" aria-hidden="true" />}</button>
           <button type="button" className="player-key" onClick={playback.stop} aria-label="Stop and return to start"><SkipBack aria-hidden="true" /></button>
         </div>
@@ -2352,12 +2344,14 @@ export function App() {
   const [library, setLibrary] = useState<LibraryOverview>(FALLBACK_LIBRARY)
   const [layers, setLayers] = useState(INITIAL_LAYERS)
   const [quickPreviewLayers, setQuickPreviewLayers] = useState<GeneratedLayer[]>([])
+  const [activeQuickTool, setActiveQuickTool] = useState<QuickToolId>("extract")
   const [history, setHistory] = useState<HistoryEntry[]>(loadGenerateHistory)
   const [currentGenerationResult, setCurrentGenerationResult] = useState<GenerateResult | null>(null)
-  const quickPreviewActive = activeView === "quick-tools" && quickPreviewLayers.length > 0
-  const playerLayers = useMemo(() => quickPreviewActive ? quickPreviewLayers : layers, [layers, quickPreviewActive, quickPreviewLayers])
+  const quickPreviewActive = activeView === "quick-tools" && activeQuickTool === "extract" && quickPreviewLayers.length > 0
+  const historyPlayerLayers = useMemo(() => history.map(historyEntryToLayer), [history])
+  const playerLayers = useMemo(() => activeView === "history" ? historyPlayerLayers : quickPreviewActive ? quickPreviewLayers : layers, [activeView, historyPlayerLayers, layers, quickPreviewActive, quickPreviewLayers])
   const playback = usePlaybackClock(playerLayers)
-  const stopPlayback = playback.stop
+  const resetPlayback = playback.reset
   const mainRef = useRef<HTMLElement>(null)
   const initialViewRef = useRef(true)
 
@@ -2392,13 +2386,18 @@ export function App() {
 
   useEffect(() => {
     document.title = `${NAVIGATION.find((item) => item.id === activeView)?.label ?? "Stem Slicer"} · Stem Slicer Prototype`
-    stopPlayback()
     if (initialViewRef.current) {
       initialViewRef.current = false
       return
     }
     mainRef.current?.focus()
-  }, [activeView, stopPlayback])
+  }, [activeView])
+
+  const navigateToView = useCallback((view: ViewId) => {
+    if (view === activeView) return
+    resetPlayback()
+    setActiveView(view)
+  }, [activeView, resetPlayback])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -2409,14 +2408,14 @@ export function App() {
       }
       if (event.metaKey || event.ctrlKey || event.altKey || event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement || event.target instanceof HTMLButtonElement || event.target instanceof HTMLTextAreaElement) return
       const item = NAVIGATION.find((entry) => entry.shortcut?.toLowerCase() === event.key.toLowerCase())
-      if (item) setActiveView(item.id)
+      if (item) navigateToView(item.id)
     }
     window.addEventListener("keydown", onKeyDown)
     return () => window.removeEventListener("keydown", onKeyDown)
-  }, [])
+  }, [navigateToView])
 
   const reopenHistory = (entry: HistoryEntry) => {
-    playback.stop()
+    playback.reset()
     setLayers(entry.layers)
     setCurrentGenerationResult(entry.generation)
     setActiveView("generate")
@@ -2426,7 +2425,7 @@ export function App() {
     await window.stemSlicer?.trashPath(entry.generation.outputDirectory)
     setHistory((items) => items.filter((item) => item.id !== entry.id))
     if (currentGenerationResult?.outputDirectory === entry.generation.outputDirectory) {
-      playback.stop()
+      playback.reset()
       setCurrentGenerationResult(null)
       setLayers(INITIAL_LAYERS)
     }
@@ -2435,7 +2434,7 @@ export function App() {
   return (
     <div className="app-frame">
       <a className="skip-link" href="#main-content">Aller au contenu principal</a>
-      <AppSidebar activeView={activeView} collapsed={sidebarCollapsed} onNavigate={setActiveView} onToggle={() => setSidebarCollapsed((value) => !value)} />
+      <AppSidebar activeView={activeView} collapsed={sidebarCollapsed} onNavigate={navigateToView} onToggle={() => setSidebarCollapsed((value) => !value)} />
       <div className="app-workspace">
         <div className="window-dragbar app-drag-region">
           <span className="prototype-pill app-no-drag"><span /> Electron prototype</span>
@@ -2443,11 +2442,11 @@ export function App() {
         <main id="main-content" tabIndex={-1} ref={mainRef} className={cn(activeView === "generate" && "generate-main", activeView === "quick-tools" && "quick-tools-main", activeView === "stem-slicer" && "stem-slicer-main")}>
           <div hidden={activeView !== "stem-slicer"}><StemSlicerView /></div>
           <div hidden={activeView !== "generate"}><GenerateView library={library} layers={layers} setLayers={setLayers} currentGenerationResult={currentGenerationResult} setCurrentGenerationResult={setCurrentGenerationResult} onAddHistory={addHistory} onUpdateHistory={updateHistory} onLibraryRefresh={refreshLibrary} playback={playback} /></div>
-          <div hidden={activeView !== "quick-tools"}><QuickToolsView previewLayers={quickPreviewLayers} setPreviewLayers={setQuickPreviewLayers} playback={playback} /></div>
-          <div hidden={activeView !== "history"}><HistoryView history={history} onReopen={reopenHistory} onTrash={trashHistory} /></div>
+          <div hidden={activeView !== "quick-tools"}><QuickToolsView previewLayers={quickPreviewLayers} setPreviewLayers={setQuickPreviewLayers} playback={playback} onActiveToolChange={setActiveQuickTool} /></div>
+          <div hidden={activeView !== "history"}><HistoryView history={history} playback={playback} onReopen={reopenHistory} onTrash={trashHistory} /></div>
           <div hidden={activeView !== "cloud"}><CloudView /></div>
         </main>
-        <GlobalPlayer layers={playerLayers} playback={playback} contextLabel={quickPreviewActive ? "Extracted stack" : "Generated stack"} />
+        <GlobalPlayer layers={playerLayers} playback={playback} contextLabel={activeView === "history" ? "History generation" : quickPreviewActive ? "Extracted stack" : "Generated stack"} syncAvailable={activeView === "generate" || quickPreviewActive} />
       </div>
     </div>
   )

@@ -107,9 +107,23 @@ select {
   font: inherit;
 }
 
-button,
-select,
-input[type="range"] {
+button:not(:disabled),
+select:not(:disabled),
+input[type="range"]:not(:disabled),
+input[type="checkbox"]:not(:disabled),
+input[type="radio"]:not(:disabled),
+a[href],
+[role="button"]:not([aria-disabled="true"]),
+[role="option"]:not([aria-disabled="true"]),
+[role="tab"]:not([aria-disabled="true"]) {
+  cursor: pointer;
+}
+
+button:disabled,
+select:disabled,
+input[type="range"]:disabled,
+input[type="checkbox"]:disabled,
+input[type="radio"]:disabled {
   cursor: default;
 }
 
@@ -1543,8 +1557,10 @@ main:focus {
 
 .layer-card {
   position: relative;
+  display: flex;
   min-width: 0;
   overflow: hidden;
+  flex-direction: column;
   border-color: rgb(255 255 255 / 0.1);
   border-radius: 12px;
   background:
@@ -1595,7 +1611,11 @@ main:focus {
 }
 
 .layer-card [data-slot="card-content"] {
-  padding: 0 7px 5px;
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  padding: 0 7px 3px;
 }
 
 .layer-card [data-slot="card-title"] {
@@ -1687,8 +1707,8 @@ main:focus {
 .layer-mini-action {
   display: inline-flex;
   width: auto;
-  height: 22px;
-  min-height: 22px;
+  height: 24px;
+  min-height: 24px;
   align-items: center;
   justify-content: center;
   gap: 3px;
@@ -1715,7 +1735,7 @@ main:focus {
 }
 
 .layer-remove-action {
-  width: 22px;
+  width: 24px;
   padding: 0;
   border-color: rgb(230 57 0 / 0.22);
   background: rgb(230 57 0 / 0.075);
@@ -1877,7 +1897,7 @@ main:focus {
   height: 100%;
   appearance: none;
   background: transparent;
-  cursor: ew-resize;
+  cursor: pointer;
   opacity: 0;
 }
 
@@ -1943,6 +1963,7 @@ main:focus {
   grid-template-columns: minmax(62px, 1fr) 56px 56px 56px;
   align-items: end;
   gap: 5px;
+  margin-block-start: auto;
 }
 
 .layer-card.is-extract .layer-controls {
@@ -1950,13 +1971,14 @@ main:focus {
 }
 
 .layer-card .layer-controls select {
-  height: 26px;
+  height: 28px;
   padding-inline: 6px 19px;
   font-size: 9px;
 }
 
 .layer-card .layer-octave-control select {
-  width: 38px;
+  width: 56px;
+  height: 16px;
   border-color: rgb(255 255 255 / 0.09);
   background: rgb(10 13 10 / 0.58);
   color: #c6cec2;
@@ -1966,8 +1988,8 @@ main:focus {
 
 .layer-card .layer-controls button {
   width: 56px;
-  min-height: 26px;
-  height: 26px;
+  min-height: 28px;
+  height: 28px;
   border-color: rgb(255 255 255 / 0.09);
   background: rgb(10 13 10 / 0.46);
   color: #c6cec2;
@@ -1994,11 +2016,11 @@ main:focus {
 
 .layer-controls .layer-volume-control {
   width: 86px;
-  height: 26px;
+  height: 28px;
   align-self: end;
   grid-template-columns: 86px;
-  grid-template-rows: 14px 10px;
-  row-gap: 2px;
+  grid-template-rows: 16px 10px;
+  row-gap: 1px;
   justify-content: start;
 }
 
@@ -2029,16 +2051,27 @@ main:focus {
 }
 
 .layer-controls .layer-octave-control {
-  display: flex;
+  display: grid;
   width: 56px;
-  align-items: center;
+  height: 28px;
   align-self: end;
-  justify-content: space-between;
-  gap: 2px;
+  grid-template-columns: 56px;
+  grid-template-rows: 16px 10px;
+  row-gap: 1px;
 }
 
 .layer-controls .layer-octave-control > span {
-  font-size: 7px;
+  align-self: end;
+  grid-column: 1;
+  grid-row: 2;
+  font-size: 8px;
+  line-height: 1;
+}
+
+.layer-controls .layer-octave-control select {
+  align-self: center;
+  grid-column: 1;
+  grid-row: 1;
 }
 
 .layer-controls label input,
@@ -6826,7 +6859,7 @@ main.quick-tools-main {
   height: 100%;
   appearance: none;
   background: transparent;
-  cursor: ew-resize;
+  cursor: pointer;
   opacity: 0;
 }
 
@@ -6882,6 +6915,24 @@ main.quick-tools-main {
 
   .card-play-button:hover {
     filter: brightness(1.12);
+  }
+
+  .layer-category-trigger:hover {
+    border-color: rgb(225 213 0 / 0.58);
+    background: linear-gradient(135deg, rgb(115 189 0 / 0.25), rgb(225 213 0 / 0.13));
+    box-shadow: 0 1px 0 rgb(255 255 255 / 0.1) inset, 0 0 0 1px rgb(225 213 0 / 0.08), 0 5px 12px rgb(0 0 0 / 0.22);
+  }
+
+  .layer-lock-action:hover:not(:disabled) {
+    border-color: rgb(225 213 0 / 0.48);
+    background: rgb(225 213 0 / 0.1);
+    color: var(--signal-yellow);
+  }
+
+  .layer-remove-action:hover:not(:disabled) {
+    border-color: rgb(230 57 0 / 0.7);
+    background: rgb(230 57 0 / 0.2);
+    color: #ff6b43;
   }
 
   .add-layer-card:hover {
