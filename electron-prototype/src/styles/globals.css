@@ -1652,6 +1652,10 @@ main:focus {
   color: #879080;
 }
 
+.layer-tone-spectral .layer-heading [data-slot="card-description"] {
+  padding-inline-start: 7px;
+}
+
 .layer-category-popup {
   width: max-content;
   min-width: var(--anchor-width);
