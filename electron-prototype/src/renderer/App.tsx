@@ -1154,7 +1154,7 @@ function QuickToolsView() {
           <div id="quick-tool-panel-scan" className="quick-tool-panel scan-panel" role="tabpanel" aria-labelledby="quick-tool-tab-scan">
             <header className="quick-panel-heading">
               <div><span className="quick-panel-kicker">One loop · full musical readout</span><h2>Scan BPM and key</h2></div>
-              <span className="quick-panel-status">Ready to scan</span>
+              <span className="quick-panel-status">{scanFile ? "File selected" : "Ready to scan"}</span>
             </header>
 
             <div className="quick-scan-body">
@@ -1171,9 +1171,25 @@ function QuickToolsView() {
                   ))}
                 </div>
                 <div className="relative-modes">
-                  <div className="relative-modes-heading"><span>Relative modes</span><small>Five related positions from the selected degree reference</small></div>
+                  <div className="relative-modes-heading"><span>Relative modes</span><small>Same notes · different centers</small></div>
                   <div className="relative-mode-grid">
                     {["I", "II", "III", "IV", "V"].map((degree) => <div key={degree}><span>{degree}</span><strong>—</strong><small>—</small></div>)}
+                  </div>
+                </div>
+                <div className="quick-scan-details">
+                  <div className="quick-scan-details-heading">
+                    <div><span>Analysis details</span><small>Technical output from the 1.9B scan engine</small></div>
+                    <span>{scanFile ? basename(scanFile) : "No file selected"}</span>
+                  </div>
+                  <div className="quick-scan-detail-grid">
+                    {[
+                      ["BPM confidence", "—", "Model score"],
+                      ["BPM source", "—", "Audio and filename decision"],
+                      ["Camelot", "—", "Wheel notation"],
+                      ["OpenKey", "—", "Harmonic mixing notation"],
+                    ].map(([label, value, detail]) => (
+                      <div key={label}><span>{label}</span><strong>{value}</strong><small>{detail}</small></div>
+                    ))}
                   </div>
                 </div>
                 <div className="quick-scan-options">
