@@ -1994,18 +1994,19 @@ function StemSlicerView() {
           </dl>
         </section>
 
-        <div className="unified-pipeline-heading">
-          <div><span>Single batch pipeline</span><h2>Enabled operations run together</h2><p>Configure the complete process below, then process the source folder once.</p></div>
-          <div className="unified-pipeline-route" aria-label={`${enabledOperationCount} operations enabled`}>
-            <span data-enabled={layerExtraction}><Layers3 aria-hidden="true" />Extract</span>
-            <i aria-hidden="true" />
-            <span data-enabled={keyAnalysis}><ScanLine aria-hidden="true" />Key & naming</span>
-            <i aria-hidden="true" />
-            <span data-enabled={conversion}><Repeat2 aria-hidden="true" />Convert</span>
+        <section className="unified-pipeline-surface" aria-labelledby="stem-pipeline-heading">
+          <div className="unified-pipeline-heading">
+            <div><span>Single batch pipeline</span><h2 id="stem-pipeline-heading">Enabled operations run together</h2><p>Configure the complete process below, then process the source folder once.</p></div>
+            <div className="unified-pipeline-route" aria-label={`${enabledOperationCount} operations enabled`}>
+              <span data-enabled={layerExtraction}><Layers3 aria-hidden="true" />Extract</span>
+              <i aria-hidden="true" />
+              <span data-enabled={keyAnalysis}><ScanLine aria-hidden="true" />Key & naming</span>
+              <i aria-hidden="true" />
+              <span data-enabled={conversion}><Repeat2 aria-hidden="true" />Convert</span>
+            </div>
           </div>
-        </div>
 
-        <div className="unified-operations-grid">
+          <div className="unified-operations-grid">
           <section className={cn("unified-operation-card operation-extract", !layerExtraction && "is-disabled")} aria-labelledby="extract-operation-title">
             <header className="unified-operation-header">
               <span className="unified-operation-number">01</span>
@@ -2077,17 +2078,18 @@ function StemSlicerView() {
               <div className="unified-convert-route"><Repeat2 aria-hidden="true" /><div><span>Conversion input</span><strong>{layerExtraction ? "Extracted layers" : "Source loops"}</strong><small>Automatically follows the extraction setting.</small></div></div>
             </div>
           </section>
-        </div>
-
-        <div className="batch-process-bar" aria-label="Batch process status">
-          <div className="batch-process-copy" role="status"><span>Process status</span><strong>{batchJob.error || (batchJob.busy ? batchJob.message : batchResult ? `${batchResult.outputs.length} outputs ready` : sourceFolder ? `${basename(sourceFolder)} ready` : "Choose a source folder to begin")}</strong></div>
-          <div className="batch-operation-summary" aria-label={`${enabledOperationCount} operations enabled`}>
-            <span data-enabled={layerExtraction}>Extract</span><span data-enabled={keyAnalysis}>Key</span><span data-enabled={conversion}>Convert</span>
           </div>
-          <div className="batch-progress" role="progressbar" aria-label="Batch progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={batchJob.percent}><span style={{ width: `${batchJob.percent}%` }} /></div>
-          <div className="batch-process-stats"><span>{batchResult?.files ?? batchJob.total ?? 0} files</span><span>{batchJob.percent}%</span><span>{batchResult?.failures.length ?? (batchJob.error ? 1 : 0)} errors</span></div>
-          <Button className="hardware-button" onClick={processBatch} disabled={!batchJob.busy && (!sourceFolder || enabledOperationCount === 0)}>{batchJob.busy ? "Cancel" : "Process loops"}</Button>
-        </div>
+
+          <div className="batch-process-bar" aria-label="Batch process status">
+            <div className="batch-process-copy" role="status"><span>Process status</span><strong>{batchJob.error || (batchJob.busy ? batchJob.message : batchResult ? `${batchResult.outputs.length} outputs ready` : sourceFolder ? `${basename(sourceFolder)} ready` : "Choose a source folder to begin")}</strong></div>
+            <div className="batch-operation-summary" aria-label={`${enabledOperationCount} operations enabled`}>
+              <span data-enabled={layerExtraction}>Extract</span><span data-enabled={keyAnalysis}>Key</span><span data-enabled={conversion}>Convert</span>
+            </div>
+            <div className="batch-progress" role="progressbar" aria-label="Batch progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={batchJob.percent}><span style={{ width: `${batchJob.percent}%` }} /></div>
+            <div className="batch-process-stats"><span>{batchResult?.files ?? batchJob.total ?? 0} files</span><span>{batchJob.percent}%</span><span>{batchResult?.failures.length ?? (batchJob.error ? 1 : 0)} errors</span></div>
+            <Button className="hardware-button" onClick={processBatch} disabled={!batchJob.busy && (!sourceFolder || enabledOperationCount === 0)}>{batchJob.busy ? "Cancel" : "Process loops"}</Button>
+          </div>
+        </section>
       </section>
     </div>
   )
