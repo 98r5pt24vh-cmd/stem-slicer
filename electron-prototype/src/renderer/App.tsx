@@ -317,7 +317,10 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
   const loopEnabledRef = useRef(false)
   const mutedIdsRef = useRef(new Set<string>())
   const scrubbingRef = useRef(false)
+  const scrubEndingRef = useRef(false)
+  const scrubSessionRef = useRef(0)
   const resumeAfterScrubRef = useRef(false)
+  const scrubTargetRef = useRef<{ id: string; progress: number } | null>(null)
   const layerSourcesJson = JSON.stringify(layers.map((layer) => ({ id: layer.id, path: layer.path ?? "" })))
 
   const pauseAll = useCallback(() => {
@@ -398,7 +401,10 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
     commitLoopEnabled(false)
     commitMutedIds(new Set())
     scrubbingRef.current = false
+    scrubEndingRef.current = false
+    scrubSessionRef.current += 1
     resumeAfterScrubRef.current = false
+    scrubTargetRef.current = null
     return pauseAll
   }, [commitLastSoloId, commitLoopEnabled, commitMode, commitMutedIds, commitSyncEnabled, layerSourcesJson, pauseAll])
 
@@ -566,8 +572,11 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
   }, [toggleLayer, toggleMix])
 
   const stop = useCallback(() => {
+    scrubSessionRef.current += 1
     scrubbingRef.current = false
+    scrubEndingRef.current = false
     resumeAfterScrubRef.current = false
+    scrubTargetRef.current = null
     pauseAll()
     setPlaying(false)
   }, [pauseAll])
@@ -582,8 +591,11 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
   }, [commitLoopEnabled])
 
   const reset = useCallback(() => {
+    scrubSessionRef.current += 1
     scrubbingRef.current = false
+    scrubEndingRef.current = false
     resumeAfterScrubRef.current = false
+    scrubTargetRef.current = null
     pauseAll()
     for (const audio of audioByIdRef.current.values()) audio.currentTime = 0
     setProgress(0)
@@ -596,48 +608,59 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
     commitMode("idle", null)
   }, [commitLastSoloId, commitLoopEnabled, commitMode, commitMutedIds, commitSyncEnabled, pauseAll])
 
-  const seekLayer = useCallback((id: string, nextProgress: number) => {
-    const clampedProgress = Math.max(0, Math.min(nextProgress, 1))
-    let active: HTMLAudioElement[]
-    if (syncEnabledRef.current) {
-      active = Array.from(audioByIdRef.current.values())
-    } else {
-      if (modeRef.current !== "solo" || soloIdRef.current !== id) {
-        pauseAll()
-        setPlaying(false)
-        commitMode("solo", id)
-        commitLastSoloId(id)
-        commitMutedIds(new Set())
-      }
-      active = [audioByIdRef.current.get(id)].filter((audio): audio is HTMLAudioElement => Boolean(audio))
-    }
-    for (const audio of active) {
-      if (Number.isFinite(audio.duration) && audio.duration > 0) audio.currentTime = clampedProgress * audio.duration
-    }
-    setProgress(clampedProgress)
-  }, [commitLastSoloId, commitMode, commitMutedIds, pauseAll])
-
-  const beginScrub = useCallback(() => {
+  const beginScrub = useCallback((id: string) => {
     if (scrubbingRef.current) return
+    scrubSessionRef.current += 1
     scrubbingRef.current = true
+    scrubEndingRef.current = false
     resumeAfterScrubRef.current = playing
-    if (playing) pauseAll()
-  }, [pauseAll, playing])
+    scrubTargetRef.current = { id, progress }
+    pauseAll()
+
+    if (!syncEnabledRef.current && (modeRef.current !== "solo" || soloIdRef.current !== id)) {
+      commitMode("solo", id)
+      commitLastSoloId(id)
+      commitMutedIds(new Set())
+    }
+  }, [commitLastSoloId, commitMode, commitMutedIds, pauseAll, playing, progress])
+
+  const previewScrub = useCallback((id: string, nextProgress: number) => {
+    const clampedProgress = Math.max(0, Math.min(nextProgress, 1))
+    scrubTargetRef.current = { id, progress: clampedProgress }
+    setProgress(clampedProgress)
+  }, [])
 
   const endScrub = useCallback(async () => {
-    if (!scrubbingRef.current) return
+    if (!scrubbingRef.current || scrubEndingRef.current) return
+    scrubEndingRef.current = true
+    const session = scrubSessionRef.current
     const shouldResume = resumeAfterScrubRef.current
+    const target = scrubTargetRef.current
     resumeAfterScrubRef.current = false
+    scrubTargetRef.current = null
+
+    const active = target
+      ? syncEnabledRef.current
+        ? Array.from(audioByIdRef.current.values())
+        : [audioByIdRef.current.get(target.id)].filter((audio): audio is HTMLAudioElement => Boolean(audio))
+      : []
+
+    if (target) {
+      for (const audio of active) {
+        if (Number.isFinite(audio.duration) && audio.duration > 0) audio.currentTime = target.progress * audio.duration
+      }
+      setProgress(target.progress)
+    }
+
     if (!shouldResume) {
       scrubbingRef.current = false
+      scrubEndingRef.current = false
       return
     }
 
-    const active = modeRef.current === "solo" && soloIdRef.current
-      ? [audioByIdRef.current.get(soloIdRef.current)].filter((audio): audio is HTMLAudioElement => Boolean(audio))
-      : Array.from(audioByIdRef.current.values())
     if (active.length === 0) {
       scrubbingRef.current = false
+      scrubEndingRef.current = false
       setPlaying(false)
       return
     }
@@ -645,10 +668,14 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
     setError("")
     try {
       await Promise.all(active.map((audio) => audio.play()))
+      if (session !== scrubSessionRef.current) return
       scrubbingRef.current = false
+      scrubEndingRef.current = false
       setPlaying(true)
     } catch (playError) {
+      if (session !== scrubSessionRef.current) return
       scrubbingRef.current = false
+      scrubEndingRef.current = false
       pauseAll()
       setPlaying(false)
       setError(playError instanceof Error ? playError.message : "Audio playback failed.")
@@ -665,8 +692,8 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
     syncEnabled,
     loopEnabled,
     mutedIds: mutedIdSet,
-    seekLayer,
     beginScrub,
+    previewScrub,
     endScrub,
     togglePrimary,
     toggleSyncMode,
@@ -1119,6 +1146,8 @@ function LayerCard({
   isMuted,
   onPlay,
   onSeek,
+  onScrubStart,
+  onScrubEnd,
   onChange,
   onToggleAlternateKey,
   onToggleLock,
@@ -1136,6 +1165,8 @@ function LayerCard({
   isMuted: boolean
   onPlay: () => void
   onSeek: (progress: number) => void
+  onScrubStart: () => void
+  onScrubEnd: () => void | Promise<void>
   onChange: (layer: GeneratedLayer) => void
   onToggleAlternateKey?: () => void
   onToggleLock?: () => void
@@ -1145,8 +1176,14 @@ function LayerCard({
   updating?: boolean
   variant?: "generate" | "extract"
 }) {
+  const waveformScrubberRef = useRef<HTMLInputElement>(null)
   const isGenerateCard = variant === "generate"
   const visibleProgress = mixActive || isAudible ? progress : 0
+  const seekWaveformFromPointer = (event: React.PointerEvent<HTMLDivElement>) => {
+    const bounds = event.currentTarget.getBoundingClientRect()
+    if (bounds.width <= 0) return
+    onSeek((event.clientX - bounds.left) / bounds.width)
+  }
   const beginDrag = (event: React.DragEvent, path: string | undefined) => {
     if (!path) return
     event.preventDefault()
@@ -1188,13 +1225,37 @@ function LayerCard({
           >
             {mixActive ? !isMuted ? <Pause /> : <Play className="play-glyph" /> : playing && isAudible ? <Pause /> : <Play className="play-glyph" />}
           </button>
-          <div className="waveform-reader">
+          <div
+            className="waveform-reader"
+            onPointerDown={(event) => {
+              if (event.button !== 0) return
+              event.preventDefault()
+              waveformScrubberRef.current?.focus({ preventScroll: true })
+              onScrubStart()
+              event.currentTarget.setPointerCapture(event.pointerId)
+              seekWaveformFromPointer(event)
+            }}
+            onPointerMove={(event) => {
+              if (event.currentTarget.hasPointerCapture(event.pointerId)) seekWaveformFromPointer(event)
+            }}
+            onPointerUp={(event) => {
+              if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
+              seekWaveformFromPointer(event)
+              event.currentTarget.releasePointerCapture(event.pointerId)
+              void onScrubEnd()
+            }}
+            onPointerCancel={(event) => {
+              if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+              void onScrubEnd()
+            }}
+          >
             <Waveform
               progress={visibleProgress}
               label={`Forme d’onde de ${layer.role}`}
               bars={layer.bars}
             />
             <input
+              ref={waveformScrubberRef}
               className="waveform-scrubber"
               type="range"
               min="0"
@@ -1202,6 +1263,13 @@ function LayerCard({
               value={Math.round(visibleProgress * 1000)}
               aria-label={`Position de lecture de ${layer.role}`}
               onChange={(event) => onSeek(Number(event.target.value) / 1000)}
+              onKeyDown={(event) => {
+                if (TIMELINE_SCRUB_KEYS.has(event.key)) onScrubStart()
+              }}
+              onKeyUp={(event) => {
+                if (TIMELINE_SCRUB_KEYS.has(event.key)) void onScrubEnd()
+              }}
+              onBlur={() => void onScrubEnd()}
             />
             <span className="wave-time tabular" aria-hidden="true">
               {(visibleProgress * layer.duration).toFixed(1)} / {layer.duration.toFixed(1)} s
@@ -1758,7 +1826,9 @@ function GenerateView({
                 isMuted={playback.mode === "mix" && playback.mutedIds.has(layer.id)}
                 isAudible={playback.mode === "mix" ? !playback.mutedIds.has(layer.id) : playback.soloId === layer.id}
                 onPlay={() => void playback.toggleLayer(layer.id)}
-                onSeek={(nextProgress) => playback.seekLayer(layer.id, nextProgress)}
+                onScrubStart={() => playback.beginScrub(layer.id)}
+                onSeek={(nextProgress) => playback.previewScrub(layer.id, nextProgress)}
+                onScrubEnd={playback.endScrub}
                 onChange={(next) => updateGeneratedLayer(index, next)}
                 onToggleAlternateKey={() => toggleAlternateKey(index)}
                 onToggleLock={() => toggleLayerLock(index)}
@@ -2238,7 +2308,9 @@ function QuickToolsView({
                 isMuted={playback.mode === "mix" && playback.mutedIds.has(layer.id)}
                 isAudible={playback.mode === "mix" ? !playback.mutedIds.has(layer.id) : playback.soloId === layer.id}
                 onPlay={() => void playback.toggleLayer(layer.id)}
-                onSeek={(nextProgress) => playback.seekLayer(layer.id, nextProgress)}
+                onScrubStart={() => playback.beginScrub(layer.id)}
+                onSeek={(nextProgress) => playback.previewScrub(layer.id, nextProgress)}
+                onScrubEnd={playback.endScrub}
                 onChange={(next) => setPreviewLayers((current) => current.map((item, itemIndex) => itemIndex === index ? next : item))}
               />)}</div> : <div className="quick-layer-empty">
                 <span className="quick-empty-icon"><Layers3 aria-hidden="true" /></span>
@@ -2441,7 +2513,7 @@ function GlobalPlayer({ layers, playback, contextLabel, syncAvailable }: { layer
     const bounds = event.currentTarget.getBoundingClientRect()
     if (bounds.width <= 0) return
     const nextProgress = (event.clientX - bounds.left) / bounds.width
-    playback.seekLayer(timelineLayer.id, nextProgress)
+    playback.previewScrub(timelineLayer.id, nextProgress)
   }
 
   return (
@@ -2467,8 +2539,9 @@ function GlobalPlayer({ layers, playback, contextLabel, syncAvailable }: { layer
             className={cn("global-waveform-reader", !timelineLayer && "is-disabled")}
             onPointerDown={(event) => {
               if (!timelineLayer || event.button !== 0) return
+              event.preventDefault()
               timelineScrubberRef.current?.focus({ preventScroll: true })
-              playback.beginScrub()
+              playback.beginScrub(timelineLayer.id)
               event.currentTarget.setPointerCapture(event.pointerId)
               seekTimelineFromPointer(event)
             }}
@@ -2496,9 +2569,9 @@ function GlobalPlayer({ layers, playback, contextLabel, syncAvailable }: { layer
               disabled={!timelineLayer}
               value={Math.round((timelineLayer ? playback.progress : 0) * 1000)}
               aria-label={`Position de lecture ${contextLabel}`}
-              onChange={(event) => timelineLayer && playback.seekLayer(timelineLayer.id, Number(event.target.value) / 1000)}
+              onChange={(event) => timelineLayer && playback.previewScrub(timelineLayer.id, Number(event.target.value) / 1000)}
               onKeyDown={(event) => {
-                if (TIMELINE_SCRUB_KEYS.has(event.key)) playback.beginScrub()
+                if (timelineLayer && TIMELINE_SCRUB_KEYS.has(event.key)) playback.beginScrub(timelineLayer.id)
               }}
               onKeyUp={(event) => {
                 if (TIMELINE_SCRUB_KEYS.has(event.key)) void playback.endScrub()

@@ -1882,7 +1882,14 @@ main:focus {
   height: 40px;
   overflow: hidden;
   border-inline-start: 1px solid rgb(255 255 255 / 0.07);
+  cursor: grab;
   padding: 4px 7px 3px 8px;
+  touch-action: none;
+  user-select: none;
+}
+
+.waveform-reader:active {
+  cursor: grabbing;
 }
 
 .layer-card .waveform-reader .waveform {
@@ -1898,8 +1905,8 @@ main:focus {
   height: 100%;
   appearance: none;
   background: transparent;
-  cursor: pointer;
   opacity: 0;
+  pointer-events: none;
 }
 
 .waveform-reader .waveform-scrubber::-webkit-slider-thumb {
