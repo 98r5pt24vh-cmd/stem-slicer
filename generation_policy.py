@@ -854,8 +854,15 @@ def select_generation(
                 del loop_use_counts[loop_id]
         return False
 
+    # Every slot without a safe-key option necessarily consumes one reserve.
+    # Starting below that lower bound can never succeed and causes explosive
+    # backtracking on legacy catalogues whose key confidence is unavailable.
+    minimum_reserve_limit = sum(
+        not any(option.key_pool_priority == 0 for option in options)
+        for options in options_by_slot
+    )
     assigned = False
-    for reserve_limit in range(len(request.categories) + 1):
+    for reserve_limit in range(minimum_reserve_limit, len(request.categories) + 1):
         selected_options.clear()
         used_identities.clear()
         loop_use_counts.clear()

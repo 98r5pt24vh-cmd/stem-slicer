@@ -485,6 +485,20 @@ class SelectionPolicyTests(unittest.TestCase):
             "uncertain",
         )
 
+    def test_recipe_with_only_uncertain_key_pools_is_still_deterministic(self):
+        layers = [
+            candidate("lead-reserve", "Lead", key_status="unavailable", key_margin=None),
+            candidate("pad-reserve", "Pad", key_status="unavailable", key_margin=None),
+        ]
+        request = GenerationRequest(("Lead", "Pad"), 140, "A minor", seed=73)
+        first = select_generation(layers, request)
+        second = select_generation(reversed(layers), request)
+        self.assertEqual(
+            [item.candidate.identity for item in first.selections],
+            ["lead-reserve", "pad-reserve"],
+        )
+        self.assertEqual(first, second)
+
     def test_key_conflict_is_never_selected(self):
         with self.assertRaises(SelectionError):
             select_generation(
