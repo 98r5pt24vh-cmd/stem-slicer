@@ -1092,16 +1092,15 @@ function LayerCard({
             />
           </label>
           {isGenerateCard ? <label className="layer-octave-control">
-            <span>OCT</span>
             <select
               aria-label={`Octave de ${layer.role}`}
               value={layer.octave}
               disabled={updating || !layer.identity}
               onChange={(event) => onChange({ ...layer, octave: Number(event.target.value) })}
             >
-              <option value="-1">−1</option>
-              <option value="0">0</option>
-              <option value="1">+1</option>
+              <option value="-1">OCT −1</option>
+              <option value="0">OCT 0</option>
+              <option value="1">OCT +1</option>
             </select>
           </label> : null}
           <Button
