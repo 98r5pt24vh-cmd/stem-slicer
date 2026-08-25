@@ -27,8 +27,8 @@ app.setName("Stem Slicer Electron Prototype")
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
-    width: 1440,
-    height: 920,
+    width: 1226,
+    height: 786,
     minWidth: 1040,
     minHeight: 700,
     backgroundColor: "#09090b",
