@@ -5739,9 +5739,9 @@ main.quick-tools-main {
   height: 100%;
   min-height: 0;
   flex-direction: column;
-  gap: 10px;
+  gap: 7px;
   overflow: hidden;
-  padding: 12px clamp(18px, 2vw, 28px);
+  padding: 10px clamp(18px, 2.2vw, 32px) 0;
 }
 
 .quick-tools-page > * + * {
@@ -5749,7 +5749,7 @@ main.quick-tools-main {
 }
 
 .quick-tools-page .page-header {
-  min-height: 50px;
+  min-height: auto;
   flex: 0 0 auto;
   align-items: center;
   margin: 0;
@@ -5765,8 +5765,10 @@ main.quick-tools-main {
 }
 
 .quick-tools-page .page-description {
+  max-width: 760px;
   margin-block-start: 3px;
-  font-size: 10px;
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 .quick-tools-shell {
@@ -5898,18 +5900,6 @@ main.quick-tools-main {
   flex-direction: column;
   gap: 10px;
   overflow: hidden;
-}
-
-.quick-tool-panel::before {
-  position: absolute;
-  z-index: -1;
-  inset: 164px -10px -28px;
-  background:
-    radial-gradient(ellipse 80% 46% at 50% 0%, rgb(var(--panel-rgb) / 0.035), transparent 72%),
-    linear-gradient(180deg, rgb(0 0 0 / 0.14), transparent 78%);
-  box-shadow: 0 -16px 42px -34px rgb(var(--panel-rgb) / 0.34);
-  content: "";
-  pointer-events: none;
 }
 
 .quick-tool-panel.extract-panel { --panel-accent: var(--destructive); --panel-rgb: 230 57 0; }

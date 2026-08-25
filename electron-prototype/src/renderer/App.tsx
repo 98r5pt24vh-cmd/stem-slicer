@@ -2254,7 +2254,7 @@ function QuickToolsView({
           <div id="quick-tool-panel-extract" className="quick-tool-panel extract-panel" role="region" aria-labelledby="quick-tool-tab-extract">
             <header className="quick-panel-heading">
               <div><span className="quick-panel-kicker">One loop · multiple layers</span><h2>Extract layers</h2></div>
-              <div className="quick-panel-actions"><span className="quick-panel-status">{extractJob.busy ? `${extractJob.percent}% · ${extractJob.message}` : `${previewLayers.length} layers`}</span><Button variant="outline" size="sm" disabled={previewLayers.length === 0} onClick={() => window.stemSlicer?.startFilesDrag(previewLayers.flatMap((layer) => layer.path ? [layer.path] : []))}><Layers3 /> Drag all</Button></div>
+              <span className="quick-panel-status">{extractJob.busy ? `${extractJob.percent}% · ${extractJob.message}` : `${previewLayers.length} layers`}</span>
             </header>
 
             <div className="quick-extract-controls">
@@ -2278,12 +2278,13 @@ function QuickToolsView({
               <Button className="quick-run-button" onClick={runExtract} disabled={!extractJob.busy && !extractFile}>{extractJob.busy ? <X /> : <Sparkles />} {extractJob.busy ? "Cancel" : "Extract"}</Button>
             </div>
 
-            <div className="quick-results-heading">
-              <div><h3>Extracted layers</h3><span>Cards appear here as each layer becomes available.</span></div>
-              <span>{extractFile ? `${basename(extractFile)} selected` : "Waiting for one source loop"}</span>
-            </div>
-            <div className="quick-layer-area" aria-live="polite">
-              {previewLayers.length > 0 ? <div className="quick-artifact-grid">{previewLayers.map((layer, index) => <LayerCard
+            <section className="generated-layers-section quick-extracted-layers-section" aria-labelledby="quick-extracted-layers-title">
+              <header className="generate-layer-toolbar">
+                <div><h2 id="quick-extracted-layers-title">Extracted layers</h2><span>{extractFile ? `${basename(extractFile)} selected` : "Cards appear here as each layer becomes available."}</span></div>
+                <Button variant="outline" size="sm" disabled={previewLayers.length === 0} onClick={() => window.stemSlicer?.startFilesDrag(previewLayers.flatMap((layer) => layer.path ? [layer.path] : []))}><Layers3 /> Drag all</Button>
+              </header>
+              <div className="layer-scroll" tabIndex={0} aria-label="Extracted layer cards" aria-live="polite">
+                {previewLayers.length > 0 ? <div className="layer-grid">{previewLayers.map((layer, index) => <LayerCard
                 key={layer.id}
                 layer={layer}
                 variant="extract"
@@ -2297,12 +2298,13 @@ function QuickToolsView({
                 onSeek={(nextProgress) => playback.previewScrub(layer.id, nextProgress)}
                 onScrubEnd={playback.endScrub}
                 onChange={(next) => setPreviewLayers((current) => current.map((item, itemIndex) => itemIndex === index ? next : item))}
-              />)}</div> : <div className="quick-layer-empty">
-                <span className="quick-empty-icon"><Layers3 aria-hidden="true" /></span>
-                <strong>{extractJob.error || (extractJob.busy ? extractJob.message : "No extracted layers yet")}</strong>
-                <span>{extractJob.busy ? `${extractJob.percent}% complete` : "Choose a loop to create playable cards with waveform, MIDI drag and individual export."}</span>
-              </div>}
-            </div>
+                />)}</div> : <div className="quick-layer-empty">
+                  <span className="quick-empty-icon"><Layers3 aria-hidden="true" /></span>
+                  <strong>{extractJob.error || (extractJob.busy ? extractJob.message : "No extracted layers yet")}</strong>
+                  <span>{extractJob.busy ? `${extractJob.percent}% complete` : "Choose a loop to create playable cards with waveform, MIDI drag and individual export."}</span>
+                </div>}
+              </div>
+            </section>
           </div>
         ) : null}
 
