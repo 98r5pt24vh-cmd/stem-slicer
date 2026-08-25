@@ -2202,17 +2202,42 @@ function CloudView() {
 }
 
 function GlobalPlayer({ layers, playback, contextLabel }: { layers: GeneratedLayer[]; playback: PlaybackClock; contextLabel: string }) {
-  const currentLayer = layers.find((layer) => layer.id === playback.soloId) ?? layers[0]
+  const soloLayer = layers.find((layer) => layer.id === playback.soloId)
+  const audibleMixLayers = layers.filter((layer) => !playback.mutedIds.has(layer.id))
+  const activeLayers = playback.playing
+    ? playback.mode === "solo" && soloLayer
+      ? [soloLayer]
+      : playback.mode === "mix"
+        ? audibleMixLayers
+        : []
+    : []
+  const currentLayer = soloLayer ?? activeLayers[0] ?? layers[0]
   const mixPlaying = playback.playing && playback.mode === "mix"
   const syncEnabled = playback.mode === "mix"
   const duration = currentLayer?.duration ?? 0
+  const activeFileNames = activeLayers.map((layer) => layer.file).join(" · ")
+  const playerTitle = activeLayers.length === 1
+    ? activeLayers[0].file
+    : activeLayers.length > 1
+      ? `${activeLayers.length} files playing`
+      : "No file playing"
+  const playerDetails = activeLayers.length === 1
+    ? `${activeLayers[0].category} · ${activeLayers[0].bpm} BPM · ${activeLayers[0].keyName}`
+    : activeLayers.length > 1
+      ? activeFileNames
+      : layers.length > 0
+        ? "Choose a card or start synchronized play"
+        : "No audio layers"
 
   return (
     <footer className="global-player app-no-drag" aria-label="Global audio preview">
       <div className="player-current">
         <span className="player-art"><AudioLines aria-hidden="true" /></span>
-        <div><strong>{playback.soloId ? currentLayer?.role : contextLabel}</strong><small>{currentLayer ? `${currentLayer.bpm} BPM · ${currentLayer.keyName}` : "No audio layers"}</small></div>
-        <Badge variant={playback.error ? "warning" : "secondary"} title={playback.error || undefined}>{playback.error ? "Audio unavailable" : "Local audio"}</Badge>
+        <div>
+          <strong title={activeFileNames || undefined}>{playerTitle}</strong>
+          <small title={activeLayers.length > 1 ? activeFileNames : undefined}>{playerDetails}</small>
+        </div>
+        {playback.error ? <Badge variant="warning" title={playback.error}>Audio unavailable</Badge> : null}
       </div>
       <div className="player-core">
         <div className="player-controls">
