@@ -1960,7 +1960,7 @@ main:focus {
 
 .layer-controls {
   display: grid;
-  grid-template-columns: minmax(62px, 1fr) 56px 56px 56px;
+  grid-template-columns: minmax(62px, 1fr) 52px 56px 56px;
   align-items: end;
   gap: 5px;
   margin-block-start: auto;
@@ -1976,16 +1976,40 @@ main:focus {
   font-size: 9px;
 }
 
-.layer-card .layer-octave-control select {
-  width: 56px;
+.layer-card .layer-controls .layer-octave-trigger {
+  width: 52px;
+  min-width: 52px;
   height: 28px;
+  min-height: 28px;
+  justify-content: space-between;
+  gap: 2px;
   border-color: rgb(255 255 255 / 0.09);
   background: rgb(10 13 10 / 0.58);
   color: #c6cec2;
-  padding-inline: 5px 14px;
+  padding-inline: 5px 4px;
   font-size: 8px;
   font-weight: 650;
   box-shadow: 0 1px 0 rgb(255 255 255 / 0.04) inset;
+}
+
+.layer-card .layer-controls .layer-octave-trigger svg {
+  width: 9px;
+  height: 9px;
+}
+
+.layer-octave-popup {
+  width: max(var(--anchor-width), 62px);
+}
+
+.layer-octave-popup .custom-select-list {
+  padding: 3px;
+}
+
+.layer-octave-popup .custom-select-item {
+  min-height: 26px;
+  grid-template-columns: 1fr;
+  padding: 4px 5px;
+  font-size: 9px;
 }
 
 .layer-card .layer-controls button {
@@ -2033,7 +2057,7 @@ main:focus {
   align-self: start;
   grid-column: 1;
   grid-row: 2;
-  margin-block-start: 2px;
+  margin-block-start: 4px;
 }
 
 .layer-controls .layer-volume-heading {
@@ -2052,17 +2076,6 @@ main:focus {
   color: var(--muted-foreground);
   font-size: 8px;
   text-align: start;
-}
-
-.layer-controls .layer-octave-control {
-  display: block;
-  width: 56px;
-  height: 28px;
-  align-self: end;
-}
-
-.layer-controls .layer-octave-control select {
-  display: block;
 }
 
 .layer-controls label input,

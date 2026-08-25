@@ -858,6 +858,59 @@ function LayerCategorySelect({
   )
 }
 
+const LAYER_OCTAVE_OPTIONS = [
+  { value: "-1", label: "OCT −1" },
+  { value: "0", label: "OCT 0" },
+  { value: "1", label: "OCT +1" },
+]
+
+function LayerOctaveSelect({
+  id,
+  value,
+  disabled,
+  onChange,
+}: {
+  id: string
+  value: number
+  disabled: boolean
+  onChange: (value: number) => void
+}) {
+  return (
+    <BaseSelect.Root
+      id={id}
+      items={LAYER_OCTAVE_OPTIONS}
+      value={String(value)}
+      disabled={disabled}
+      onValueChange={(nextValue) => nextValue && onChange(Number(nextValue))}
+    >
+      <BaseSelect.Trigger className="custom-select-trigger layer-octave-trigger" aria-label={`Octave ${value}`}>
+        <BaseSelect.Value />
+        <BaseSelect.Icon><ChevronDown aria-hidden="true" /></BaseSelect.Icon>
+      </BaseSelect.Trigger>
+      <BaseSelect.Portal>
+        <BaseSelect.Positioner
+          className="custom-select-positioner"
+          side="bottom"
+          align="start"
+          sideOffset={4}
+          alignItemWithTrigger={false}
+          collisionAvoidance={{ side: "none", align: "shift", fallbackAxisSide: "none" }}
+        >
+          <BaseSelect.Popup className="custom-select-popup layer-octave-popup">
+            <BaseSelect.List className="custom-select-list">
+              {LAYER_OCTAVE_OPTIONS.map((option) => (
+                <BaseSelect.Item className="custom-select-item" key={option.value} value={option.value}>
+                  <BaseSelect.ItemText>{option.label}</BaseSelect.ItemText>
+                </BaseSelect.Item>
+              ))}
+            </BaseSelect.List>
+          </BaseSelect.Popup>
+        </BaseSelect.Positioner>
+      </BaseSelect.Portal>
+    </BaseSelect.Root>
+  )
+}
+
 function AppSidebar({
   activeView,
   collapsed,
@@ -1091,18 +1144,12 @@ function LayerCard({
               onChange={(event) => onChange({ ...layer, volume: Number(event.target.value) })}
             />
           </label>
-          {isGenerateCard ? <label className="layer-octave-control">
-            <select
-              aria-label={`Octave de ${layer.role}`}
-              value={layer.octave}
-              disabled={updating || !layer.identity}
-              onChange={(event) => onChange({ ...layer, octave: Number(event.target.value) })}
-            >
-              <option value="-1">OCT −1</option>
-              <option value="0">OCT 0</option>
-              <option value="1">OCT +1</option>
-            </select>
-          </label> : null}
+          {isGenerateCard ? <LayerOctaveSelect
+            id={`layer-octave-${layer.id}`}
+            value={layer.octave}
+            disabled={updating || !layer.identity}
+            onChange={(octave) => onChange({ ...layer, octave })}
+          /> : null}
           <Button
             variant="outline"
             size="sm"

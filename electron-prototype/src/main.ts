@@ -30,6 +30,22 @@ const generatedOutputRoot = path.join(
   "Stem Slicer",
   "Generated Loops",
 )
+const dragPreviewMaxSize = 40
+
+function createDragPreviewIcon() {
+  const iconPath = path.join(audioEngine.status().sourceRoot, "assets", "app-icon.png")
+  if (!existsSync(iconPath)) return nativeImage.createEmpty()
+  const source = nativeImage.createFromPath(iconPath)
+  if (source.isEmpty()) return source
+  const size = source.getSize()
+  const scale = Math.min(dragPreviewMaxSize / size.width, dragPreviewMaxSize / size.height, 1)
+  if (scale === 1) return source
+  return source.resize({
+    width: Math.max(1, Math.round(size.width * scale)),
+    height: Math.max(1, Math.round(size.height * scale)),
+    quality: "best",
+  })
+}
 
 app.setPath("userData", path.join(prototypeCachePath, "electron-user-data"))
 app.setName("Stem Slicer Electron Prototype")
@@ -129,21 +145,19 @@ function registerIpc(): void {
   })
   ipcMain.on("drag:start", (event, targetPath: unknown) => {
     if (typeof targetPath !== "string" || !existsSync(targetPath)) return
-    const iconPath = path.join(audioEngine.status().sourceRoot, "assets", "app-icon.png")
     event.sender.startDrag({
       file: targetPath,
-      icon: existsSync(iconPath) ? nativeImage.createFromPath(iconPath) : nativeImage.createEmpty(),
+      icon: createDragPreviewIcon(),
     })
   })
   ipcMain.on("drag:start-many", (event, targetPaths: unknown) => {
     if (!Array.isArray(targetPaths)) return
     const files = targetPaths.filter((item): item is string => typeof item === "string" && existsSync(item))
     if (files.length === 0) return
-    const iconPath = path.join(audioEngine.status().sourceRoot, "assets", "app-icon.png")
     event.sender.startDrag({
       file: files[0],
       files,
-      icon: existsSync(iconPath) ? nativeImage.createFromPath(iconPath) : nativeImage.createEmpty(),
+      icon: createDragPreviewIcon(),
     })
   })
 }
