@@ -1998,7 +1998,7 @@ main:focus {
 }
 
 .layer-octave-popup {
-  width: max(var(--anchor-width), 62px);
+  width: var(--anchor-width);
 }
 
 .layer-octave-popup .custom-select-list {
@@ -2008,8 +2008,10 @@ main:focus {
 .layer-octave-popup .custom-select-item {
   min-height: 26px;
   grid-template-columns: 1fr;
+  justify-items: center;
   padding: 4px 5px;
   font-size: 9px;
+  text-align: center;
 }
 
 .layer-card .layer-controls button {
@@ -2041,50 +2043,47 @@ main:focus {
 }
 
 .layer-controls .layer-volume-control {
-  width: 86px;
+  width: 100%;
+  min-width: 0;
   height: 28px;
   align-self: end;
-  grid-template-columns: 86px;
-  grid-template-rows: 10px 18px;
-  row-gap: 0;
-  justify-content: start;
+  grid-template-columns: 18px minmax(0, 1fr) 11px;
+  grid-template-rows: 28px;
+  align-items: center;
+  column-gap: 3px;
 }
 
 .layer-controls label.layer-volume-control input {
-  width: 86px;
-  min-width: 86px;
+  width: 100%;
+  min-width: 0;
   height: 5px;
-  align-self: start;
-  grid-column: 1;
-  grid-row: 2;
-  margin-block-start: 8px;
+  align-self: center;
+  grid-column: 2;
+  grid-row: 1;
+  margin-block-start: 0;
 }
 
-.layer-controls .layer-volume-heading {
-  display: flex;
-  width: max-content;
-  align-items: center;
-  align-self: end;
-  gap: 4px;
+.layer-controls .layer-volume-control output {
+  min-width: 0;
   grid-column: 1;
   grid-row: 1;
-  line-height: 1;
-}
-
-.layer-controls .layer-volume-heading output {
-  min-width: 0;
   color: var(--muted-foreground);
   font-size: 8px;
-  text-align: start;
+  line-height: 1;
+  text-align: end;
+}
+
+.layer-controls .layer-volume-control > svg {
+  width: 11px;
+  height: 11px;
+  grid-column: 3;
+  grid-row: 1;
+  color: #8e9889;
 }
 
 .layer-controls label input,
 .layer-controls label select {
   grid-column: 1 / -1;
-}
-
-.layer-controls label:first-child input {
-  grid-column: 1;
 }
 
 .layer-controls output {

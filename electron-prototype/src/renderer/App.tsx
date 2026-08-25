@@ -11,7 +11,6 @@ import {
   Database,
   FolderCog,
   FolderOpen,
-  Gauge,
   History,
   Layers3,
   Link2,
@@ -32,6 +31,7 @@ import {
   Sparkles,
   Trash2,
   Unlock,
+  Volume2,
   WandSparkles,
   Wrench,
   X,
@@ -102,6 +102,17 @@ interface HistoryEntry {
   layerCount: number
   generation: GenerateResult
   layers: GeneratedLayer[]
+}
+
+function MetronomeIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M8 19 10 5h4l2 14Z" />
+      <path d="M6.5 21h11" />
+      <path d="m12 16 4-9" />
+      <circle cx="16" cy="7" r="1" fill="currentColor" stroke="none" />
+    </svg>
+  )
 }
 
 type QuickToolId = "extract" | "scan" | "convert"
@@ -1121,7 +1132,7 @@ function LayerCard({
         </div>
 
         <div className="layer-metadata">
-          <span><Gauge aria-hidden="true" /> {layer.bpm} BPM</span>
+          <span><MetronomeIcon /> {layer.bpm} BPM</span>
           <span><Music2 aria-hidden="true" /> {layer.keyName}</span>
           {layer.alternateKey && layer.identity && onToggleAlternateKey ? (
             <button type="button" className="layer-alt-key" disabled={updating} title="Basculer entre la clé Top-1 et Top-2" onClick={onToggleAlternateKey}>
@@ -1134,7 +1145,7 @@ function LayerCard({
 
         <div className="layer-controls">
           <label className="layer-volume-control">
-            <span className="layer-volume-heading"><span>Volume</span><output className="tabular">{layer.volume}%</output></span>
+            <output className="tabular">{layer.volume}%</output>
             <input
               type="range"
               min="0"
@@ -1143,6 +1154,7 @@ function LayerCard({
               aria-label={`Volume de ${layer.role}`}
               onChange={(event) => onChange({ ...layer, volume: Number(event.target.value) })}
             />
+            <Volume2 aria-hidden="true" />
           </label>
           {isGenerateCard ? <LayerOctaveSelect
             id={`layer-octave-${layer.id}`}
