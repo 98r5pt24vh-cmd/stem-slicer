@@ -215,7 +215,7 @@ app.whenReady().then(() => {
   Menu.setApplicationMenu(null)
   protocol.handle("stem-media", (request) => {
     const url = new URL(request.url)
-    const targetPath = decodeURIComponent(url.pathname.replace(/^\//, ""))
+    const targetPath = url.searchParams.get("path") ?? decodeURIComponent(url.pathname.replace(/^\//, ""))
     if (!path.isAbsolute(targetPath) || !existsSync(targetPath)) {
       return new Response("Media file unavailable.", { status: 404 })
     }

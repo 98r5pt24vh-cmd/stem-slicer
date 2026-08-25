@@ -21,7 +21,7 @@ const api: StemSlicerDesktopApi = {
   trashPath: (path) => ipcRenderer.invoke("shell:trash-path", path),
   startFileDrag: (path) => ipcRenderer.send("drag:start", path),
   startFilesDrag: (paths) => ipcRenderer.send("drag:start-many", paths),
-  mediaUrl: (path) => `stem-media://local/${encodeURIComponent(path)}`,
+  mediaUrl: (path) => `stem-media://local/audio?path=${encodeURIComponent(path)}`,
 }
 
 contextBridge.exposeInMainWorld("stemSlicer", api)
