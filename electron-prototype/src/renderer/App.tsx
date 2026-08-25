@@ -115,6 +115,18 @@ function MetronomeIcon() {
   )
 }
 
+function MidiFileIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+      <path
+        fillRule="evenodd"
+        clipRule="evenodd"
+        d="M3 2h14v16H3V2Zm9 3h3v2h-3V5ZM9 8h3v2H9V8Zm-3 3h3v2H6v-2Zm-2 3h3v2H4v-2Z"
+      />
+    </svg>
+  )
+}
+
 type QuickToolId = "extract" | "scan" | "convert"
 
 const NAVIGATION: NavItem[] = [
@@ -750,7 +762,7 @@ function AudioArtifactCard({ artifact, compact = false }: { artifact: AudioArtif
       </div>
       <footer>
         <button type="button" draggable onDragStart={(event) => beginDrag(event, artifact.path)}><AudioLines aria-hidden="true" />Audio</button>
-        {artifact.midiPath ? <button type="button" draggable onDragStart={(event) => beginDrag(event, artifact.midiPath as string)}><Music2 aria-hidden="true" />MIDI</button> : <span>MIDI unavailable</span>}
+        {artifact.midiPath ? <button type="button" draggable onDragStart={(event) => beginDrag(event, artifact.midiPath as string)}><MidiFileIcon />MIDI</button> : <span>MIDI unavailable</span>}
         <button type="button" onClick={() => void window.stemSlicer?.revealPath(artifact.path)}><FolderOpen aria-hidden="true" />Reveal</button>
       </footer>
     </article>
@@ -1184,7 +1196,7 @@ function LayerCard({
             onClick={() => layer.midiPath && void window.stemSlicer?.revealPath(layer.midiPath)}
             onDragStart={(event) => beginDrag(event, layer.midiPath)}
           >
-            <Music2 /> MIDI
+            <MidiFileIcon /> MIDI
           </Button>
         </div>
       </CardContent>
