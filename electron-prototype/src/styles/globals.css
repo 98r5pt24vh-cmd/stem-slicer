@@ -1606,6 +1606,7 @@ main:focus {
 }
 
 .layer-card [data-slot="card-header"] {
+  align-items: center;
   gap: 6px;
   padding: 5px 7px 5px;
 }
@@ -1656,8 +1657,8 @@ main:focus {
 
 .layer-category-trigger {
   width: max-content;
-  height: 22px;
-  min-height: 22px;
+  height: 24px;
+  min-height: 24px;
   flex: 0 0 auto;
   justify-content: flex-start;
   gap: 4px;
@@ -2027,8 +2028,8 @@ main:focus {
 }
 
 .layer-card .layer-controls button svg {
-  width: 12px;
-  height: 12px;
+  width: 15px;
+  height: 15px;
 }
 
 .layer-card .layer-controls label > span {
@@ -2047,7 +2048,7 @@ main:focus {
   min-width: 0;
   height: 28px;
   align-self: end;
-  grid-template-columns: 18px minmax(0, 1fr) 11px;
+  grid-template-columns: 11px minmax(0, 1fr) 24px;
   grid-template-rows: 28px;
   align-items: center;
   column-gap: 3px;
@@ -2065,18 +2066,19 @@ main:focus {
 
 .layer-controls .layer-volume-control output {
   min-width: 0;
-  grid-column: 1;
+  grid-column: 3;
   grid-row: 1;
   color: var(--muted-foreground);
   font-size: 8px;
   line-height: 1;
-  text-align: end;
+  text-align: start;
+  white-space: nowrap;
 }
 
 .layer-controls .layer-volume-control > svg {
   width: 11px;
   height: 11px;
-  grid-column: 3;
+  grid-column: 1;
   grid-row: 1;
   color: #8e9889;
 }
@@ -6825,6 +6827,13 @@ main.quick-tools-main {
   box-shadow: 0 4px 0 #132408, 0 7px 12px rgb(0 0 0 / 0.34), 0 1px 0 rgb(255 255 255 / 0.12) inset, 0 0 16px rgb(115 189 0 / 0.18);
 }
 
+.player-loop-key.is-active {
+  border-color: rgb(225 213 0 / 0.48);
+  background: linear-gradient(145deg, rgb(225 213 0 / 0.22), rgb(24 23 7 / 0.96) 74%);
+  color: var(--signal-yellow);
+  box-shadow: 0 4px 0 #2d2b05, 0 7px 12px rgb(0 0 0 / 0.34), 0 1px 0 rgb(255 255 255 / 0.12) inset, 0 0 16px rgb(225 213 0 / 0.16);
+}
+
 .player-key-primary {
   width: 44px;
   height: 44px;
@@ -6891,7 +6900,7 @@ main.quick-tools-main {
   gap: 8px;
 }
 
-.player-volume > svg { width: 15px; height: 15px; color: var(--signal-yellow); }
+.player-volume > svg { width: 17px; height: 17px; flex: 0 0 17px; color: var(--signal-yellow); }
 .player-volume input { max-width: 130px; }
 .player-volume output { min-width: 38px; color: var(--muted-foreground); font-size: 10px; text-align: end; }
 

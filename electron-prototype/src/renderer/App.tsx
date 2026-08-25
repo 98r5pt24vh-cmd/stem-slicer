@@ -26,8 +26,8 @@ import {
   ScanLine,
   Settings2,
   SkipBack,
-  Sliders,
   SlidersHorizontal,
+  Square,
   Sparkles,
   Trash2,
   Unlock,
@@ -306,12 +306,14 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
   const [soloId, setSoloId] = useState<string | null>(null)
   const [lastSoloId, setLastSoloId] = useState<string | null>(null)
   const [syncEnabled, setSyncEnabled] = useState(false)
+  const [loopEnabled, setLoopEnabled] = useState(false)
   const [mutedIds, setMutedIds] = useState<string[]>([])
   const audioByIdRef = useRef(new Map<string, HTMLAudioElement>())
   const modeRef = useRef<PlaybackMode>("idle")
   const soloIdRef = useRef<string | null>(null)
   const lastSoloIdRef = useRef<string | null>(null)
   const syncEnabledRef = useRef(false)
+  const loopEnabledRef = useRef(false)
   const mutedIdsRef = useRef(new Set<string>())
   const layerSourcesJson = JSON.stringify(layers.map((layer) => ({ id: layer.id, path: layer.path ?? "" })))
 
@@ -334,6 +336,12 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
   const commitSyncEnabled = useCallback((nextEnabled: boolean) => {
     syncEnabledRef.current = nextEnabled
     setSyncEnabled(nextEnabled)
+  }, [])
+
+  const commitLoopEnabled = useCallback((nextEnabled: boolean) => {
+    loopEnabledRef.current = nextEnabled
+    for (const audio of audioByIdRef.current.values()) audio.loop = nextEnabled
+    setLoopEnabled(nextEnabled)
   }, [])
 
   const commitMutedIds = useCallback((nextMutedIds: Set<string>) => {
@@ -367,6 +375,7 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
       const mediaUrl = window.stemSlicer.mediaUrl(source.path)
       const audio = existing?.src === mediaUrl ? existing : new Audio(mediaUrl)
       audio.preload = "auto"
+      audio.loop = loopEnabledRef.current
       audio.onerror = () => setError(`Audio file could not be loaded: ${basename(source.path)}`)
       next.set(source.id, audio)
     }
@@ -383,9 +392,10 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
     commitMode("idle", null)
     commitLastSoloId(null)
     commitSyncEnabled(false)
+    commitLoopEnabled(false)
     commitMutedIds(new Set())
     return pauseAll
-  }, [commitLastSoloId, commitMode, commitMutedIds, commitSyncEnabled, layerSourcesJson, pauseAll])
+  }, [commitLastSoloId, commitLoopEnabled, commitMode, commitMutedIds, commitSyncEnabled, layerSourcesJson, pauseAll])
 
   useEffect(() => {
     for (const layer of layers) {
@@ -548,18 +558,17 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
 
   const stop = useCallback(() => {
     pauseAll()
+    setPlaying(false)
+  }, [pauseAll])
+
+  const rewind = useCallback(() => {
     for (const audio of audioByIdRef.current.values()) audio.currentTime = 0
     setProgress(0)
-    setPlaying(false)
-    commitMutedIds(new Set())
-    if (syncEnabledRef.current) {
-      commitMode("mix", null)
-      return
-    }
-    const previousSoloId = lastSoloIdRef.current
-    const hasPreviousSolo = Boolean(previousSoloId && audioByIdRef.current.has(previousSoloId))
-    commitMode(hasPreviousSolo ? "solo" : "idle", hasPreviousSolo ? previousSoloId : null)
-  }, [commitMode, commitMutedIds, pauseAll])
+  }, [])
+
+  const toggleLoopMode = useCallback(() => {
+    commitLoopEnabled(!loopEnabledRef.current)
+  }, [commitLoopEnabled])
 
   const reset = useCallback(() => {
     pauseAll()
@@ -568,10 +577,11 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
     setPlaying(false)
     setError("")
     commitSyncEnabled(false)
+    commitLoopEnabled(false)
     commitMutedIds(new Set())
     commitLastSoloId(null)
     commitMode("idle", null)
-  }, [commitLastSoloId, commitMode, commitMutedIds, commitSyncEnabled, pauseAll])
+  }, [commitLastSoloId, commitLoopEnabled, commitMode, commitMutedIds, commitSyncEnabled, pauseAll])
 
   const seekLayer = useCallback((id: string, nextProgress: number) => {
     const clampedProgress = Math.max(0, Math.min(nextProgress, 1))
@@ -602,12 +612,15 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
     soloId,
     lastSoloId,
     syncEnabled,
+    loopEnabled,
     mutedIds: mutedIdSet,
     seekLayer,
     togglePrimary,
     toggleSyncMode,
+    toggleLoopMode,
     toggleLayer,
     stop,
+    rewind,
     reset,
     masterVolume,
     setMasterVolume,
@@ -1157,7 +1170,7 @@ function LayerCard({
 
         <div className="layer-controls">
           <label className="layer-volume-control">
-            <output className="tabular">{layer.volume}%</output>
+            <Volume2 aria-hidden="true" />
             <input
               type="range"
               min="0"
@@ -1166,7 +1179,7 @@ function LayerCard({
               aria-label={`Volume de ${layer.role}`}
               onChange={(event) => onChange({ ...layer, volume: Number(event.target.value) })}
             />
-            <Volume2 aria-hidden="true" />
+            <output className="tabular">{layer.volume}%</output>
           </label>
           {isGenerateCard ? <LayerOctaveSelect
             id={`layer-octave-${layer.id}`}
@@ -1174,18 +1187,6 @@ function LayerCard({
             disabled={updating || !layer.identity}
             onChange={(octave) => onChange({ ...layer, octave })}
           /> : null}
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={!layer.path}
-            draggable={Boolean(layer.path)}
-            aria-label={`Exporter ${layer.role}`}
-            title={layer.path ? "Drag audio or click to reveal it" : "Render this layer before exporting it"}
-            onClick={() => layer.path && void window.stemSlicer?.revealPath(layer.path)}
-            onDragStart={(event) => beginDrag(event, layer.path)}
-          >
-            <AudioLines /> Audio
-          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -1197,6 +1198,18 @@ function LayerCard({
             onDragStart={(event) => beginDrag(event, layer.midiPath)}
           >
             <MidiFileIcon /> MIDI
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={!layer.path}
+            draggable={Boolean(layer.path)}
+            aria-label={`Exporter ${layer.role}`}
+            title={layer.path ? "Drag audio or click to reveal it" : "Render this layer before exporting it"}
+            onClick={() => layer.path && void window.stemSlicer?.revealPath(layer.path)}
+            onDragStart={(event) => beginDrag(event, layer.path)}
+          >
+            <AudioLines /> Audio
           </Button>
         </div>
       </CardContent>
@@ -2384,7 +2397,9 @@ function GlobalPlayer({ layers, playback, contextLabel, syncAvailable }: { layer
         <div className="player-controls">
           <button type="button" className={cn("player-key player-sync-key", syncEnabled && "is-active")} disabled={!syncAvailable} onClick={playback.toggleSyncMode} aria-pressed={syncEnabled} aria-label={syncAvailable ? syncEnabled ? "Disable synchronized playback" : "Enable synchronized playback" : "Synchronized playback is only available for generated or extracted layer cards"}><Link2 aria-hidden="true" /><span>Sync</span></button>
           <button type="button" className={cn("player-key player-key-primary", primaryPlaying && "is-active")} disabled={!canPlayPrimary} onClick={() => void playback.togglePrimary()} aria-label={syncEnabled ? mixPlaying ? "Pause all layers" : "Play all layers" : primaryPlaying ? "Pause selected layer" : "Play selected layer"}>{primaryPlaying ? <Pause aria-hidden="true" /> : <Play className="play-glyph" aria-hidden="true" />}</button>
-          <button type="button" className="player-key" onClick={playback.stop} aria-label="Stop and return to start"><SkipBack aria-hidden="true" /></button>
+          <button type="button" className="player-key" disabled={!primaryPlaying} onClick={playback.stop} aria-label="Stop playback"><Square aria-hidden="true" /></button>
+          <button type="button" className="player-key" disabled={!timelineLayer} onClick={playback.rewind} aria-label="Return to beginning"><SkipBack aria-hidden="true" /></button>
+          <button type="button" className={cn("player-key player-loop-key", playback.loopEnabled && "is-active")} disabled={!layers.some((layer) => layer.path)} onClick={playback.toggleLoopMode} aria-pressed={playback.loopEnabled} aria-label={playback.loopEnabled ? "Disable loop playback" : "Enable loop playback"}><Repeat2 aria-hidden="true" /></button>
         </div>
         <div className="player-timeline">
           <div className="global-waveform-reader">
@@ -2403,7 +2418,7 @@ function GlobalPlayer({ layers, playback, contextLabel, syncAvailable }: { layer
           <span className="tabular">{((timelineLayer ? playback.progress : 0) * duration).toFixed(1)} / {duration.toFixed(1)} s</span>
         </div>
       </div>
-      <label className="player-volume"><Sliders aria-hidden="true" /><span className="sr-only">Preview volume</span><input type="range" min="0" max="100" value={playback.masterVolume} onChange={(event) => playback.setMasterVolume(Number(event.target.value))} /><output className="tabular">{playback.masterVolume}%</output></label>
+      <label className="player-volume"><Volume2 aria-hidden="true" /><span className="sr-only">Preview volume</span><input type="range" min="0" max="100" value={playback.masterVolume} onChange={(event) => playback.setMasterVolume(Number(event.target.value))} /><output className="tabular">{playback.masterVolume}%</output></label>
     </footer>
   )
 }
