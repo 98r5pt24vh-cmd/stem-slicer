@@ -249,7 +249,7 @@ def classifier():
                 / "Stem Slicer"
                 / "1.9"
                 / "generate"
-                / "mert-features.sqlite3"
+                / "features.sqlite3"
             ),
             device=os.environ.get("STEM_SLICER_MERT_DEVICE", "cpu"),
         )

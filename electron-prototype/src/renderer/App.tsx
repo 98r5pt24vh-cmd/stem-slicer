@@ -1666,7 +1666,7 @@ function GenerateView({
       targetBpm: bpm,
       targetKey: keyName,
       seed,
-      bars: 4,
+      bars: 8,
       lockedIdentitiesBySlot: layers.map((layer) => layer.locked && layer.identity ? layer.identity : null),
       excludedIdentities: seedOverride == null
         ? layers.filter((layer) => !layer.locked && layer.identity).map((layer) => layer.identity as string)
