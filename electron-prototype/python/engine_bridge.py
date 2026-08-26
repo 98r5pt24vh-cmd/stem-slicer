@@ -860,6 +860,7 @@ def generation(job_id: str, payload: dict) -> dict:
         target_key=str(payload.get("targetKey") or "A minor"),
         bars=int(payload.get("bars") or 8),
         seed=int(payload.get("seed") or 0),
+        allow_uncertain_key_reserve=False,
         locked_identities_by_slot=tuple(payload.get("lockedIdentitiesBySlot") or ()),
         excluded_identities=frozenset(str(item) for item in payload.get("excludedIdentities") or ()),
     )
