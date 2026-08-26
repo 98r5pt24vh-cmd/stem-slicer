@@ -28,6 +28,7 @@ from key_confidence import (
     KEY_STATUS_UNAVAILABLE,
     KeyConfidenceIndex,
     KeyConfidenceMatch,
+    classify_key_confidence_status,
 )
 
 
@@ -1409,47 +1410,81 @@ class LayerLibrary:
                     filename_key=parsed.key,
                     filename_mode=parsed.mode,
                 )
+                cached_key_confidence = next(
+                    (
+                        row
+                        for row in content_cache
+                        if row["scanned_key"]
+                        and row["scanned_mode"]
+                        and row["key_confidence_margin"] is not None
+                        and row["key_confidence_source_loop_id"]
+                        and row["key_analyzer_id"]
+                    ),
+                    None,
+                )
+                if key_confidence is None and cached_key_confidence is None:
+                    # ``content_cache`` intentionally collapses to the current
+                    # path on a warm scan when its category is already usable.
+                    # Key analysis may still exist on another exact-content
+                    # row (for example the same layer in an older library).
+                    cached_key_confidence = next(
+                        (
+                            row
+                            for row in self._cached_rows_by_hash(connection, sha256)
+                            if row["scanned_key"]
+                            and row["scanned_mode"]
+                            and row["key_confidence_margin"] is not None
+                            and row["key_confidence_source_loop_id"]
+                            and row["key_analyzer_id"]
+                        ),
+                        None,
+                    )
                 if (
                     key_confidence is None
-                    and unchanged
-                    and cached
-                    and cached["scanned_key"]
-                    and cached["scanned_mode"]
-                    and cached["key_confidence_margin"] is not None
-                    and cached["key_confidence_source_loop_id"]
-                    and cached["key_analyzer_id"]
+                    and cached_key_confidence is not None
                 ):
-                    # The same preservation rule applies to precomputed key
-                    # metadata when a cache-only caller has no analyzer index.
+                    # Exact-content cache reuse applies to precomputed key
+                    # metadata too. Recompute the status because a relocated
+                    # copy can have a different filename key.
+                    confidence_margin = float(
+                        cached_key_confidence["key_confidence_margin"]
+                    )
                     key_confidence = KeyConfidenceMatch(
                         source_loop_id=str(
-                            cached["key_confidence_source_loop_id"]
+                            cached_key_confidence["key_confidence_source_loop_id"]
                         ),
-                        scanned_key=str(cached["scanned_key"]),
-                        scanned_mode=str(cached["scanned_mode"]),
+                        scanned_key=str(cached_key_confidence["scanned_key"]),
+                        scanned_mode=str(cached_key_confidence["scanned_mode"]),
                         alternate_scanned_key=(
-                            str(cached["alternate_scanned_key"])
-                            if cached["alternate_scanned_key"]
+                            str(cached_key_confidence["alternate_scanned_key"])
+                            if cached_key_confidence["alternate_scanned_key"]
                             else None
                         ),
                         alternate_scanned_mode=(
-                            str(cached["alternate_scanned_mode"])
-                            if cached["alternate_scanned_mode"]
+                            str(cached_key_confidence["alternate_scanned_mode"])
+                            if cached_key_confidence["alternate_scanned_mode"]
                             else None
                         ),
                         top1_probability=(
-                            float(cached["key_top1_probability"])
-                            if cached["key_top1_probability"] is not None
+                            float(cached_key_confidence["key_top1_probability"])
+                            if cached_key_confidence["key_top1_probability"] is not None
                             else None
                         ),
                         top2_probability=(
-                            float(cached["key_top2_probability"])
-                            if cached["key_top2_probability"] is not None
+                            float(cached_key_confidence["key_top2_probability"])
+                            if cached_key_confidence["key_top2_probability"] is not None
                             else None
                         ),
-                        margin=float(cached["key_confidence_margin"]),
-                        status=str(cached["key_confidence_status"]),
-                        analyzer_id=str(cached["key_analyzer_id"]),
+                        margin=confidence_margin,
+                        status=classify_key_confidence_status(
+                            filename_key=parsed.key,
+                            filename_mode=parsed.mode,
+                            scanned_key=str(cached_key_confidence["scanned_key"]),
+                            scanned_mode=str(cached_key_confidence["scanned_mode"]),
+                            margin=confidence_margin,
+                            threshold=self.key_confidence_index.threshold,
+                        ),
+                        analyzer_id=str(cached_key_confidence["key_analyzer_id"]),
                     )
 
                 prediction: LayerPrediction | None = None

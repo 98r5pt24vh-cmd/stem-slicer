@@ -136,6 +136,36 @@ def _relative_family(signature: tuple[int, str]) -> int:
     return pitch_class if mode == "minor" else (pitch_class - 3) % 12
 
 
+def classify_key_confidence_status(
+    *,
+    filename_key: str | None,
+    filename_mode: str | None,
+    scanned_key: str,
+    scanned_mode: str,
+    margin: float,
+    threshold: float = DEFAULT_KEY_MARGIN_THRESHOLD,
+) -> str:
+    """Classify one precomputed analysis against the current filename key.
+
+    The audio analysis may safely follow an exact-content SHA-256 match after
+    a file is copied or relocated.  Its status must still be recalculated,
+    because the destination filename may advertise a different key.
+    """
+
+    filename_signature = _signature(filename_key, filename_mode)
+    scanned_signature = _signature(scanned_key, scanned_mode)
+    if (
+        filename_signature is None
+        or scanned_signature is None
+        or _relative_family(filename_signature)
+        != _relative_family(scanned_signature)
+    ):
+        return KEY_STATUS_CONFLICT
+    if float(margin) < float(threshold):
+        return KEY_STATUS_UNCERTAIN
+    return KEY_STATUS_SAFE
+
+
 @dataclass(frozen=True)
 class KeyConfidenceMatch:
     source_loop_id: str
@@ -267,21 +297,14 @@ class KeyConfidenceIndex:
         if confidence is None:
             return None
 
-        filename_signature = _signature(filename_key, filename_mode)
-        scanned_signature = _signature(
-            confidence.scanned_key,
-            confidence.scanned_mode,
+        status = classify_key_confidence_status(
+            filename_key=filename_key,
+            filename_mode=filename_mode,
+            scanned_key=confidence.scanned_key,
+            scanned_mode=confidence.scanned_mode,
+            margin=confidence.margin,
+            threshold=self.threshold,
         )
-        if (
-            filename_signature is None
-            or _relative_family(filename_signature)
-            != _relative_family(scanned_signature)
-        ):
-            status = KEY_STATUS_CONFLICT
-        elif confidence.margin < self.threshold:
-            status = KEY_STATUS_UNCERTAIN
-        else:
-            status = KEY_STATUS_SAFE
         return KeyConfidenceMatch(
             source_loop_id=confidence.source_loop_id,
             scanned_key=confidence.scanned_key,
@@ -305,4 +328,5 @@ __all__ = [
     "KEY_STATUS_UNCERTAIN",
     "KeyConfidenceIndex",
     "KeyConfidenceMatch",
+    "classify_key_confidence_status",
 ]

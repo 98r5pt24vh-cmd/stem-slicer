@@ -294,6 +294,136 @@ class LayerLibraryTests(unittest.TestCase):
         self.assertEqual(second.records[0].effective_label, "Lead")
         self.assertEqual(second.records[0].duration_seconds, 1.0)
 
+    def test_relocated_identical_audio_reuses_key_confidence_by_hash(self):
+        audio = self.library / "Am CHANCE 140 +NRGY_L1.wav"
+        _write_wave(audio)
+        cache = self.state / "cache.sqlite"
+        inventory = self.root / "inventory.json"
+        results = self.root / "results.json"
+        inventory.write_text(
+            json.dumps(
+                {
+                    "layers_root": str(self.library),
+                    "entries": [
+                        {
+                            "source_loop_id": "chance 140 +nrgy",
+                            "layer_source_stems": ["Am CHANCE 140 +NRGY"],
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        results.write_text(
+            json.dumps(
+                {
+                    "scanner_id": "test-key-engine",
+                    "results": [
+                        {
+                            "source_loop_id": "chance 140 +nrgy",
+                            "status": "success",
+                            "top1_key": "Am",
+                            "top1_probability": 0.62,
+                            "top2_key": "Dm",
+                            "top2_probability": 0.18,
+                            "top1_top2_margin": 0.44,
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        index = KeyConfidenceIndex.from_files(
+            library_root=self.library,
+            inventory_path=inventory,
+            results_path=results,
+        )
+        first = LayerLibrary(
+            self.library,
+            cache,
+            key_confidence_index=index,
+        ).scan()
+        self.assertEqual(first.records[0].key_confidence_status, "safe")
+
+        relocated = self.root / "relocated-library"
+        relocated.mkdir()
+        shutil.copy2(audio, relocated / audio.name)
+        inherited = LayerLibrary(relocated, cache).scan().records[0]
+
+        self.assertEqual(inherited.key_confidence_status, "safe")
+        self.assertEqual(inherited.scanned_key, "A")
+        self.assertEqual(inherited.alternate_scanned_key, "D")
+        self.assertAlmostEqual(inherited.key_top2_probability, 0.18)
+        self.assertEqual(inherited.key_analyzer_id, "test-key-engine")
+
+        renamed = self.root / "renamed-library"
+        renamed.mkdir()
+        shutil.copy2(audio, renamed / "F#m RENAMED 140 +NRGY_L1.wav")
+        conflicting = LayerLibrary(renamed, cache).scan().records[0]
+
+        self.assertEqual(conflicting.scanned_key, "A")
+        self.assertEqual(conflicting.key_confidence_status, "conflict")
+
+    def test_warm_cached_path_backfills_key_confidence_from_identical_audio(self):
+        current_audio = self.library / "Am CHANCE 140 +NRGY_L1.wav"
+        _write_wave(current_audio)
+        cache = self.state / "cache.sqlite"
+        initial = LayerLibrary(self.library, cache).scan()
+        self.assertEqual(initial.records[0].key_confidence_status, "unavailable")
+
+        analyzed = self.root / "analyzed-library"
+        analyzed.mkdir()
+        analyzed_audio = analyzed / current_audio.name
+        shutil.copy2(current_audio, analyzed_audio)
+        inventory = self.root / "analyzed-inventory.json"
+        results = self.root / "analyzed-results.json"
+        inventory.write_text(
+            json.dumps(
+                {
+                    "layers_root": str(analyzed),
+                    "entries": [
+                        {
+                            "source_loop_id": "chance 140 +nrgy",
+                            "layer_source_stems": ["Am CHANCE 140 +NRGY"],
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        results.write_text(
+            json.dumps(
+                {
+                    "scanner_id": "test-key-engine",
+                    "results": [
+                        {
+                            "source_loop_id": "chance 140 +nrgy",
+                            "status": "success",
+                            "top1_key": "Am",
+                            "top1_probability": 0.62,
+                            "top2_key": "Dm",
+                            "top2_probability": 0.18,
+                            "top1_top2_margin": 0.44,
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        index = KeyConfidenceIndex.from_files(
+            library_root=analyzed,
+            inventory_path=inventory,
+            results_path=results,
+        )
+        LayerLibrary(analyzed, cache, key_confidence_index=index).scan()
+
+        hydrated = LayerLibrary(self.library, cache).scan()
+
+        self.assertEqual(hydrated.cached_count, 1)
+        self.assertEqual(hydrated.records[0].key_confidence_status, "safe")
+        self.assertEqual(hydrated.records[0].scanned_key, "A")
+        self.assertEqual(hydrated.records[0].alternate_scanned_key, "D")
+
     def test_identical_content_is_classified_once_during_first_scan(self):
         first_audio = self.library / "A#m FIRST 144 XT_L1.wav"
         second_audio = self.library / "A#m SECOND 144 XT_L1.wav"
