@@ -30,6 +30,7 @@ def candidate(
     key_sensitive=True,
     key_margin=0.9,
     key_status="safe",
+    key_analyzer_id=None,
 ):
     return LayerCandidate(
         identity=identity,
@@ -46,6 +47,7 @@ def candidate(
         scanned_mode=None,
         key_confidence_margin=key_margin,
         key_confidence_status=key_status,
+        key_analyzer_id=key_analyzer_id,
     )
 
 
@@ -484,6 +486,27 @@ class SelectionPolicyTests(unittest.TestCase):
             fallback.selections[0].candidate.identity,
             "uncertain",
         )
+
+    def test_temporal_analyzer_safe_margin_uses_its_own_scale(self):
+        temporal = candidate(
+            "temporal-safe",
+            "Lead",
+            key_margin=0.14,
+            key_status="safe",
+            key_analyzer_id="openkeyscan-split2-relative-family-v2",
+        )
+        legacy = candidate(
+            "legacy-reserve",
+            "Lead",
+            key_margin=0.14,
+            key_status="safe",
+        )
+        for seed in range(8):
+            plan = select_generation(
+                [legacy, temporal],
+                GenerationRequest(("Lead",), 140, "A minor", seed=seed),
+            )
+            self.assertEqual(plan.selections[0].candidate.identity, "temporal-safe")
 
     def test_recipe_with_only_uncertain_key_pools_is_still_deterministic(self):
         layers = [

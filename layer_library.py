@@ -29,6 +29,7 @@ from key_confidence import (
     KeyConfidenceIndex,
     KeyConfidenceMatch,
     classify_key_confidence_status,
+    key_margin_threshold_for_analyzer,
 )
 
 
@@ -1482,7 +1483,10 @@ class LayerLibrary:
                             scanned_key=str(cached_key_confidence["scanned_key"]),
                             scanned_mode=str(cached_key_confidence["scanned_mode"]),
                             margin=confidence_margin,
-                            threshold=self.key_confidence_index.threshold,
+                            threshold=key_margin_threshold_for_analyzer(
+                                str(cached_key_confidence["key_analyzer_id"]),
+                                fallback=self.key_confidence_index.threshold,
+                            ),
                         ),
                         analyzer_id=str(cached_key_confidence["key_analyzer_id"]),
                     )

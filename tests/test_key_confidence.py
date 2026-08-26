@@ -8,6 +8,8 @@ from key_confidence import (
     KEY_STATUS_SAFE,
     KEY_STATUS_UNCERTAIN,
     KeyConfidenceIndex,
+    TEMPORAL_RELATIVE_ANALYZER_ID,
+    TEMPORAL_RELATIVE_KEY_MARGIN_THRESHOLD,
 )
 
 
@@ -23,7 +25,14 @@ class KeyConfidenceIndexTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def _write(self, *, margin=0.22, top1="Am", top2=None):
+    def _write(
+        self,
+        *,
+        margin=0.22,
+        top1="Am",
+        top2=None,
+        scanner_id="test-key-engine",
+    ):
         self.inventory.write_text(
             json.dumps(
                 {
@@ -41,7 +50,7 @@ class KeyConfidenceIndexTests(unittest.TestCase):
         self.results.write_text(
             json.dumps(
                 {
-                    "scanner_id": "test-key-engine",
+                    "scanner_id": scanner_id,
                     "results": [
                         {
                             "source_loop_id": "chance 140 +nrgy",
@@ -156,6 +165,29 @@ class KeyConfidenceIndexTests(unittest.TestCase):
         )
         self.assertAlmostEqual(match.top1_probability, 0.61)
         self.assertAlmostEqual(match.top2_probability, 0.19)
+
+    def test_temporal_analyzer_uses_its_calibrated_margin_scale(self):
+        self._write(
+            margin=TEMPORAL_RELATIVE_KEY_MARGIN_THRESHOLD,
+            scanner_id=TEMPORAL_RELATIVE_ANALYZER_ID,
+        )
+        match = self._index().match(
+            "am chance 140 +nrgy",
+            filename_key="A",
+            filename_mode="minor",
+        )
+        self.assertEqual(match.status, KEY_STATUS_SAFE)
+
+        self._write(
+            margin=TEMPORAL_RELATIVE_KEY_MARGIN_THRESHOLD - 0.000001,
+            scanner_id=TEMPORAL_RELATIVE_ANALYZER_ID,
+        )
+        match = self._index().match(
+            "am chance 140 +nrgy",
+            filename_key="A",
+            filename_mode="minor",
+        )
+        self.assertEqual(match.status, KEY_STATUS_UNCERTAIN)
 
 
 if __name__ == "__main__":

@@ -21,6 +21,7 @@ from key_confidence import (
     KEY_STATUS_SAFE,
     KEY_STATUS_UNAVAILABLE,
     KEY_STATUS_UNCERTAIN,
+    key_margin_threshold_for_analyzer,
 )
 
 
@@ -196,6 +197,7 @@ class LayerCandidate:
     key_top2_probability: float | None = None
     key_confidence_margin: float | None = None
     key_confidence_status: str = KEY_STATUS_UNAVAILABLE
+    key_analyzer_id: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "path", Path(self.path))
@@ -322,6 +324,7 @@ class LayerCandidate:
                 )
                 or KEY_STATUS_UNAVAILABLE
             ),
+            key_analyzer_id=_record_value(record, "key_analyzer_id"),
         )
 
     def resolved_label(self) -> tuple[str | None, str | None, float | None]:
@@ -655,10 +658,14 @@ def _option_for_slot(
     key_pool_priority = 0
     if candidate.key_sensitive:
         margin = candidate.key_confidence_margin
+        effective_key_threshold = key_margin_threshold_for_analyzer(
+            candidate.key_analyzer_id,
+            fallback=request.key_confidence_threshold,
+        )
         if (
             key_status in {KEY_STATUS_UNCERTAIN, KEY_STATUS_UNAVAILABLE}
             or margin is None
-            or margin < request.key_confidence_threshold
+            or margin < effective_key_threshold
         ):
             if not request.allow_uncertain_key_reserve:
                 return None
