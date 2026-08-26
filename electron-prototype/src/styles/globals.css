@@ -2085,14 +2085,19 @@ main:focus {
   column-gap: 3px;
 }
 
-.layer-controls label.layer-volume-control input {
+.layer-controls label.layer-volume-control .volume-range {
   width: 100%;
   min-width: 0;
-  height: 5px;
+  height: 12px;
   align-self: center;
   grid-column: 2;
   grid-row: 1;
   margin-block-start: 0;
+}
+
+.layer-controls label.layer-volume-control input {
+  width: 100%;
+  min-width: 0;
 }
 
 .layer-controls .layer-volume-control output {
@@ -2144,6 +2149,30 @@ input[type="range"]::-webkit-slider-thumb {
   appearance: none;
   background: var(--primary);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary) 55%, black);
+}
+
+.volume-range {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.volume-range > input {
+  position: relative;
+  z-index: 1;
+}
+
+.volume-unity-marker {
+  position: absolute;
+  z-index: 2;
+  top: 50%;
+  left: 80%;
+  width: 1px;
+  height: 9px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--foreground) 48%, transparent);
+  pointer-events: none;
+  transform: translate(-50%, -50%);
 }
 
 .layer-card input[type="range"] {
@@ -7013,6 +7042,7 @@ main.quick-tools-main {
 }
 
 .player-volume > svg { width: 17px; height: 17px; flex: 0 0 17px; color: var(--signal-yellow); }
+.player-volume .volume-range { width: 130px; max-width: 130px; }
 .player-volume input { max-width: 130px; }
 .player-volume output { min-width: 38px; color: var(--muted-foreground); font-size: 10px; text-align: end; }
 

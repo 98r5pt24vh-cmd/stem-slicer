@@ -408,7 +408,7 @@ function usePlaybackClock(layers: GeneratedLayer[], stackPlayback: boolean) {
         id: source.id,
         url: mediaApi ? `${mediaApi.mediaUrl(source.path)}&revision=${encodeURIComponent(source.revision)}` : "",
         duration: layer?.duration ?? 0,
-        gain: Math.max(0, Math.min(1, (layer?.volume ?? 100) / 100)),
+        gain: Math.max(0, Math.min(1.25, (layer?.volume ?? 100) / 100)),
       }
     })
     engine.setMasterVolume(masterVolume / 100)
@@ -1419,14 +1419,17 @@ function LayerCard({
         <div className="layer-controls">
           <label className="layer-volume-control">
             <Volume2 aria-hidden="true" />
-            <input
-              type="range"
-              min="0"
-              max="100"
-              value={layer.volume}
-              aria-label={`Volume de ${layer.role}`}
-              onChange={(event) => onChange({ ...layer, volume: Number(event.target.value) })}
-            />
+            <span className="volume-range">
+              <input
+                type="range"
+                min="0"
+                max="125"
+                value={layer.volume}
+                aria-label={`Volume de ${layer.role}`}
+                onChange={(event) => onChange({ ...layer, volume: Number(event.target.value) })}
+              />
+              <span className="volume-unity-marker" aria-hidden="true" />
+            </span>
             <output className="tabular">{layer.volume}%</output>
           </label>
           {isGenerateCard ? <LayerOctaveSelect
@@ -2700,7 +2703,7 @@ function GlobalPlayer({ layers, playback, contextLabel }: { layers: GeneratedLay
           <span className="tabular">{((timelineLayer ? playback.progress : 0) * duration).toFixed(1)} / {duration.toFixed(1)} s</span>
         </div>
       </div>
-      <label className="player-volume"><Volume2 aria-hidden="true" /><span className="sr-only">Preview volume</span><input type="range" min="0" max="100" value={playback.masterVolume} onChange={(event) => playback.setMasterVolume(Number(event.target.value))} /><output className="tabular">{playback.masterVolume}%</output></label>
+      <label className="player-volume"><Volume2 aria-hidden="true" /><span className="sr-only">Preview volume</span><span className="volume-range"><input type="range" min="0" max="125" value={playback.masterVolume} onChange={(event) => playback.setMasterVolume(Number(event.target.value))} /><span className="volume-unity-marker" aria-hidden="true" /></span><output className="tabular">{playback.masterVolume}%</output></label>
     </footer>
   )
 }

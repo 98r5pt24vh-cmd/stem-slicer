@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-import { clampPlaybackProgress, SharedWebAudioEngine, sharedTimelineDuration, transportProgress } from "./shared-web-audio-engine"
+import { clampPlaybackGain, clampPlaybackProgress, SharedWebAudioEngine, sharedTimelineDuration, transportProgress } from "./shared-web-audio-engine"
 
 describe("shared Web Audio transport math", () => {
   afterEach(() => {
@@ -11,6 +11,13 @@ describe("shared Web Audio transport math", () => {
     expect(clampPlaybackProgress(-0.2)).toBe(0)
     expect(clampPlaybackProgress(0.42)).toBe(0.42)
     expect(clampPlaybackProgress(1.4)).toBe(1)
+  })
+
+  it("allows a controlled 125 percent gain boost", () => {
+    expect(clampPlaybackGain(-0.2)).toBe(0)
+    expect(clampPlaybackGain(1)).toBe(1)
+    expect(clampPlaybackGain(1.25)).toBe(1.25)
+    expect(clampPlaybackGain(4)).toBe(1.25)
   })
 
   it("uses one safe duration for a synchronized layer stack", () => {

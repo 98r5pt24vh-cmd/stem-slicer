@@ -22,11 +22,17 @@ interface ActiveLayerNodes {
 }
 
 export const AUDIO_START_AHEAD_SECONDS = 0.02
+export const MAX_PLAYBACK_GAIN = 1.25
 const END_EPSILON_SECONDS = 1 / 48_000
 
 export function clampPlaybackProgress(value: number): number {
   if (!Number.isFinite(value)) return 0
   return Math.max(0, Math.min(value, 1))
+}
+
+export function clampPlaybackGain(value: number): number {
+  if (!Number.isFinite(value)) return 0
+  return Math.max(0, Math.min(value, MAX_PLAYBACK_GAIN))
 }
 
 export function sharedTimelineDuration(layers: Array<{ duration: number }>): number {
@@ -106,7 +112,7 @@ export class SharedWebAudioEngine {
   }
 
   setMasterVolume(value: number): void {
-    this.masterVolume = Math.max(0, Math.min(value, 1))
+    this.masterVolume = clampPlaybackGain(value)
     if (this.masterGain && this.context) {
       this.masterGain.gain.setValueAtTime(this.masterVolume, this.context.currentTime)
     }
@@ -114,7 +120,7 @@ export class SharedWebAudioEngine {
 
   setLayerGain(id: string, value: number): void {
     const descriptor = this.descriptors.get(id)
-    if (descriptor) descriptor.gain = Math.max(0, Math.min(value, 1))
+    if (descriptor) descriptor.gain = clampPlaybackGain(value)
     this.applyLayerGain(id)
   }
 
