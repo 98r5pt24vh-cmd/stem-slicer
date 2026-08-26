@@ -40,7 +40,7 @@ corpora.
 
 ## Deferred generated-loop naming contract
 
-The generic History label such as `Balanced combination` is temporary. A later
+The generic History label `Generated combination` is temporary. A later
 Generate pass must assign a real loop name and display/export it using the
 project convention `L <loop name> <BPM> <producer names>`.
 

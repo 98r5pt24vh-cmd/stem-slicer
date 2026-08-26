@@ -128,3 +128,37 @@ export function readLibraryOverview(acceptedCachePath: string): LibraryOverview 
     database?.close()
   }
 }
+
+export function removeLibraryRoot(
+  acceptedCachePath: string,
+  requestedRoot: string,
+): LibraryOverview {
+  const databasePath = path.join(acceptedCachePath, "generate", "library.sqlite3")
+  if (!existsSync(databasePath)) {
+    throw new Error("The Generate catalogue is unavailable.")
+  }
+  if (typeof requestedRoot !== "string" || !path.isAbsolute(requestedRoot)) {
+    throw new Error("The indexed library path is invalid.")
+  }
+
+  const libraryRoot = path.resolve(requestedRoot)
+  const database = new DatabaseSync(databasePath)
+  try {
+    database.exec("BEGIN IMMEDIATE")
+    database
+      .prepare("DELETE FROM layer_cache WHERE library_root = ?")
+      .run(libraryRoot)
+    database.exec("COMMIT")
+  } catch (error) {
+    try {
+      database.exec("ROLLBACK")
+    } catch {
+      // Preserve the original database error.
+    }
+    throw error
+  } finally {
+    database.close()
+  }
+
+  return readLibraryOverview(acceptedCachePath)
+}

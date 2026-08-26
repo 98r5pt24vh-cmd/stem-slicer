@@ -712,7 +712,7 @@ main:focus {
 
 .generation-controls {
   display: grid;
-  grid-template-columns: 126px minmax(160px, 1fr) minmax(150px, 0.85fr) auto;
+  grid-template-columns: 126px minmax(160px, 1fr) auto;
   align-items: end;
   gap: 9px;
   padding-block: 7px;
@@ -865,6 +865,7 @@ main:focus {
 .dialog-done:focus-visible,
 .dialog-close:focus-visible,
 .library-reveal:focus-visible,
+.library-remove:focus-visible,
 .library-manager-list-heading button:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 2px;
@@ -944,7 +945,8 @@ main:focus {
 }
 
 .dialog-close,
-.library-reveal {
+.library-reveal,
+.library-remove {
   display: grid;
   width: 38px;
   height: 38px;
@@ -963,8 +965,20 @@ main:focus {
   color: var(--foreground);
 }
 
+.library-remove:hover:not(:disabled) {
+  border-color: rgb(230 57 0 / 0.45);
+  background: rgb(230 57 0 / 0.12);
+  color: #ff6b43;
+}
+
+.library-remove:disabled {
+  cursor: wait;
+  opacity: 0.5;
+}
+
 .dialog-close svg,
-.library-reveal svg {
+.library-reveal svg,
+.library-remove svg {
   width: 16px;
   height: 16px;
 }
@@ -1043,8 +1057,9 @@ main:focus {
 }
 
 .library-manager-row {
-  display: flex;
-  align-items: stretch;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 38px 38px;
+  align-items: center;
   gap: 7px;
 }
 
@@ -7062,7 +7077,7 @@ main.quick-tools-main {
 
 @media (max-width: 1220px) {
   .generation-controls {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .generate-action {

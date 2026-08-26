@@ -6,7 +6,7 @@ import { existsSync, statSync } from "node:fs"
 import { pathToFileURL } from "node:url"
 
 import { AudioEngineService } from "./main/audio-engine"
-import { readLibraryOverview } from "./main/library-cache"
+import { readLibraryOverview, removeLibraryRoot } from "./main/library-cache"
 import { mediaMimeType, parseByteRange } from "./main/media-range"
 import { migrationModules } from "./main/migration-modules"
 import type { AudioJobKind, AudioJobRequest, AudioSelection } from "./shared/contracts"
@@ -149,6 +149,12 @@ function registerIpc(): void {
   ipcMain.handle("library:get-overview", () =>
     readLibraryOverview(acceptedCachePath),
   )
+  ipcMain.handle("library:remove-root", (_event: IpcMainInvokeEvent, libraryRoot: unknown) => {
+    if (typeof libraryRoot !== "string") {
+      throw new Error("The indexed library path is invalid.")
+    }
+    return removeLibraryRoot(acceptedCachePath, libraryRoot)
+  })
   ipcMain.handle("migration:get-modules", () => migrationModules)
   ipcMain.handle("engine:get-status", () => audioEngine.status())
   ipcMain.handle(

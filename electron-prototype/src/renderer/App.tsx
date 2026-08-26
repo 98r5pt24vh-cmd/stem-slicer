@@ -287,7 +287,9 @@ function loadGenerateHistory(): HistoryEntry[] {
     if (!stored) return []
     const parsed = JSON.parse(stored)
     return Array.isArray(parsed)
-      ? parsed.filter((item) => item && typeof item === "object" && item.generation?.masterPath && Array.isArray(item.layers))
+      ? parsed
+        .filter((item) => item && typeof item === "object" && item.generation?.masterPath && Array.isArray(item.layers))
+        .map((item) => ({ ...item, recipe: "Generated" }))
       : []
   } catch {
     return []
@@ -1379,6 +1381,7 @@ function LibraryManager({
   selectionMessage,
   onSelectedPathsChange,
   onAddFolder,
+  onRemoveFolder,
 }: {
   library: LibraryOverview
   selectedPaths: string[]
@@ -1387,12 +1390,23 @@ function LibraryManager({
   selectionMessage: string
   onSelectedPathsChange: React.Dispatch<React.SetStateAction<string[]>>
   onAddFolder: () => Promise<void>
+  onRemoveFolder: (libraryRoot: string) => Promise<void>
 }) {
   const selectedSet = new Set(selectedPaths)
+  const [removingPath, setRemovingPath] = useState<string | null>(null)
   const toggleLibrary = (path: string, checked: boolean) => {
     onSelectedPathsChange((current) => checked
       ? Array.from(new Set([...current, path]))
       : current.filter((item) => item !== path))
+  }
+  const removeFolder = async (libraryRoot: string) => {
+    if (removingPath) return
+    setRemovingPath(libraryRoot)
+    try {
+      await onRemoveFolder(libraryRoot)
+    } finally {
+      setRemovingPath(null)
+    }
   }
 
   return (
@@ -1442,6 +1456,16 @@ function LibraryManager({
                     <button type="button" className="library-reveal" aria-label={`Afficher ${root.name} dans le Finder`} title="Afficher dans le Finder" onClick={() => window.stemSlicer?.revealPath(root.path)}>
                       <FolderOpen aria-hidden="true" />
                     </button>
+                    <button
+                      type="button"
+                      className="library-remove"
+                      aria-label={`Retirer ${root.name} du catalogue`}
+                      title="Retirer uniquement l’index — le dossier audio reste intact"
+                      disabled={removingPath === root.path}
+                      onClick={() => void removeFolder(root.path)}
+                    >
+                      <Trash2 aria-hidden="true" />
+                    </button>
                   </div>
                 )
               }) : <p className="library-manager-empty">No indexed library is available yet.</p>}
@@ -1483,7 +1507,6 @@ function GenerateView({
 }) {
   const [bpm, setBpm] = useState(129)
   const [keyName, setKeyName] = useState("F minor")
-  const [recipe, setRecipe] = useState("Balanced")
   const [status, setStatus] = useState("Local Generate engine ready")
   const [selectionMessage, setSelectionMessage] = useState("")
   const [currentSeed, setCurrentSeed] = useState<number | null>(null)
@@ -1569,13 +1592,13 @@ function GenerateView({
       id: crypto.randomUUID(),
       bpm: generationResult.targetBpm,
       keyName: generationResult.targetKey,
-      recipe,
+      recipe: "Generated",
       createdAt: new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit" }).format(new Date()),
       layerCount: generationResult.layers.length,
       generation: generationResult,
       layers: nextLayers,
     })
-  }, [generationResult, onAddHistory, playback, recipe, setCurrentGenerationResult, setLayers])
+  }, [generationResult, onAddHistory, playback, setCurrentGenerationResult, setLayers])
 
   useEffect(() => {
     if (!generationUpdateResult) return
@@ -1633,6 +1656,17 @@ function GenerateView({
     void libraryScanJob.start({ root, databasePath: library.databasePath }).catch(() => undefined)
   }
 
+  const removeFolder = async (libraryRoot: string) => {
+    try {
+      const overview = await window.stemSlicer?.removeLibraryRoot(libraryRoot)
+      setSelectedLibraryPaths((current) => current.filter((item) => item !== libraryRoot))
+      setSelectionMessage(`${basename(libraryRoot)} removed from the catalogue · audio files preserved`)
+      if (overview) await onLibraryRefresh()
+    } catch (error) {
+      setSelectionMessage(error instanceof Error ? error.message : "The indexed folder could not be removed.")
+    }
+  }
+
   const handleGenerate = (seedOverride?: number) => {
     if (generateJob.busy) {
       generateJob.cancel()
@@ -1645,11 +1679,11 @@ function GenerateView({
     const categories = layers
       .map((layer) => layer.category)
       .filter((category) => category && category !== "Unassigned" && category !== "Layer")
-    const recipeCategories = categories.length > 0
+    const requestedCategories = categories.length > 0
       ? categories
       : selectedCategories.slice(0, 5).map((category) => category.name)
-    if (recipeCategories.length === 0) {
-      setStatus("No category is available for the current recipe.")
+    if (requestedCategories.length === 0) {
+      setStatus("No category is available for the current selection.")
       return
     }
     playback.stop()
@@ -1662,7 +1696,7 @@ function GenerateView({
     void generateJob.start({
       databasePath: library.databasePath,
       libraryRoots: selectedLibraryPaths,
-      categories: recipeCategories,
+      categories: requestedCategories,
       targetBpm: bpm,
       targetKey: keyName,
       seed,
@@ -1765,7 +1799,6 @@ function GenerateView({
             />
           </label>
           <Select id="target-key" label="Target key" value={keyFamilyForKey(keyName)} onChange={(family) => setKeyName(keyFromFamily(family, keyName))} options={TARGET_KEY_FAMILIES} forceBelow />
-          <Select id="recipe" label="Recipe" value={recipe} onChange={setRecipe} options={["Balanced", "Melodic", "Minimal", "Dense"]} forceBelow />
           <div className="generate-action">
             <span className="sr-only" aria-live="polite">{generateJob.error || (generateJob.busy ? generateJob.message : status)}</span>
             <Button variant="outline" className="previous-seed-button" size="sm" disabled={generateJob.busy || previousSeed == null} onClick={() => previousSeed != null && handleGenerate(previousSeed)} title={previousSeed == null ? "No previous seed yet" : `Generate seed ${previousSeed}`}><RotateCcw /> Previous</Button>
@@ -1799,6 +1832,7 @@ function GenerateView({
               selectionMessage={selectionMessage}
               onSelectedPathsChange={setSelectedLibraryPaths}
               onAddFolder={pickFolder}
+              onRemoveFolder={removeFolder}
             />
           </div>
         </div>
@@ -1826,7 +1860,7 @@ function GenerateView({
             size="sm"
             disabled={!currentGenerationResult?.masterPath || recipeDirty}
             draggable={Boolean(currentGenerationResult?.masterPath && !recipeDirty)}
-            title={recipeDirty ? "Generate the edited recipe before dragging its master" : currentGenerationResult?.masterPath ? "Drag the rendered master containing the complete stack" : "Generate a stack first"}
+            title={recipeDirty ? "Generate the edited stack before dragging its master" : currentGenerationResult?.masterPath ? "Drag the rendered master containing the complete stack" : "Generate a stack first"}
             onClick={() => currentGenerationResult?.outputDirectory && void window.stemSlicer?.revealPath(currentGenerationResult.outputDirectory)}
             onDragStart={(event) => {
               if (!currentGenerationResult?.masterPath || recipeDirty) return
@@ -2422,7 +2456,7 @@ function HistoryView({ history, playback, onReopen, onTrash }: { history: Histor
 
   return (
     <div className="page-stack">
-      <PageHeader eyebrow="Workspace / History" title="Generation history" description="Reopen previous combinations, compare recipes and keep the stacks worth exporting." />
+      <PageHeader eyebrow="Workspace / History" title="Generation history" description="Reopen previous combinations, compare generations and keep the stacks worth exporting." />
       {history.length ? (
         <div className="history-list">
           {history.map((entry) => (

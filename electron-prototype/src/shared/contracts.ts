@@ -252,6 +252,7 @@ export interface EngineStatus {
 export interface StemSlicerDesktopApi {
   getEnvironment: () => Promise<AppEnvironment>
   getLibraryOverview: () => Promise<LibraryOverview>
+  removeLibraryRoot: (libraryRoot: string) => Promise<LibraryOverview>
   getMigrationModules: () => Promise<MigrationModule[]>
   getEngineStatus: () => Promise<EngineStatus>
   pickLibraryFolder: () => Promise<AudioSelection>

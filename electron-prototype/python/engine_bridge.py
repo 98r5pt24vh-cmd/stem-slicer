@@ -762,11 +762,22 @@ def library_scan(job_id: str, payload: dict) -> dict:
     except ValueError as error:
         raise ValueError("Generate scans must use the active 1.9 cache.") from error
     database.parent.mkdir(parents=True, exist_ok=True)
+    key_metadata = database.parent / "key-confidence-v2"
+    inventory_path = key_metadata / "original_loop_inventory.json"
+    results_path = key_metadata / "key_confidence_results_v2.json"
+    if inventory_path.is_file() and results_path.is_file():
+        key_confidence_index = KeyConfidenceIndex.from_files(
+            library_root=root,
+            inventory_path=inventory_path,
+            results_path=results_path,
+        )
+    else:
+        key_confidence_index = KeyConfidenceIndex()
     library = LayerLibrary(
         root,
         database,
         classifier=classifier(),
-        key_confidence_index=KeyConfidenceIndex(),
+        key_confidence_index=key_confidence_index,
     )
 
     def report(item) -> None:
