@@ -19,7 +19,7 @@ class WindowsReleaseConfigTests(unittest.TestCase):
 
     def test_generate_model_payload_is_bundled_for_offline_scans(self):
         spec = self._read("StemSlicerWindows.spec")
-        self.assertIn('("models/layer_roles_v1.joblib", "models")', spec)
+        self.assertIn('("models/layer_roles_v2.joblib", "models")', spec)
         self.assertIn("models/huggingface/models--m-a-p--MERT-v1-95M", spec)
         self.assertIn('"mert_worker"', spec)
         self.assertIn('"torch"', spec)

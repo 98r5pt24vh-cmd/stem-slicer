@@ -59,7 +59,7 @@ class PrefillRuntimeCacheTests(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.library_root = self.root / "library"
         self.library_root.mkdir()
-        self.artifact_path = self.root / "layer_roles_v1.joblib"
+        self.artifact_path = self.root / "layer_roles_v2.joblib"
         artifact_bytes = b"unit-test-v1-artifact"
         self.artifact_path.write_bytes(artifact_bytes)
         self.artifact_path.with_suffix(".json").write_text(

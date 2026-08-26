@@ -30,8 +30,8 @@ datas = [
     ("licenses/DeepRhythm-LICENSE.txt", "licenses"),
     ("licenses/Bungee-MPL-2.0.txt", "licenses"),
     ("THIRD_PARTY_NOTICES.md", "."),
-    ("models/layer_roles_v1.joblib", "models"),
-    ("models/layer_roles_v1.json", "models"),
+    ("models/layer_roles_v2.joblib", "models"),
+    ("models/layer_roles_v2.json", "models"),
 ]
 
 # MERT is an offline first-scan dependency.  Bundle only its 95M snapshot and

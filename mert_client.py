@@ -52,7 +52,7 @@ class MertLayerClassifier:
         self.python_executable = str(python_executable or sys.executable)
         self.worker_path = Path(worker_path or root / "mert_worker.py")
         self.artifact_path = Path(
-            artifact_path or root / "models" / "layer_roles_v1.joblib"
+            artifact_path or root / "models" / "layer_roles_v2.joblib"
         )
         if hf_cache_dir is not None and cache_dir is not None:
             raise ValueError("Pass hf_cache_dir or cache_dir, not both")

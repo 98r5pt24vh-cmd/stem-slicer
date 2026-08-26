@@ -33,7 +33,7 @@ from mert_client import MertLayerClassifier
 from mert_feature_cache import default_feature_cache_path
 
 
-DEFAULT_ARTIFACT_PATH = PROTOTYPE_ROOT / "models" / "layer_roles_v1.joblib"
+DEFAULT_ARTIFACT_PATH = PROTOTYPE_ROOT / "models" / "layer_roles_v2.joblib"
 DEFAULT_HF_CACHE_DIR = (
     PROJECT_ROOT
     / "research"

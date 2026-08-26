@@ -1,7 +1,7 @@
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import torch
@@ -47,11 +47,16 @@ class _Mert:
 
 
 class MertWorkerBatchTests(unittest.TestCase):
-    def _runtime(self):
+    def _runtime(self, *, statistics=("mean",)):
         runtime = object.__new__(mert_worker.Runtime)
         runtime.metadata = {
             "version": "test-v1",
-            "mert": {"state_index": 0, "dimension": 2},
+            "mert": {
+                "state_index": 0,
+                "dimension": 2,
+                "statistics": list(statistics),
+                "output_dimension": 2 * len(statistics),
+            },
         }
         runtime.device = torch.device("cpu")
         runtime.processor = _Processor()
@@ -108,6 +113,25 @@ class MertWorkerBatchTests(unittest.TestCase):
             ),
         )
         self.assertEqual(runtime.mert.received_shapes, [(2, 2), (2, 3)])
+
+    def test_mean_and_std_use_total_variance_across_audio_windows(self):
+        runtime = self._runtime(statistics=("mean", "std"))
+        audio = np.arange(8, dtype=np.float32)
+        with patch.object(
+            mert_worker,
+            "audio_windows",
+            return_value=(
+                np.asarray([1.0, 3.0], dtype=np.float32),
+                np.asarray([5.0, 7.0], dtype=np.float32),
+            ),
+        ):
+            features = runtime.mert_features_many([audio], window_batch_size=2)
+
+        np.testing.assert_allclose(
+            features,
+            [[4.0, 8.0, np.sqrt(5.0), np.sqrt(20.0)]],
+            rtol=1e-6,
+        )
 
     def test_classify_many_returns_results_in_input_order(self):
         runtime = self._runtime()
