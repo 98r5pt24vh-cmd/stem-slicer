@@ -499,6 +499,25 @@ class SelectionPolicyTests(unittest.TestCase):
         )
         self.assertEqual(first, second)
 
+    def test_strict_key_mode_abstains_instead_of_using_uncertain_reserve(self):
+        with self.assertRaises(SelectionError):
+            select_generation(
+                [
+                    candidate(
+                        "uncertain",
+                        "Lead",
+                        key_status="uncertain",
+                        key_margin=0.10,
+                    )
+                ],
+                GenerationRequest(
+                    ("Lead",),
+                    140,
+                    "A minor",
+                    allow_uncertain_key_reserve=False,
+                ),
+            )
+
     def test_key_conflict_is_never_selected(self):
         with self.assertRaises(SelectionError):
             select_generation(

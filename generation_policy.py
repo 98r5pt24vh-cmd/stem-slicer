@@ -367,6 +367,7 @@ class GenerationRequest:
     bars: int = 8
     seed: int = 0
     key_confidence_threshold: float = DEFAULT_KEY_MARGIN_THRESHOLD
+    allow_uncertain_key_reserve: bool = True
     bars_tolerance: float = 0.20
     max_layers_per_source_loop: int = 2
     excluded_identities: frozenset[str] = frozenset()
@@ -659,6 +660,8 @@ def _option_for_slot(
             or margin is None
             or margin < request.key_confidence_threshold
         ):
+            if not request.allow_uncertain_key_reserve:
+                return None
             # This is a reserve pool, not a lower weighted chance.  Reserve
             # candidates are considered only when a recipe cannot be completed
             # from safe candidates after previous-generation exclusions.
