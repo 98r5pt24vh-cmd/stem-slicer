@@ -21,7 +21,7 @@ interface ActiveLayerNodes {
   gain: GainNode
 }
 
-const START_AHEAD_SECONDS = 0.02
+export const AUDIO_START_AHEAD_SECONDS = 0.02
 const END_EPSILON_SECONDS = 1 / 48_000
 
 export function clampPlaybackProgress(value: number): number {
@@ -64,6 +64,7 @@ export class SharedWebAudioEngine {
   private decoded = new Map<string, DecodedLayer>()
   private decodePromises = new Map<string, Promise<DecodedLayer>>()
   private active = new Map<string, ActiveLayerNodes>()
+  private retiring = new Set<ActiveLayerNodes>()
   private mutedIds = new Set<string>()
   private masterVolume = 1
   private requestVersion = 0
@@ -74,6 +75,18 @@ export class SharedWebAudioEngine {
 
   configureLayers(layers: SharedAudioLayer[]): void {
     this.stop()
+    this.replaceDescriptors(layers)
+  }
+
+  async prepareReplacement(layers: SharedAudioLayer[]): Promise<boolean> {
+    const requestVersion = this.requestVersion + 1
+    this.requestVersion = requestVersion
+    this.replaceDescriptors(layers)
+    await this.preload()
+    return requestVersion === this.requestVersion
+  }
+
+  private replaceDescriptors(layers: SharedAudioLayer[]): void {
     const nextDescriptors = new Map(layers.map((layer) => [layer.id, layer]))
 
     for (const [id, decoded] of this.decoded) {
@@ -132,7 +145,7 @@ export class SharedWebAudioEngine {
     const normalizedProgress = clampPlaybackProgress(progress)
     const requestedOffset = normalizedProgress >= 1 ? 0 : normalizedProgress * timelineDuration
     const offsetSeconds = Math.min(requestedOffset, Math.max(0, timelineDuration - END_EPSILON_SECONDS))
-    const startedAt = context.currentTime + START_AHEAD_SECONDS
+    const startedAt = context.currentTime + AUDIO_START_AHEAD_SECONDS
 
     for (const { descriptor, buffer } of decodedLayers) {
       const source = context.createBufferSource()
@@ -153,18 +166,70 @@ export class SharedWebAudioEngine {
     return { startedAt, offsetSeconds, timelineDuration }
   }
 
+  async swapPrepared(ids: string[], progress: number, loop: boolean): Promise<SharedPlaybackStart | null> {
+    const requestVersion = this.requestVersion
+    const uniqueIds = [...new Set(ids)].filter((id) => this.descriptors.has(id))
+    if (uniqueIds.length === 0) return null
+
+    const context = this.ensureContext()
+    const decodedLayers = await Promise.all(uniqueIds.map((id) => this.decodeLayer(id)))
+    if (requestVersion !== this.requestVersion) return null
+
+    await context.resume()
+    if (requestVersion !== this.requestVersion) return null
+
+    const timelineDuration = sharedTimelineDuration(decodedLayers.map(({ descriptor, buffer }) => ({
+      duration: Math.min(descriptor.duration > 0 ? descriptor.duration : buffer.duration, buffer.duration),
+    })))
+    if (timelineDuration <= 0) throw new Error("The selected audio layers have no playable duration.")
+
+    const normalizedProgress = clampPlaybackProgress(progress)
+    const requestedOffset = normalizedProgress >= 1 ? 0 : normalizedProgress * timelineDuration
+    const offsetSeconds = Math.min(requestedOffset, Math.max(0, timelineDuration - END_EPSILON_SECONDS))
+    const startedAt = context.currentTime + AUDIO_START_AHEAD_SECONDS
+    const previousActive = this.active
+    const nextActive = new Map<string, ActiveLayerNodes>()
+
+    for (const { descriptor, buffer } of decodedLayers) {
+      const source = context.createBufferSource()
+      const gain = context.createGain()
+      source.buffer = buffer
+      source.loop = loop
+      source.loopStart = 0
+      source.loopEnd = timelineDuration
+      gain.gain.value = this.mutedIds.has(descriptor.id) ? 0 : descriptor.gain
+      source.connect(gain)
+      gain.connect(this.ensureMasterGain(context))
+      nextActive.set(descriptor.id, { source, gain })
+
+      if (loop) source.start(startedAt, offsetSeconds)
+      else source.start(startedAt, offsetSeconds, Math.max(END_EPSILON_SECONDS, timelineDuration - offsetSeconds))
+    }
+
+    this.active = nextActive
+    for (const nodes of previousActive.values()) {
+      this.retiring.add(nodes)
+      nodes.source.addEventListener("ended", () => {
+        this.disconnectNodes(nodes)
+        this.retiring.delete(nodes)
+      }, { once: true })
+      try {
+        nodes.source.stop(startedAt)
+      } catch {
+        this.disconnectNodes(nodes)
+        this.retiring.delete(nodes)
+      }
+    }
+
+    return { startedAt, offsetSeconds, timelineDuration }
+  }
+
   stop(): void {
     this.requestVersion += 1
-    for (const { source, gain } of this.active.values()) {
-      try {
-        source.stop()
-      } catch {
-        // A source may already have ended naturally.
-      }
-      source.disconnect()
-      gain.disconnect()
-    }
+    for (const nodes of this.active.values()) this.stopNodes(nodes)
+    for (const nodes of this.retiring) this.stopNodes(nodes)
     this.active.clear()
+    this.retiring.clear()
   }
 
   async close(): Promise<void> {
@@ -231,5 +296,27 @@ export class SharedWebAudioEngine {
     if (!nodes || !descriptor || !this.context) return
     const value = this.mutedIds.has(id) ? 0 : descriptor.gain
     nodes.gain.gain.setValueAtTime(value, this.context.currentTime)
+  }
+
+  private stopNodes(nodes: ActiveLayerNodes): void {
+    try {
+      nodes.source.stop()
+    } catch {
+      // A source may already have ended naturally.
+    }
+    this.disconnectNodes(nodes)
+  }
+
+  private disconnectNodes(nodes: ActiveLayerNodes): void {
+    try {
+      nodes.source.disconnect()
+    } catch {
+      // A node can already be disconnected by an ended callback.
+    }
+    try {
+      nodes.gain.disconnect()
+    } catch {
+      // A node can already be disconnected by an ended callback.
+    }
   }
 }

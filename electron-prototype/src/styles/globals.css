@@ -1866,6 +1866,17 @@ main:focus {
   outline-offset: 2px;
 }
 
+.card-play-button.is-sync-solo {
+  border-color: rgb(225 213 0 / 0.72);
+  background: linear-gradient(145deg, rgb(115 189 0 / 0.28), rgb(13 18 8 / 0.96) 72%);
+  color: var(--signal-yellow);
+  box-shadow:
+    0 5px 10px rgb(0 0 0 / 0.46),
+    0 1px 0 rgb(255 255 255 / 0.16) inset,
+    0 0 0 2px rgb(115 189 0 / 0.14),
+    0 0 14px rgb(225 213 0 / 0.12);
+}
+
 .layer-tone-spectral .card-play-button {
   color: color-mix(in srgb, var(--signal-yellow) 62%, var(--primary));
 }
