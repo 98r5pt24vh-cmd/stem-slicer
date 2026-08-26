@@ -6933,26 +6933,6 @@ main.quick-tools-main {
   opacity: 0.34;
 }
 
-.player-sync-key {
-  width: auto;
-  grid-auto-flow: column;
-  gap: 5px;
-  padding-inline: 9px;
-}
-
-.player-sync-key span {
-  font-size: 9px;
-  font-weight: 760;
-  letter-spacing: 0.02em;
-}
-
-.player-sync-key.is-active {
-  border-color: rgb(115 189 0 / 0.5);
-  background: linear-gradient(145deg, rgb(115 189 0 / 0.24), rgb(12 22 8 / 0.95) 74%);
-  color: color-mix(in srgb, var(--primary) 82%, white);
-  box-shadow: 0 4px 0 #132408, 0 7px 12px rgb(0 0 0 / 0.34), 0 1px 0 rgb(255 255 255 / 0.12) inset, 0 0 16px rgb(115 189 0 / 0.18);
-}
-
 .player-loop-key.is-active {
   border-color: rgb(225 213 0 / 0.48);
   background: linear-gradient(145deg, rgb(225 213 0 / 0.22), rgb(24 23 7 / 0.96) 74%);

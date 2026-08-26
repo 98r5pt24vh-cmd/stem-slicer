@@ -13,7 +13,6 @@ import {
   FolderOpen,
   History,
   Layers3,
-  Link2,
   Lock,
   Music2,
   Pause,
@@ -298,25 +297,25 @@ function loadGenerateHistory(): HistoryEntry[] {
 
 type PlaybackMode = "idle" | "solo" | "mix"
 
-function usePlaybackClock(layers: GeneratedLayer[]) {
+function usePlaybackClock(layers: GeneratedLayer[], stackPlayback: boolean) {
   const [playing, setPlaying] = useState(false)
   const [progress, setProgress] = useState(0)
   const [masterVolume, setMasterVolume] = useState(78)
   const [error, setError] = useState("")
-  const [mode, setMode] = useState<PlaybackMode>("idle")
+  const [mode, setMode] = useState<PlaybackMode>(stackPlayback ? "mix" : "idle")
   const [soloId, setSoloId] = useState<string | null>(null)
   const [lastSoloId, setLastSoloId] = useState<string | null>(null)
-  const [syncEnabled, setSyncEnabled] = useState(false)
+  const [syncEnabled, setSyncEnabled] = useState(stackPlayback)
   const [loopEnabled, setLoopEnabled] = useState(false)
   const [mutedIds, setMutedIds] = useState<string[]>([])
   const [syncSoloId, setSyncSoloId] = useState<string | null>(null)
   const engineRef = useRef<SharedWebAudioEngine | null>(null)
   if (!engineRef.current) engineRef.current = new SharedWebAudioEngine()
   const playableIdsRef = useRef<string[]>([])
-  const modeRef = useRef<PlaybackMode>("idle")
+  const modeRef = useRef<PlaybackMode>(stackPlayback ? "mix" : "idle")
   const soloIdRef = useRef<string | null>(null)
   const lastSoloIdRef = useRef<string | null>(null)
-  const syncEnabledRef = useRef(false)
+  const syncEnabledRef = useRef(stackPlayback)
   const loopEnabledRef = useRef(false)
   const mutedIdsRef = useRef(new Set<string>())
   const syncSoloIdRef = useRef<string | null>(null)
@@ -483,6 +482,21 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [commitLastSoloId, commitLoopEnabled, commitMode, commitMutedIds, commitPlaying, commitSyncEnabled, commitSyncSoloId, layerSourcesJson])
 
+  useEffect(() => {
+    if (stackPlayback === syncEnabledRef.current) return
+    playbackSessionRef.current += 1
+    engineRef.current?.stop()
+    positionRef.current = 0
+    setProgress(0)
+    commitPlaying(false)
+    setError("")
+    commitSyncEnabled(stackPlayback)
+    commitMutedIds(new Set())
+    commitSyncSoloId(null)
+    commitLastSoloId(null)
+    commitMode(stackPlayback ? "mix" : "idle", null)
+  }, [commitLastSoloId, commitMode, commitMutedIds, commitPlaying, commitSyncEnabled, commitSyncSoloId, stackPlayback])
+
   useEffect(() => () => {
     void engineRef.current?.close()
   }, [])
@@ -589,26 +603,6 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
     }
     await startPlayback(activeIds, startingMix ? 0 : positionRef.current)
   }, [commitMode, commitMutedIds, commitSyncSoloId, pausePlayback, startPlayback])
-
-  const toggleSyncMode = useCallback(() => {
-    playbackSessionRef.current += 1
-    engineRef.current?.stop()
-    positionRef.current = 0
-    setProgress(0)
-    commitPlaying(false)
-    setError("")
-    const nextEnabled = !syncEnabledRef.current
-    commitSyncEnabled(nextEnabled)
-    commitMutedIds(new Set())
-    commitSyncSoloId(null)
-    if (nextEnabled) {
-      commitMode("mix", null)
-      return
-    }
-    const previousSoloId = lastSoloIdRef.current
-    const hasPreviousSolo = Boolean(previousSoloId && playableIdsRef.current.includes(previousSoloId))
-    commitMode(hasPreviousSolo ? "solo" : "idle", hasPreviousSolo ? previousSoloId : null)
-  }, [commitMode, commitMutedIds, commitPlaying, commitSyncEnabled, commitSyncSoloId])
 
   const toggleLayer = useCallback(async (id: string) => {
     if (!playableIdsRef.current.includes(id)) {
@@ -737,13 +731,13 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
     setProgress(0)
     commitPlaying(false)
     setError("")
-    commitSyncEnabled(false)
+    commitSyncEnabled(stackPlayback)
     commitLoopEnabled(false)
     commitMutedIds(new Set())
     commitSyncSoloId(null)
     commitLastSoloId(null)
-    commitMode("idle", null)
-  }, [commitLastSoloId, commitLoopEnabled, commitMode, commitMutedIds, commitPlaying, commitSyncEnabled, commitSyncSoloId])
+    commitMode(stackPlayback ? "mix" : "idle", null)
+  }, [commitLastSoloId, commitLoopEnabled, commitMode, commitMutedIds, commitPlaying, commitSyncEnabled, commitSyncSoloId, stackPlayback])
 
   const beginScrub = useCallback((id: string) => {
     scrubSessionRef.current += 1
@@ -817,7 +811,6 @@ function usePlaybackClock(layers: GeneratedLayer[]) {
     previewScrub,
     endScrub,
     togglePrimary,
-    toggleSyncMode,
     toggleLoopMode,
     toggleLayer,
     toggleSynchronizedSolo,
@@ -2611,7 +2604,7 @@ function CloudView() {
   )
 }
 
-function GlobalPlayer({ layers, playback, contextLabel, syncAvailable }: { layers: GeneratedLayer[]; playback: PlaybackClock; contextLabel: string; syncAvailable: boolean }) {
+function GlobalPlayer({ layers, playback, contextLabel }: { layers: GeneratedLayer[]; playback: PlaybackClock; contextLabel: string }) {
   const timelineScrubberRef = useRef<HTMLInputElement>(null)
   const soloLayer = layers.find((layer) => layer.id === playback.soloId)
   const audibleMixLayers = layers.filter((layer) => !playback.mutedIds.has(layer.id))
@@ -2662,7 +2655,6 @@ function GlobalPlayer({ layers, playback, contextLabel, syncAvailable }: { layer
       </div>
       <div className="player-core">
         <div className="player-controls">
-          <button type="button" className={cn("player-key player-sync-key", syncEnabled && "is-active")} disabled={!syncAvailable} onClick={playback.toggleSyncMode} aria-pressed={syncEnabled} aria-label={syncAvailable ? syncEnabled ? "Disable synchronized playback" : "Enable synchronized playback" : "Synchronized playback is only available for generated or extracted layer cards"}><Link2 aria-hidden="true" /><span>Sync</span></button>
           <button type="button" className={cn("player-key player-loop-key", playback.loopEnabled && "is-active")} disabled={!layers.some((layer) => layer.path)} onClick={() => void playback.toggleLoopMode()} aria-pressed={playback.loopEnabled} aria-label={playback.loopEnabled ? "Disable loop playback" : "Enable loop playback"}><Repeat2 aria-hidden="true" /></button>
           <button type="button" className={cn("player-key player-key-primary", primaryPlaying && "is-active")} disabled={!canPlayPrimary} onClick={() => void playback.togglePrimary()} aria-label={syncEnabled ? mixPlaying ? "Pause all layers" : "Play all layers" : primaryPlaying ? "Pause selected layer" : "Play selected layer"}>{primaryPlaying ? <Pause aria-hidden="true" /> : <Play className="play-glyph" aria-hidden="true" />}</button>
           <button type="button" className="player-key" disabled={!timelineLayer} onClick={playback.rewind} aria-label="Stop and return to beginning"><SkipBack aria-hidden="true" /></button>
@@ -2723,9 +2715,10 @@ export function App() {
   const [history, setHistory] = useState<HistoryEntry[]>(loadGenerateHistory)
   const [currentGenerationResult, setCurrentGenerationResult] = useState<GenerateResult | null>(null)
   const quickPreviewActive = activeView === "quick-tools" && activeQuickTool === "extract" && quickPreviewLayers.length > 0
+  const stackPlayback = activeView === "generate" || quickPreviewActive
   const historyPlayerLayers = useMemo(() => history.map(historyEntryToLayer), [history])
   const playerLayers = useMemo(() => activeView === "history" ? historyPlayerLayers : quickPreviewActive ? quickPreviewLayers : layers, [activeView, historyPlayerLayers, layers, quickPreviewActive, quickPreviewLayers])
-  const playback = usePlaybackClock(playerLayers)
+  const playback = usePlaybackClock(playerLayers, stackPlayback)
   const resetPlayback = playback.reset
   const mainRef = useRef<HTMLElement>(null)
   const initialViewRef = useRef(true)
@@ -2806,7 +2799,7 @@ export function App() {
           <div hidden={activeView !== "history"}><HistoryView history={history} playback={playback} onReopen={reopenHistory} onTrash={trashHistory} /></div>
           <div hidden={activeView !== "cloud"}><CloudView /></div>
         </main>
-        <GlobalPlayer layers={playerLayers} playback={playback} contextLabel={activeView === "history" ? "History generation" : quickPreviewActive ? "Extracted stack" : "Generated stack"} syncAvailable={activeView === "generate" || quickPreviewActive} />
+        <GlobalPlayer layers={playerLayers} playback={playback} contextLabel={activeView === "history" ? "History generation" : quickPreviewActive ? "Extracted stack" : "Generated stack"} />
       </div>
     </div>
   )
