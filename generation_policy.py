@@ -198,6 +198,9 @@ class LayerCandidate:
     key_confidence_margin: float | None = None
     key_confidence_status: str = KEY_STATUS_UNAVAILABLE
     key_analyzer_id: str | None = None
+    timeline_offset_beats: float = 0.0
+    trim_start_beats: float = 0.0
+    trim_end_beats: float = 0.0
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "path", Path(self.path))
@@ -234,6 +237,17 @@ class LayerCandidate:
                     f"Key confidence margin must be between 0 and 1 for {self.identity!r}"
                 )
             object.__setattr__(self, "key_confidence_margin", margin)
+        for field_name in (
+            "timeline_offset_beats",
+            "trim_start_beats",
+            "trim_end_beats",
+        ):
+            value = float(getattr(self, field_name))
+            if not math.isfinite(value) or value < 0.0 or value > 64.0:
+                raise GenerationPolicyError(
+                    f"{field_name} must be between 0 and 64 beats for {self.identity!r}"
+                )
+            object.__setattr__(self, field_name, value)
 
     @classmethod
     def from_record(
@@ -264,7 +278,8 @@ class LayerCandidate:
         source_loop_id = str(
             _record_value(record, "source_loop_id", default=path.parent.name or identity)
         )
-        bpm = _record_value(record, "source_bpm", "bpm")
+        manual_bpm = _record_value(record, "manual_bpm")
+        bpm = manual_bpm if manual_bpm is not None else _record_value(record, "source_bpm", "bpm")
         if bpm is None:
             raise GenerationPolicyError(f"Layer record has no BPM: {path}")
 
@@ -289,20 +304,25 @@ class LayerCandidate:
             if duration is not None:
                 bars = float(duration) * float(bpm) / 240.0
 
+        manual_key = _record_value(record, "manual_key")
+        manual_mode = _record_value(record, "manual_mode")
+        scanned_key = manual_key or _record_value(record, "scanned_key")
+        scanned_mode = manual_mode or _record_value(record, "scanned_mode")
+
         return cls(
             identity=identity,
             path=path,
             source_loop_id=source_loop_id,
             source_bpm=float(bpm),
-            source_key=_record_value(record, "source_key", "key"),
-            source_mode=_record_value(record, "source_mode", "mode"),
+            source_key=manual_key or _record_value(record, "source_key", "key"),
+            source_mode=manual_mode or _record_value(record, "source_mode", "mode"),
             bars=float(bars) if bars is not None else None,
             manual_label=manual_label,
             predicted_label=predicted_label,
             prediction_confidence=float(confidence) if confidence is not None else None,
             key_sensitive=key_sensitive,
-            scanned_key=_record_value(record, "scanned_key"),
-            scanned_mode=_record_value(record, "scanned_mode"),
+            scanned_key=scanned_key,
+            scanned_mode=scanned_mode,
             alternate_scanned_key=_record_value(
                 record, "alternate_scanned_key"
             ),
@@ -315,16 +335,19 @@ class LayerCandidate:
             key_top2_probability=_record_value(
                 record, "key_top2_probability"
             ),
-            key_confidence_margin=_record_value(record, "key_confidence_margin"),
+            key_confidence_margin=(1.0 if manual_key else _record_value(record, "key_confidence_margin")),
             key_confidence_status=str(
-                _record_value(
+                KEY_STATUS_SAFE if manual_key else _record_value(
                     record,
                     "key_confidence_status",
                     default=KEY_STATUS_UNAVAILABLE,
                 )
                 or KEY_STATUS_UNAVAILABLE
             ),
-            key_analyzer_id=_record_value(record, "key_analyzer_id"),
+            key_analyzer_id=("manual-user-v1" if manual_key else _record_value(record, "key_analyzer_id")),
+            timeline_offset_beats=float(_record_value(record, "timeline_offset_beats", default=0.0) or 0.0),
+            trim_start_beats=float(_record_value(record, "trim_start_beats", default=0.0) or 0.0),
+            trim_end_beats=float(_record_value(record, "trim_end_beats", default=0.0) or 0.0),
         )
 
     def resolved_label(self) -> tuple[str | None, str | None, float | None]:

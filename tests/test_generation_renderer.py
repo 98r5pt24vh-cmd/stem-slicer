@@ -22,6 +22,7 @@ from generation_renderer import (
     LAYER_NORMALIZATION_MAX_BOOST_DB,
     RenderRequest,
     TimelinePlan,
+    _apply_timeline_edits,
     _peak_normalize,
     render_generation,
     rerender_alternate_key,
@@ -124,6 +125,30 @@ class TimelineTests(unittest.TestCase):
         )
         self.assertEqual(silence_gain_db, 0.0)
         self.assertTrue(np.array_equal(unchanged, near_silence))
+
+    def test_editor_timeline_trims_and_offsets_in_beats(self):
+        candidate = replace(
+            layer("edited", "Lead", loop="loop-edited"),
+            source_bpm=60,
+            timeline_offset_beats=2,
+            trim_start_beats=1,
+            trim_end_beats=1,
+        )
+        selection = select_generation(
+            [candidate],
+            GenerationRequest(("Lead",), 60, "A minor", bars=8),
+        ).selections[0]
+        source = np.arange(12, dtype=np.float32).reshape((-1, 1))
+        edited = _apply_timeline_edits(
+            source,
+            selection,
+            target_bpm=60,
+            sample_rate=4,
+            frames=20,
+        )
+        self.assertTrue(np.array_equal(edited[:8], np.zeros((8, 1))))
+        self.assertTrue(np.array_equal(edited[8:12, 0], np.arange(4, 8)))
+        self.assertTrue(np.array_equal(edited[12:], np.zeros((8, 1))))
 
 
 class FinalEncoderTests(unittest.TestCase):

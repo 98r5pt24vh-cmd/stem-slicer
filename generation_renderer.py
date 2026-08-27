@@ -39,7 +39,7 @@ from generation_policy import (
 )
 
 
-RENDERER_VERSION = "generate-mp3-320-sequence-v3"
+RENDERER_VERSION = "generate-mp3-320-sequence-v4-editor-timeline"
 OUTPUT_CODEC = "libmp3lame"
 OUTPUT_BITRATE_BPS = 320_000
 WAVEFORM_BINS = 110
@@ -378,6 +378,34 @@ def _fit_tail(
     return np.concatenate((audio, padding), axis=0)
 
 
+def _apply_timeline_edits(
+    audio: npt.NDArray[np.float32],
+    selection: SelectedLayer,
+    *,
+    target_bpm: float,
+    sample_rate: int,
+    frames: int,
+) -> npt.NDArray[np.float32]:
+    """Apply non-destructive beat-based trims and placement before fitting."""
+
+    frames_per_beat = float(sample_rate) * 60.0 / float(target_bpm)
+    trim_start = int(round(selection.candidate.trim_start_beats * frames_per_beat))
+    trim_end = int(round(selection.candidate.trim_end_beats * frames_per_beat))
+    offset = int(round(selection.candidate.timeline_offset_beats * frames_per_beat))
+    source_end = audio.shape[0] - trim_end
+    if trim_start >= source_end:
+        raise GenerationRenderError(
+            f"Timeline trims remove the complete layer: {selection.candidate.path}"
+        )
+    trimmed = np.ascontiguousarray(audio[trim_start:source_end])
+    if offset >= frames:
+        return np.zeros((frames, audio.shape[1]), dtype=np.float32)
+    if offset > 0:
+        leading = np.zeros((offset, audio.shape[1]), dtype=np.float32)
+        trimmed = np.concatenate((leading, trimmed), axis=0)
+    return _fit_tail(trimmed, frames)
+
+
 def _linear_to_db(gain: float) -> float:
     return -math.inf if gain <= 0 else 20.0 * math.log10(gain)
 
@@ -436,7 +464,13 @@ def _render_selected_audio(
         channels=channels,
     )
     channel_normalized = _normalise_channels(transformed, channels)
-    fitted = _fit_tail(channel_normalized, frames)
+    fitted = _apply_timeline_edits(
+        channel_normalized,
+        selection,
+        target_bpm=target_bpm,
+        sample_rate=sample_rate,
+        frames=frames,
+    )
     if selection.normalization_enabled:
         return _peak_normalize(fitted)
     return _peak_protect(fitted, ceiling=1.0)
@@ -763,6 +797,9 @@ def render_generation(
                 ),
                 "source_path": str(item.selection.candidate.path),
                 "source_loop_id": item.selection.candidate.source_loop_id,
+                "timeline_offset_beats": item.selection.candidate.timeline_offset_beats,
+                "trim_start_beats": item.selection.candidate.trim_start_beats,
+                "trim_end_beats": item.selection.candidate.trim_end_beats,
                 "label_source": item.selection.label_source,
                 "confidence": item.selection.confidence,
                 "source_bpm": item.selection.candidate.source_bpm,

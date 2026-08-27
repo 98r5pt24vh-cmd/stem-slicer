@@ -52,6 +52,34 @@ def candidate(
 
 
 class ExactTargetTests(unittest.TestCase):
+    def test_manual_editor_metadata_overrides_scanned_values(self):
+        source = LayerCandidate.from_record(
+            {
+                "path": "/library/edited.wav",
+                "sha256": "edited",
+                "source_loop_id": "edited-loop",
+                "bpm": 140,
+                "manual_bpm": 155,
+                "key": "A",
+                "mode": "minor",
+                "scanned_key": "A",
+                "scanned_mode": "minor",
+                "manual_key": "C#",
+                "manual_mode": "minor",
+                "manual_label": "Lead",
+                "timeline_offset_beats": 1.25,
+                "trim_start_beats": 0.5,
+                "trim_end_beats": 0.25,
+                "duration_seconds": 12.0,
+            }
+        )
+        self.assertEqual(source.source_bpm, 155)
+        self.assertEqual(source.source_signature().canonical, "C# minor")
+        self.assertEqual(source.key_confidence_status, "safe")
+        self.assertEqual(source.timeline_offset_beats, 1.25)
+        self.assertEqual(source.trim_start_beats, 0.5)
+        self.assertEqual(source.trim_end_beats, 0.25)
+
     def test_target_requires_exact_tonic_and_mode(self):
         with self.assertRaises(GenerationPolicyError):
             GenerationRequest(("Bass",), 140, "")
