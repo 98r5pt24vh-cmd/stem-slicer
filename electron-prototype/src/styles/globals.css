@@ -7370,7 +7370,13 @@ main.quick-tools-main {
 
 .quick-extract-controls {
   min-height: 86px;
-  grid-template-columns: minmax(250px, 1.25fr) minmax(340px, 1.4fr) 98px;
+  grid-template-columns: minmax(250px, 1.25fr) minmax(340px, 1.4fr) 108px;
+}
+
+.quick-extract-controls > .quick-run-button {
+  height: 86px;
+  min-height: 86px;
+  align-self: stretch;
 }
 
 .quick-file-source {
@@ -8169,7 +8175,7 @@ main.quick-tools-main {
   }
 
   .quick-extract-controls {
-    grid-template-columns: minmax(210px, 1fr) minmax(300px, 1.35fr) 84px;
+    grid-template-columns: minmax(210px, 1fr) minmax(300px, 1.35fr) 86px;
   }
 
   .quick-source-action {
