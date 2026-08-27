@@ -120,6 +120,13 @@ interface HistoryEntry {
   layers: GeneratedLayer[]
 }
 
+interface SourceLoopStudioRequest {
+  libraryRoot: string
+  sourceLoopId: string
+  issueId: string
+  issueActive: boolean
+}
+
 function MetronomeIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -1191,7 +1198,6 @@ function AppSidebar({
         </button>
         <div className="sidebar-copy">
           <strong>Stem Slicer</strong>
-          <span>Electron prototype</span>
         </div>
         <Button
           type="button"
@@ -1232,8 +1238,8 @@ function AppSidebar({
       <div className="sidebar-footer">
         <div className="connection-dot" aria-hidden="true" />
         <div className="sidebar-copy">
-          <strong>Local engine</strong>
-          <span>1.9B cache · read-only</span>
+          <strong>Electron prototype</strong>
+          <span>Local engine · 1.9B cache</span>
         </div>
         <Button variant="ghost" size="icon" aria-label="Ouvrir les réglages" title="Réglages">
           <Settings2 />
@@ -2844,24 +2850,23 @@ function formatEditorPosition(progress: number) {
   return `${String(bar).padStart(2, "0")}.${beat}.${quarter}`
 }
 
-function SourceLoopEditorDialog({
+function SourceLoopStudio({
   libraryRoot,
   sourceLoopId,
   issueId,
   issueActive = false,
-  disabled = false,
   onSetKeyIssueActive,
   onSaved,
+  onClose,
 }: {
-  libraryRoot?: string
-  sourceLoopId?: string
-  issueId?: string
+  libraryRoot: string
+  sourceLoopId: string
+  issueId: string
   issueActive?: boolean
-  disabled?: boolean
   onSetKeyIssueActive?: (issueId: string, active: boolean) => Promise<void>
   onSaved: (editor: SourceLoopEditorData) => void | Promise<void>
+  onClose: () => void
 }) {
-  const [open, setOpen] = useState(false)
   const [draft, setDraft] = useState<SourceLoopEditorData | null>(null)
   const [peaks, setPeaks] = useState<Map<string, number[]>>(() => new Map())
   const [loading, setLoading] = useState(false)
@@ -2883,7 +2888,6 @@ function SourceLoopEditorDialog({
   }, [])
 
   useEffect(() => {
-    if (!open) return
     const api = window.stemSlicer
     if (!api || !libraryRoot || !sourceLoopId) {
       setError("The desktop source-loop editor is unavailable.")
@@ -2925,7 +2929,7 @@ function SourceLoopEditorDialog({
       void engine.close()
       if (engineRef.current === engine) engineRef.current = null
     }
-  }, [libraryRoot, open, sourceLoopId])
+  }, [libraryRoot, sourceLoopId])
 
   const startPreview = async (startProgress = progress) => {
     if (!draft || !engineRef.current) return
@@ -3011,7 +3015,7 @@ function SourceLoopEditorDialog({
       setDraft(saved)
       if (issueActive && issueId && onSetKeyIssueActive) await onSetKeyIssueActive(issueId, false)
       await onSaved(saved)
-      setOpen(false)
+      onClose()
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to save the source loop edits.")
     } finally {
@@ -3019,41 +3023,26 @@ function SourceLoopEditorDialog({
     }
   }
 
-  const dialogSlug = (issueId ?? sourceLoopId ?? "source-loop").replace(/[^a-z0-9_-]/gi, "-")
+  const dialogSlug = (issueId || sourceLoopId || "source-loop").replace(/[^a-z0-9_-]/gi, "-")
 
   return (
-    <Dialog.Root
-      open={open}
-      onOpenChange={(nextOpen) => {
-        setOpen(nextOpen)
-        if (!nextOpen) {
-          pausePreview()
-          setProgress(0)
-          setSoloIdentity(undefined)
-          setMutedIdentities(new Set())
-        }
-      }}
-    >
-      <Dialog.Trigger className="source-loop-edit-trigger" disabled={disabled}>
-        <Pencil aria-hidden="true" /><span>Edit</span>
-      </Dialog.Trigger>
-      <Dialog.Portal>
-        <Dialog.Backdrop className="dialog-backdrop" />
-        <Dialog.Viewport className="dialog-viewport source-loop-editor-viewport">
-          <Dialog.Popup className="source-loop-editor-dialog">
-            <header className="source-loop-editor-header">
-              <div>
-                <p className="eyebrow">Source loop studio · 8 bars</p>
-                <Dialog.Title>{sourceLoopId ?? "Source loop"}</Dialog.Title>
-                <Dialog.Description>Edit the indexed layers directly on the timeline. Source audio remains untouched.</Dialog.Description>
-              </div>
-              <Dialog.Close className="dialog-close" aria-label="Close source loop editor"><X aria-hidden="true" /></Dialog.Close>
-            </header>
+    <section className="source-loop-studio" aria-labelledby="source-loop-studio-title">
+      <header className="source-loop-editor-header">
+        <button type="button" className="source-loop-studio-back" onClick={onClose}>
+          <ChevronLeft aria-hidden="true" /><span>History</span>
+        </button>
+        <div className="source-loop-studio-title">
+          <p className="eyebrow">Workspace / History / Studio</p>
+          <h1 id="source-loop-studio-title">{sourceLoopId || "Source loop"}</h1>
+          <p>Edit the indexed layers directly on the timeline. Source audio remains untouched.</p>
+        </div>
+        <Badge variant="secondary">8 bars</Badge>
+      </header>
 
-            {loading ? <div className="source-loop-editor-loading" role="status"><span className="spinner" /> Loading indexed layers…</div> : null}
-            {draft ? (
-              <>
-                <section className="source-loop-editor-toolbar" aria-label="Loop settings and preview transport">
+      {loading ? <div className="source-loop-editor-loading" role="status"><span className="spinner" /> Loading indexed layers…</div> : null}
+      {draft ? (
+        <>
+          <section className="source-loop-editor-toolbar" aria-label="Loop settings and preview transport">
                   <div className="mini-daw-transport">
                     <button type="button" aria-label="Return to beginning" onClick={() => { pausePreview(); setProgress(0) }}><SkipBack aria-hidden="true" /></button>
                     <button type="button" className={cn("mini-daw-primary-play", playing && "is-active")} aria-label={playing ? "Pause preview" : "Play preview"} onClick={() => playing ? pausePreview() : void startPreview()}>
@@ -3252,22 +3241,19 @@ function SourceLoopEditorDialog({
                       )
                     })}
                   </div>
-                </section>
-              </>
-            ) : null}
+          </section>
+        </>
+      ) : null}
 
-            {error ? <p className="dialog-inline-error source-loop-editor-error" role="alert">{error}</p> : null}
-            <footer className="source-loop-editor-footer">
-              <span><Check aria-hidden="true" /> Clips snap to ¼ beat. Drag either edge to trim; drag the body to move.</span>
-              <div>
-                <Dialog.Close className="dialog-cancel" disabled={saving}>Cancel</Dialog.Close>
-                <Button disabled={!draft || saving || loading} onClick={() => void save()}><Check aria-hidden="true" /> {saving ? "Saving edits…" : issueActive ? "Save and restore loop" : "Save changes"}</Button>
-              </div>
-            </footer>
-          </Dialog.Popup>
-        </Dialog.Viewport>
-      </Dialog.Portal>
-    </Dialog.Root>
+      {error ? <p className="dialog-inline-error source-loop-editor-error" role="alert">{error}</p> : null}
+      <footer className="source-loop-editor-footer">
+        <span><Check aria-hidden="true" /> Clips snap to ¼ beat. Drag either edge to trim; drag the body to move.</span>
+        <div>
+          <button type="button" className="dialog-cancel" disabled={saving} onClick={onClose}>Cancel</button>
+          <Button disabled={!draft || saving || loading} onClick={() => void save()}><Check aria-hidden="true" /> {saving ? "Saving edits…" : issueActive ? "Save and restore loop" : "Save changes"}</Button>
+        </div>
+      </footer>
+    </section>
   )
 }
 
@@ -3278,7 +3264,7 @@ function HistoryView({
   onReopen,
   onTrashSelected,
   onSetKeyIssueActive,
-  onLibraryRefresh,
+  onEditSourceLoop,
 }: {
   history: HistoryEntry[]
   keyIssues: KeyIssueReport[]
@@ -3286,7 +3272,7 @@ function HistoryView({
   onReopen: (entry: HistoryEntry) => void
   onTrashSelected: (entries: HistoryEntry[]) => Promise<void>
   onSetKeyIssueActive: (issueId: string, active: boolean) => Promise<void>
-  onLibraryRefresh: () => void | Promise<void>
+  onEditSourceLoop: (issue: KeyIssueReport) => void
 }) {
   const activeIssueCount = keyIssues.filter((issue) => issue.active).length
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
@@ -3364,14 +3350,9 @@ function HistoryView({
                   </div>
                   <div className="key-issue-actions">
                     <Button variant="outline" size="sm" onClick={() => void window.stemSlicer?.revealPath(issue.reportedPath)}><FolderOpen /> Reveal</Button>
-                    <SourceLoopEditorDialog
-                      libraryRoot={issue.libraryRoot}
-                      sourceLoopId={issue.sourceLoopId}
-                      issueId={issue.id}
-                      issueActive={issue.active}
-                      onSetKeyIssueActive={onSetKeyIssueActive}
-                      onSaved={async () => onLibraryRefresh()}
-                    />
+                    <Button variant="outline" size="sm" onClick={() => onEditSourceLoop(issue)}>
+                      <Pencil aria-hidden="true" /> Edit
+                    </Button>
                     <Button
                       variant={issue.active ? "outline" : "ghost"}
                       size="sm"
@@ -3587,7 +3568,9 @@ export function App() {
   const [activeQuickTool, setActiveQuickTool] = useState<QuickToolId>("extract")
   const [history, setHistory] = useState<HistoryEntry[]>(loadGenerateHistory)
   const [keyIssues, setKeyIssues] = useState<KeyIssueReport[]>([])
+  const [studioSource, setStudioSource] = useState<SourceLoopStudioRequest | null>(null)
   const [currentGenerationResult, setCurrentGenerationResult] = useState<GenerateResult | null>(null)
+  const studioActive = activeView === "history" && studioSource !== null
   const quickPreviewActive = activeView === "quick-tools" && activeQuickTool === "extract" && quickPreviewLayers.length > 0
   const stackPlayback = activeView === "generate" || quickPreviewActive
   const historyPlayerLayers = useMemo(() => history.map(historyEntryToLayer), [history])
@@ -3645,19 +3628,37 @@ export function App() {
   }, [history])
 
   useEffect(() => {
-    document.title = `${NAVIGATION.find((item) => item.id === activeView)?.label ?? "Stem Slicer"} · Stem Slicer Prototype`
+    document.title = `${studioActive ? "Studio" : NAVIGATION.find((item) => item.id === activeView)?.label ?? "Stem Slicer"} · Stem Slicer Prototype`
     if (initialViewRef.current) {
       initialViewRef.current = false
       return
     }
     mainRef.current?.focus()
-  }, [activeView])
+  }, [activeView, studioActive])
 
   const navigateToView = useCallback((view: ViewId) => {
-    if (view === activeView) return
+    if (view === activeView) {
+      if (view === "history" && studioSource) setStudioSource(null)
+      return
+    }
     resetPlayback()
+    setStudioSource(null)
     setActiveView(view)
-  }, [activeView, resetPlayback])
+  }, [activeView, resetPlayback, studioSource])
+
+  const openSourceLoopStudio = useCallback((issue: KeyIssueReport) => {
+    resetPlayback()
+    setStudioSource({
+      libraryRoot: issue.libraryRoot,
+      sourceLoopId: issue.sourceLoopId,
+      issueId: issue.id,
+      issueActive: issue.active,
+    })
+  }, [resetPlayback])
+
+  const closeSourceLoopStudio = useCallback(() => {
+    setStudioSource(null)
+  }, [])
 
   const reopenHistory = (entry: HistoryEntry) => {
     playback.reset()
@@ -3695,17 +3696,17 @@ export function App() {
       <a className="skip-link" href="#main-content">Aller au contenu principal</a>
       <AppSidebar activeView={activeView} collapsed={sidebarCollapsed} onNavigate={navigateToView} onToggle={() => setSidebarCollapsed((value) => !value)} />
       <div className="app-workspace">
-        <div className="window-dragbar app-drag-region">
-          <span className="prototype-pill app-no-drag"><span /> Electron prototype</span>
-        </div>
-        <main id="main-content" tabIndex={-1} ref={mainRef} className={cn(activeView === "generate" && "generate-main", activeView === "quick-tools" && "quick-tools-main", activeView === "stem-slicer" && "stem-slicer-main")}>
+        <main id="main-content" tabIndex={-1} ref={mainRef} className={cn(activeView === "generate" && "generate-main", activeView === "quick-tools" && "quick-tools-main", activeView === "stem-slicer" && "stem-slicer-main", studioActive && "studio-main")}>
           <div hidden={activeView !== "stem-slicer"}><StemSlicerView /></div>
           <div hidden={activeView !== "generate"}><GenerateView library={library} layers={layers} setLayers={setLayers} currentGenerationResult={currentGenerationResult} setCurrentGenerationResult={setCurrentGenerationResult} onAddHistory={addHistory} onUpdateHistory={updateHistory} keyIssues={keyIssues} onReportKeyIssue={reportKeyIssue} onSetKeyIssueActive={updateKeyIssueState} onLibraryRefresh={refreshLibrary} playback={playback} /></div>
           <div hidden={activeView !== "quick-tools"}><QuickToolsView previewLayers={quickPreviewLayers} setPreviewLayers={setQuickPreviewLayers} playback={playback} onActiveToolChange={setActiveQuickTool} /></div>
-          <div hidden={activeView !== "history"}><HistoryView history={history} keyIssues={keyIssues} playback={playback} onReopen={reopenHistory} onTrashSelected={trashHistoryEntries} onSetKeyIssueActive={updateKeyIssueState} onLibraryRefresh={refreshLibrary} /></div>
+          <div hidden={activeView !== "history"} className={cn("history-workspace", studioActive && "is-studio")}>
+            <div hidden={studioActive}><HistoryView history={history} keyIssues={keyIssues} playback={playback} onReopen={reopenHistory} onTrashSelected={trashHistoryEntries} onSetKeyIssueActive={updateKeyIssueState} onEditSourceLoop={openSourceLoopStudio} /></div>
+            {studioSource ? <SourceLoopStudio {...studioSource} onSetKeyIssueActive={updateKeyIssueState} onSaved={async () => refreshLibrary()} onClose={closeSourceLoopStudio} /> : null}
+          </div>
           <div hidden={activeView !== "cloud"}><CloudView /></div>
         </main>
-        <GlobalPlayer layers={playerLayers} playback={playback} contextLabel={activeView === "history" ? "History generation" : quickPreviewActive ? "Extracted stack" : "Generated stack"} />
+        {!studioActive ? <GlobalPlayer layers={playerLayers} playback={playback} contextLabel={activeView === "history" ? "History generation" : quickPreviewActive ? "Extracted stack" : "Generated stack"} /> : null}
       </div>
     </div>
   )
