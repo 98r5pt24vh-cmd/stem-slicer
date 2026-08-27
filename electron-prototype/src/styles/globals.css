@@ -3210,11 +3210,10 @@ td strong {
 }
 
 .source-loop-editor-toolbar {
-  display: flex;
+  display: grid;
   min-height: 56px;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
   gap: 18px;
   border-block-end: 1px solid rgb(255 255 255 / 0.07);
   background: rgb(255 255 255 / 0.018);
@@ -3233,9 +3232,20 @@ td strong {
 
 .source-loop-editor-toolbar .control-field {
   display: grid;
-  grid-template-columns: auto minmax(170px, 224px);
+  width: auto;
+  max-width: 100%;
+  grid-template-columns: max-content 148px;
   align-items: center;
   gap: 7px;
+}
+
+.source-loop-editor-toolbar .key-family-select {
+  width: auto;
+}
+
+.source-loop-editor-toolbar .key-family-select .custom-select-trigger {
+  width: 148px;
+  max-width: 148px;
 }
 
 .source-loop-editor-toolbar .control-field > span {
@@ -3281,9 +3291,11 @@ td strong {
 
 .mini-daw-project-settings {
   display: flex;
+  min-width: 0;
   align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 12px;
-  margin-inline-start: auto;
 }
 
 .source-loop-editor-loading {
@@ -3379,7 +3391,7 @@ td strong {
 }
 
 .mini-daw-track {
-  min-height: 72px;
+  min-height: 68px;
   border-block-end: 1px solid rgb(255 255 255 / 0.055);
 }
 
@@ -3397,16 +3409,16 @@ td strong {
   z-index: 5;
   inset-inline-start: 0;
   display: grid;
-  grid-template-columns: 20px minmax(0, 1fr) auto;
-  grid-template-rows: 14px 23px 19px;
+  grid-template-columns: 20px minmax(0, 1fr);
+  grid-template-rows: 24px 24px;
   grid-template-areas:
-    "number copy duration"
-    "number category remove"
-    "number volume mix";
+    "number head"
+    "number strip";
   min-width: 0;
+  align-content: center;
   align-items: center;
   column-gap: 6px;
-  row-gap: 3px;
+  row-gap: 4px;
   border-inline-end: 1px solid rgb(255 255 255 / 0.075);
   background: #101210;
   padding: 5px 7px;
@@ -3419,16 +3431,33 @@ td strong {
 .mini-daw-track-number {
   grid-area: number;
   align-self: start;
-  padding-block-start: 2px;
+  padding-block-start: 5px;
   color: #596057;
   font-family: var(--font-mono);
   font-size: 9px;
   font-variant-numeric: tabular-nums;
 }
 
-.mini-daw-track-copy {
-  grid-area: copy;
+.mini-daw-track-head {
+  display: flex;
   min-width: 0;
+  grid-area: head;
+  align-items: center;
+  gap: 5px;
+}
+
+.mini-daw-track-strip {
+  display: grid;
+  min-width: 0;
+  grid-area: strip;
+  grid-template-columns: 98px minmax(42px, 1fr);
+  align-items: center;
+  gap: 7px;
+}
+
+.mini-daw-track-copy {
+  min-width: 0;
+  flex: 1;
 }
 
 .mini-daw-track-copy strong {
@@ -3444,7 +3473,7 @@ td strong {
 }
 
 .mini-daw-track-duration {
-  grid-area: duration;
+  flex: 0 0 auto;
   color: var(--muted-foreground);
   font-size: 7px;
   font-variant-numeric: tabular-nums;
@@ -3463,20 +3492,19 @@ td strong {
 .mini-daw-track-category {
   width: 98px;
   max-width: 100%;
-  grid-area: category;
 }
 
 .mini-daw-track-remove {
   display: grid;
   width: 24px;
   height: 24px;
-  grid-area: remove;
+  flex: 0 0 24px;
   place-items: center;
-  border: 1px solid rgb(230 57 0 / 0.2);
-  border-radius: 7px;
-  background: rgb(230 57 0 / 0.055);
-  color: #c77764;
-  transition-property: border-color, background-color, color, scale;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #687066;
+  transition-property: background-color, color, scale;
   transition-duration: 120ms;
 }
 
@@ -3500,24 +3528,32 @@ td strong {
 }
 
 .mini-daw-track-mix {
-  grid-area: mix;
   display: flex;
-  gap: 4px;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border: 1px solid rgb(255 255 255 / 0.085);
+  border-radius: 6px;
+  background: #0c0f0c;
 }
 
 .mini-daw-track-mix button {
   display: grid;
   width: 24px;
-  height: 24px;
+  height: 22px;
   place-items: center;
-  border: 1px solid rgb(255 255 255 / 0.08);
-  border-radius: 7px;
-  background: rgb(255 255 255 / 0.025);
+  border: 0;
+  border-inline-end: 1px solid rgb(255 255 255 / 0.075);
+  border-radius: 0;
+  background: rgb(255 255 255 / 0.018);
   color: #7d857a;
   font-size: 9px;
   font-weight: 800;
   transition-property: border-color, background-color, color, scale;
   transition-duration: 120ms;
+}
+
+.mini-daw-track-mix button:last-child {
+  border-inline-end: 0;
 }
 
 .mini-daw-track-mix button:active {
@@ -3536,30 +3572,45 @@ td strong {
 }
 
 .mini-daw-track-volume {
-  display: flex;
+  position: relative;
+  display: grid;
   min-width: 0;
-  grid-area: volume;
   align-items: center;
-  gap: 4px;
-  color: #70796d;
-}
-
-.mini-daw-track-volume svg {
-  width: 11px;
-  height: 11px;
-  flex: 0 0 11px;
+  height: 24px;
+  border-radius: 5px;
+  background: rgb(255 255 255 / 0.022);
+  padding-inline: 7px;
 }
 
 .mini-daw-track-volume input {
-  width: 58px;
+  width: 100%;
   min-width: 0;
-  accent-color: var(--primary);
+  height: 14px;
+  appearance: none;
+  background: transparent;
+}
+
+.mini-daw-track-volume input::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 999px;
+  background: #384037;
+}
+
+.mini-daw-track-volume input::-webkit-slider-thumb {
+  width: 10px;
+  height: 10px;
+  margin-block-start: -3.5px;
+  appearance: none;
+  border: 1px solid #0a0d0a;
+  border-radius: 50%;
+  background: var(--primary);
+  box-shadow: 0 0 0 1px rgb(115 189 0 / 0.28);
 }
 
 .mini-daw-lane {
   position: relative;
   min-width: 0;
-  height: 72px;
+  height: 68px;
   overflow: hidden;
   background:
     repeating-linear-gradient(90deg, transparent 0 calc(3.125% - 1px), rgb(255 255 255 / 0.025) calc(3.125% - 1px) 3.125%),
@@ -3772,8 +3823,7 @@ td strong {
   }
 
   .mini-daw-track-remove:hover:not(:disabled) {
-    border-color: rgb(230 57 0 / 0.42);
-    background: rgb(230 57 0 / 0.12);
+    background: rgb(230 57 0 / 0.1);
     color: #ff8e73;
   }
 }
@@ -3788,12 +3838,17 @@ td strong {
   }
 
   .source-loop-editor-toolbar {
+    grid-template-columns: minmax(0, 1fr);
     align-items: stretch;
   }
 
   .mini-daw-transport,
   .mini-daw-project-settings {
     min-width: 0;
+  }
+
+  .mini-daw-project-settings {
+    justify-content: flex-start;
   }
 
   .source-loop-editor-footer-status {

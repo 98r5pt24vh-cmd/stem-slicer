@@ -8,8 +8,8 @@ import {
 } from "./random-key"
 
 it("formats relative-key families compactly without changing their stored value", () => {
-  expect(compactKeyFamilyLabel("C♯ major / A♯ minor")).toBe("C♯ MAJ/A♯ min")
-  expect(compactKeyFamilyLabel("F major / D minor")).toBe("F MAJ/D min")
+  expect(compactKeyFamilyLabel("C♯ major / A♯ minor")).toBe("C♯ Maj / A♯ min")
+  expect(compactKeyFamilyLabel("F major / D minor")).toBe("F Maj / D min")
 })
 
 describe("random key generation", () => {

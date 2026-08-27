@@ -3212,28 +3212,31 @@ function SourceLoopStudio({
                         <article className={cn("mini-daw-track", isSolo && "is-solo", isMuted && "is-muted", isSelected && "is-selected")} key={layer.identity} aria-label={`Track ${index + 1}: ${layer.file}`}>
                           <div className="mini-daw-track-meta">
                             <span className="mini-daw-track-number">{String(index + 1).padStart(2, "0")}</span>
-                            <span className="mini-daw-track-copy"><strong title={layer.file}>{layer.file}</strong></span>
-                            <span className="mini-daw-track-duration">{layer.duration.toFixed(1)} s</span>
-                            <div className="mini-daw-track-category"><LayerCategorySelect id={`editor-category-${layer.identity}`} value={layer.category} options={LAYER_CATEGORY_OPTIONS} disabled={saving} onChange={(category) => updateLayer(layer.identity, { category })} /></div>
-                            <button
-                              type="button"
-                              className="mini-daw-track-remove"
-                              disabled={saving || activeLayers.length <= 1}
-                              aria-label={`Exclude ${layer.file} from the library when changes are saved`}
-                              title={activeLayers.length <= 1 ? "A source loop must keep at least one layer" : "Exclude this layer on save"}
-                              onClick={() => excludeLayer(layer.identity)}
-                            >
-                              <X aria-hidden="true" />
-                            </button>
-                            <div className="mini-daw-track-mix">
-                              <button type="button" className={cn(isMuted && "is-active")} aria-pressed={isMuted} aria-label={`${isMuted ? "Unmute" : "Mute"} ${layer.file}`} onClick={() => toggleMute(layer.identity)}>M</button>
-                              <button type="button" className={cn(isSolo && "is-active")} aria-pressed={isSolo} aria-label={`${isSolo ? "Disable solo for" : "Solo"} ${layer.file}`} onClick={() => toggleSolo(layer.identity)}>S</button>
+                            <div className="mini-daw-track-head">
+                              <button
+                                type="button"
+                                className="mini-daw-track-remove"
+                                disabled={saving || activeLayers.length <= 1}
+                                aria-label={`Exclude ${layer.file} from the library when changes are saved`}
+                                title={activeLayers.length <= 1 ? "A source loop must keep at least one layer" : "Exclude this layer on save"}
+                                onClick={() => excludeLayer(layer.identity)}
+                              >
+                                <X aria-hidden="true" />
+                              </button>
+                              <span className="mini-daw-track-copy"><strong title={layer.file}>{layer.file}</strong></span>
+                              <span className="mini-daw-track-duration">{layer.duration.toFixed(1)} s</span>
+                              <div className="mini-daw-track-mix">
+                                <button type="button" className={cn(isMuted && "is-active")} aria-pressed={isMuted} aria-label={`${isMuted ? "Unmute" : "Mute"} ${layer.file}`} onClick={() => toggleMute(layer.identity)}>M</button>
+                                <button type="button" className={cn(isSolo && "is-active")} aria-pressed={isSolo} aria-label={`${isSolo ? "Disable solo for" : "Solo"} ${layer.file}`} onClick={() => toggleSolo(layer.identity)}>S</button>
+                              </div>
                             </div>
-                            <label className="mini-daw-track-volume" title={`${trackVolume}%`}>
-                              <Volume2 aria-hidden="true" />
-                              <span className="sr-only">Volume for {layer.file}</span>
-                              <input type="range" min="0" max="125" value={trackVolume} onChange={(event) => updateTrackVolume(layer.identity, Number(event.target.value))} />
-                            </label>
+                            <div className="mini-daw-track-strip">
+                              <div className="mini-daw-track-category"><LayerCategorySelect id={`editor-category-${layer.identity}`} value={layer.category} options={LAYER_CATEGORY_OPTIONS} disabled={saving} onChange={(category) => updateLayer(layer.identity, { category })} /></div>
+                              <label className="mini-daw-track-volume" title={`Volume ${trackVolume}%`}>
+                                <span className="sr-only">Volume for {layer.file}</span>
+                                <input type="range" min="0" max="125" value={trackVolume} onChange={(event) => updateTrackVolume(layer.identity, Number(event.target.value))} />
+                              </label>
+                            </div>
                           </div>
                           <div
                             className="mini-daw-lane"

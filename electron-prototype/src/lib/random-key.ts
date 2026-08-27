@@ -29,8 +29,8 @@ export function keyFamilyForKey(keyName: string): string {
 export function compactKeyFamilyLabel(family: string): string {
   return family
     .split("/")
-    .map((member) => member.trim().replace(/ major$/i, " MAJ").replace(/ minor$/i, " min"))
-    .join("/")
+    .map((member) => member.trim().replace(/ major$/i, " Maj").replace(/ minor$/i, " min"))
+    .join(" / ")
 }
 
 export function keyFromFamily(family: string, previousKey: string): string {
