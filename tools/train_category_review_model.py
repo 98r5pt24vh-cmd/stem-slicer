@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Train a research-only v3 layer-role artifact from reviewed truth."""
+"""Train a reproducible v3 layer-role artifact from reviewed truth."""
 
 from __future__ import annotations
 
@@ -36,6 +36,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--evaluation", type=Path, required=True)
     parser.add_argument("--runtime-metadata", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--status",
+        choices=("research_candidate_not_deployed", "accepted_current"),
+        default="research_candidate_not_deployed",
+    )
     return parser.parse_args()
 
 
@@ -140,9 +145,13 @@ def main() -> int:
     digest = model_digest((base_model, temporal_model), temporal_classes)
     runtime_metadata = json.loads(runtime_metadata_path.read_text(encoding="utf-8"))
     metadata = {
-        "schema": "stem-slicer-layer-role-head-v3-research",
+        "schema": (
+            "stem-slicer-layer-role-head-v3"
+            if args.status == "accepted_current"
+            else "stem-slicer-layer-role-head-v3-research"
+        ),
         "version": f"layer-roles-v3-{digest[:16]}",
-        "status": "research_candidate_not_deployed",
+        "status": args.status,
         "classes": [str(value) for value in ensemble.classes_],
         "feature_extractor_id": runtime_metadata["feature_extractor_id"],
         "feature_extractor": runtime_metadata["feature_extractor"],

@@ -120,10 +120,22 @@ class LayerLibraryTests(unittest.TestCase):
         self.assertEqual(len(TAXONOMY), 19)
         self.assertEqual(len(set(TAXONOMY)), 19)
         self.assertNotIn("Unreviewed", TAXONOMY)
+        self.assertIn("Piano", TAXONOMY)
+        self.assertNotIn("Rhythmic Pluck", TAXONOMY)
         self.assertEqual(
             AUDIO_EXTENSIONS,
             {".mp3", ".wav", ".flac", ".aif", ".aiff", ".m4a"},
         )
+
+    def test_legacy_rhythmic_pluck_cache_values_merge_into_pluck(self):
+        normalized = LayerPrediction(
+            label="Rhythmic Pluck",
+            confidence=0.6,
+            scores={"Pluck": 0.4, "Rhythmic Pluck": 0.6},
+        ).normalized()
+
+        self.assertEqual(normalized.label, "Pluck")
+        self.assertEqual(normalized.scores, {"Pluck": 1.0})
 
     def test_recursive_scan_is_deterministic_read_only_and_groups_siblings(self):
         first = self.library / "B Folder" / "A#m LOOP 144 XT_L2.wav"

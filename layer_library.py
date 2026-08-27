@@ -44,10 +44,10 @@ TAXONOMY = (
     "Chords",
     "Counter",
     "Keys",
+    "Piano",
     "Lead",
     "Pad",
     "Pluck",
-    "Rhythmic Pluck",
     "Vocal Chop",
     "Bells",
     "Strings",
@@ -62,6 +62,9 @@ TAXONOMY = (
 )
 
 _TAXONOMY_BY_CASEFOLD = {label.casefold(): label for label in TAXONOMY}
+_LEGACY_LABEL_ALIASES = {
+    "rhythmic pluck": "Pluck",
+}
 _LAYER_SUFFIX_RE = re.compile(
     r"(?ix)"
     r"(?:[\s_-]+(?:layer[\s_-]*|l)(?P<index>\d{1,4}))"
@@ -120,7 +123,10 @@ def canonical_label(value: str | None) -> str | None:
 
     if value is None or not str(value).strip():
         return None
-    result = _TAXONOMY_BY_CASEFOLD.get(str(value).strip().casefold())
+    normalized = str(value).strip().casefold()
+    result = _TAXONOMY_BY_CASEFOLD.get(normalized)
+    if result is None:
+        result = _LEGACY_LABEL_ALIASES.get(normalized)
     if result is None:
         allowed = ", ".join(TAXONOMY)
         raise ValueError(f"Unknown layer category {value!r}; expected one of: {allowed}")
@@ -179,7 +185,7 @@ class LayerPrediction:
             score = float(raw_score)
             if not 0.0 <= score <= 1.0:
                 raise ValueError("Prediction scores must be between 0 and 1")
-            scores[score_label] = score
+            scores[score_label] = scores.get(score_label, 0.0) + score
         return LayerPrediction(label=label, confidence=confidence, scores=scores)
 
     def to_dict(self) -> dict[str, object]:

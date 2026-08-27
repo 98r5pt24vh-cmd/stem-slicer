@@ -717,7 +717,7 @@ def main() -> None:
     parser.add_argument(
         "--artifact",
         type=Path,
-        default=PROTOTYPE_ROOT / "models" / "layer_roles_v2.joblib",
+        default=PROTOTYPE_ROOT / "models" / "layer_roles_v3.joblib",
     )
     parser.add_argument(
         "--hf-cache-dir", type=Path, default=DEFAULT_HF_HOME

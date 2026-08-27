@@ -547,6 +547,20 @@ class GeneratorController(QObject):
             if not result.records:
                 continue
             self.window.restore_library_path(result.library_root)
+            if any(
+                issue.code == "stale_classifier_cache"
+                for issue in result.issues
+            ):
+                # The feature-extractor identity is stable between V2 and V3,
+                # so this scan replays the lightweight head from cached
+                # vectors instead of recomputing MERT for unchanged audio.
+                self.window.set_scan_busy(
+                    True,
+                    0,
+                    "Updating library categories to the current model…",
+                )
+                self.start_scan(result.library_root)
+                return
             self._scan_completed(result)
             key_counts = result.key_confidence_counts
             safe = int(key_counts.get("safe", 0))

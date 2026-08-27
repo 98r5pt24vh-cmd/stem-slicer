@@ -27,8 +27,8 @@ datas = [
     ("licenses/DeepRhythm-LICENSE.txt", "licenses"),
     ("licenses/Bungee-MPL-2.0.txt", "licenses"),
     ("THIRD_PARTY_NOTICES.md", "."),
-    ("models/layer_roles_v2.joblib", "models"),
-    ("models/layer_roles_v2.json", "models"),
+    ("models/layer_roles_v3.joblib", "models"),
+    ("models/layer_roles_v3.json", "models"),
 ]
 
 # Generate classifies unknown layers fully offline.  The CI fetch step creates
@@ -66,6 +66,7 @@ a = Analysis(
         "sklearn.pipeline",
         "sklearn.preprocessing._data",
         "sklearn.linear_model._logistic",
+        "layer_role_classifier",
     ],
     hookspath=[],
     hooksconfig={},

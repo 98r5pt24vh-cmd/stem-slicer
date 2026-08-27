@@ -55,7 +55,7 @@ jobs:
             "analyzer/checkpoints/deeprhythm-0.7.pth" = "c7cc8cc0425929cd2bf695474d7ec1fd63ed0d0a4a68f361d4e4b57bd9b3d9c4"
             "assets/key-and-bpm-engine-warmup.wav" = "1a6136de94c4b9d616aba503bb8273c45c0062e50ae2f2e7982da57fc722615f"
             "basic_pitch/saved_models/icassp_2022/nmp.onnx" = "2c3c1d144bfa61ad236e92e169c13535c880469a12a047d4e73451f2c059a0ec"
-            "models/layer_roles_v1.joblib" = "17d025d2c592a41965534b925f2402f20f002aab40b6d449e4a9116f81ffc939"
+            "models/layer_roles_v3.joblib" = "9e4367fb64f9e221de098f7ae5389d894c99fca49b353a3aaa32fa44cc3f984c"
           }
           foreach ($entry in $expected.GetEnumerator()) {
             $actual = (Get-FileHash $entry.Key -Algorithm SHA256).Hash.ToLowerInvariant()
