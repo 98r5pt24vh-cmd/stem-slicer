@@ -576,7 +576,7 @@ function usePlaybackClock(layers: GeneratedLayer[], stackPlayback: boolean) {
 
     const activeIds = playableIdsRef.current
     if (activeIds.length === 0) {
-      setError("Generate or extract real audio before starting playback.")
+      setError("")
       return
     }
     await startPlayback(activeIds, startingMix ? 0 : positionRef.current)
@@ -1989,13 +1989,16 @@ function GenerateView({
             <button
               type="button"
               className={cn("random-key-toggle", randomKeyEnabled && "is-active")}
-              disabled={generateJob.busy}
+              aria-disabled={generateJob.busy}
               aria-pressed={randomKeyEnabled}
               aria-label={randomKeyEnabled ? "Disable random key for new generations" : "Enable random key for new generations"}
-              title={randomKeyEnabled
+              title={generateJob.busy
+                ? `Current generation in progress — Random key remains ${randomKeyEnabled ? "enabled" : "disabled"}`
+                : randomKeyEnabled
                 ? "Random key enabled — each new generation avoids the previous relative-key family"
                 : "Randomize the key on each new generation"}
               onClick={() => {
+                if (generateJob.busy) return
                 const nextEnabled = !randomKeyEnabled
                 setRandomKeyEnabled(nextEnabled)
                 setStatus(nextEnabled ? "Random key enabled" : "Random key disabled")
@@ -2796,7 +2799,6 @@ function GlobalPlayer({ layers, playback, contextLabel }: { layers: GeneratedLay
   const primaryPlaying = playback.playing && (syncEnabled ? playback.mode === "mix" : playback.mode === "solo")
   const timelineLayer = syncEnabled ? layers.find((layer) => layer.path) : soloLayer
   const duration = timelineLayer?.duration ?? currentLayer?.duration ?? 0
-  const canPlayPrimary = syncEnabled ? layers.some((layer) => layer.path) : Boolean(playback.lastSoloId && soloLayer?.path)
   const activeFileNames = activeLayers.map((layer) => layer.file).join(" · ")
   const playerTitle = activeLayers.length === 1
     ? activeLayers[0].file
@@ -2830,9 +2832,9 @@ function GlobalPlayer({ layers, playback, contextLabel }: { layers: GeneratedLay
       </div>
       <div className="player-core">
         <div className="player-controls">
-          <button type="button" className={cn("player-key player-loop-key", playback.loopEnabled && "is-active")} disabled={!layers.some((layer) => layer.path)} onClick={() => void playback.toggleLoopMode()} aria-pressed={playback.loopEnabled} aria-label={playback.loopEnabled ? "Disable loop playback" : "Enable loop playback"}><Repeat2 aria-hidden="true" /></button>
-          <button type="button" className={cn("player-key player-key-primary", primaryPlaying && "is-active")} disabled={!canPlayPrimary} onClick={() => void playback.togglePrimary()} aria-label={syncEnabled ? mixPlaying ? "Pause all layers" : "Play all layers" : primaryPlaying ? "Pause selected layer" : "Play selected layer"}>{primaryPlaying ? <Pause aria-hidden="true" /> : <Play className="play-glyph" aria-hidden="true" />}</button>
-          <button type="button" className="player-key" disabled={!timelineLayer} onClick={playback.rewind} aria-label="Stop and return to beginning"><SkipBack aria-hidden="true" /></button>
+          <button type="button" className={cn("player-key player-loop-key", playback.loopEnabled && "is-active")} onClick={() => void playback.toggleLoopMode()} aria-pressed={playback.loopEnabled} aria-label={playback.loopEnabled ? "Disable loop playback" : "Enable loop playback"}><Repeat2 aria-hidden="true" /></button>
+          <button type="button" className={cn("player-key player-key-primary", primaryPlaying && "is-active")} onClick={() => void playback.togglePrimary()} aria-label={syncEnabled ? mixPlaying ? "Pause all layers" : "Play all layers" : primaryPlaying ? "Pause selected layer" : "Play selected layer"}>{primaryPlaying ? <Pause aria-hidden="true" /> : <Play className="play-glyph" aria-hidden="true" />}</button>
+          <button type="button" className="player-key" onClick={playback.rewind} aria-label="Stop and return to beginning"><SkipBack aria-hidden="true" /></button>
         </div>
         <div className="player-timeline">
           <div

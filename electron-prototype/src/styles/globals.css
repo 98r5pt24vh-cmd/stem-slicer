@@ -1476,14 +1476,13 @@ main:focus {
   box-shadow: 0 3px 0 #2d2b05, 0 6px 10px rgb(0 0 0 / 0.3), 0 1px 0 rgb(255 255 255 / 0.12) inset, 0 0 14px rgb(225 213 0 / 0.14);
 }
 
-.generate-action .random-key-toggle:active:not(:disabled) {
+.generate-action .random-key-toggle:active:not([aria-disabled="true"]) {
   transform: translateY(2px) scale(0.96);
   box-shadow: 0 1px 0 #070a06, 0 3px 7px rgb(0 0 0 / 0.38), 0 2px 5px rgb(0 0 0 / 0.34) inset;
 }
 
-.generate-action .random-key-toggle:disabled {
-  filter: grayscale(0.6);
-  opacity: 0.38;
+.generate-action .random-key-toggle[aria-disabled="true"] {
+  cursor: default;
 }
 
 .transport {
@@ -7276,7 +7275,7 @@ main.quick-tools-main {
     filter: brightness(1.08);
   }
 
-  .random-key-toggle:hover:not(:disabled) {
+  .random-key-toggle:hover:not([aria-disabled="true"]) {
     color: var(--foreground);
     filter: brightness(1.08);
   }
