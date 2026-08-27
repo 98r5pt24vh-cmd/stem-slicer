@@ -6,10 +6,11 @@ import { existsSync, statSync } from "node:fs"
 import { pathToFileURL } from "node:url"
 
 import { AudioEngineService } from "./main/audio-engine"
+import { listKeyIssueReports, reportKeyIssue, setKeyIssueActive } from "./main/key-feedback"
 import { readLibraryOverview, removeLibraryRoot } from "./main/library-cache"
 import { mediaMimeType, parseByteRange } from "./main/media-range"
 import { migrationModules } from "./main/migration-modules"
-import type { AudioJobKind, AudioJobRequest, AudioSelection } from "./shared/contracts"
+import type { AudioJobKind, AudioJobRequest, AudioSelection, ReportKeyIssueRequest } from "./shared/contracts"
 
 const acceptedCachePath = path.join(
   homedir(),
@@ -154,6 +155,16 @@ function registerIpc(): void {
       throw new Error("The indexed library path is invalid.")
     }
     return removeLibraryRoot(acceptedCachePath, libraryRoot)
+  })
+  ipcMain.handle("key-issues:list", () => listKeyIssueReports(acceptedCachePath))
+  ipcMain.handle("key-issues:report", (_event: IpcMainInvokeEvent, request: ReportKeyIssueRequest) =>
+    reportKeyIssue(acceptedCachePath, request),
+  )
+  ipcMain.handle("key-issues:set-active", (_event: IpcMainInvokeEvent, issueId: unknown, active: unknown) => {
+    if (typeof issueId !== "string" || typeof active !== "boolean") {
+      throw new Error("The key-issue update is invalid.")
+    }
+    return setKeyIssueActive(acceptedCachePath, issueId, active)
   })
   ipcMain.handle("migration:get-modules", () => migrationModules)
   ipcMain.handle("engine:get-status", () => audioEngine.status())

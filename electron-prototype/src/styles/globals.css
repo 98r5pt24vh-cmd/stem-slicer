@@ -1748,6 +1748,19 @@ main:focus {
   min-width: 42px;
 }
 
+.layer-key-issue-action {
+  min-width: 38px;
+  border-color: rgb(230 57 0 / 0.2);
+  color: #a9877d;
+}
+
+.layer-key-issue-action.is-active {
+  border-color: rgb(255 80 40 / 0.62);
+  background: rgb(230 57 0 / 0.18);
+  color: #ff7650;
+  box-shadow: 0 0 0 1px rgb(230 57 0 / 0.1) inset;
+}
+
 .layer-remove-action {
   width: 24px;
   padding: 0;
@@ -1777,6 +1790,15 @@ main:focus {
 .layer-card.is-muted .waveform,
 .layer-card.is-muted .layer-metadata {
   opacity: 0.48;
+}
+
+.layer-card.has-key-issue {
+  border-color: rgb(230 57 0 / 0.52);
+  box-shadow:
+    0 1px 0 var(--glass-highlight) inset,
+    0 0 0 1px rgb(230 57 0 / 0.15) inset,
+    0 20px 44px rgb(0 0 0 / 0.58),
+    0 0 24px rgb(230 57 0 / 0.12);
 }
 
 .layer-heading {
@@ -2601,6 +2623,161 @@ td strong {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.key-issues-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.history-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.history-section-heading h2,
+.history-section-heading p {
+  margin: 0;
+}
+
+.history-section-heading h2 {
+  font-size: 13px;
+}
+
+.history-section-heading p {
+  margin-block-start: 2px;
+  color: var(--muted-foreground);
+  font-size: 10px;
+}
+
+.history-generations-heading {
+  margin-block-start: 8px;
+}
+
+.key-issue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.key-issue-item {
+  border-color: rgb(255 255 255 / 0.08);
+}
+
+.key-issue-item.is-active {
+  border-color: rgb(230 57 0 / 0.32);
+  background: linear-gradient(115deg, rgb(230 57 0 / 0.09), transparent 45%);
+}
+
+.key-issue-item > div {
+  display: grid;
+  grid-template-columns: auto minmax(220px, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  padding-block: 10px;
+}
+
+.key-issue-icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 9px;
+  background: rgb(230 57 0 / 0.12);
+  color: #ff7650;
+}
+
+.key-issue-icon svg {
+  width: 17px;
+  height: 17px;
+}
+
+.key-issue-copy {
+  min-width: 0;
+}
+
+.key-issue-copy strong,
+.key-issue-copy small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.key-issue-copy small,
+.key-issue-copy summary {
+  color: var(--muted-foreground);
+  font-size: 9px;
+}
+
+.key-issue-copy details {
+  margin-block-start: 4px;
+}
+
+.key-issue-copy summary {
+  width: max-content;
+  max-width: 100%;
+}
+
+.key-issue-copy ul {
+  display: grid;
+  max-height: 116px;
+  gap: 3px;
+  overflow-y: auto;
+  margin: 6px 0 0;
+  padding: 0 8px 0 16px;
+  list-style: none;
+}
+
+.key-issue-copy li {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  color: #aeb6aa;
+  font-size: 9px;
+}
+
+.key-issue-copy li span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.key-issue-copy li b {
+  color: var(--signal-yellow);
+  font-weight: 650;
+}
+
+.key-issue-spec {
+  display: grid;
+  justify-items: start;
+  gap: 3px;
+  color: #9da695;
+  font-size: 9px;
+}
+
+.key-issue-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.key-issue-actions button {
+  min-width: 0;
+  padding-inline: 8px;
+}
+
+.key-issues-empty {
+  margin: 0;
+  border: 1px dashed rgb(255 255 255 / 0.08);
+  border-radius: 10px;
+  color: var(--muted-foreground);
+  padding: 12px;
+  font-size: 10px;
 }
 
 .history-item > div {
@@ -7083,6 +7260,12 @@ main.quick-tools-main {
     color: var(--signal-yellow);
   }
 
+  .layer-key-issue-action:hover:not(:disabled) {
+    border-color: rgb(230 57 0 / 0.62);
+    background: rgb(230 57 0 / 0.14);
+    color: #ff7650;
+  }
+
   .layer-remove-action:hover:not(:disabled) {
     border-color: rgb(230 57 0 / 0.7);
     background: rgb(230 57 0 / 0.2);
@@ -7162,6 +7345,15 @@ main.quick-tools-main {
 
   .history-item > div {
     grid-template-columns: auto 1fr auto;
+  }
+
+  .key-issue-item > div {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .key-issue-spec {
+    grid-column: 2 / -1;
+    grid-row: 2;
   }
 
   .history-spec {

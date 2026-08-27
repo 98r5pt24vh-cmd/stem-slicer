@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronLeft,
   CircleAlert,
+  CircleX,
   Cloud,
   CloudCog,
   Database,
@@ -57,10 +58,12 @@ import type {
   AudioJobResult,
   BatchJobResult,
   GenerateResult,
+  KeyIssueReport,
   LibraryOverview,
   QuickConvertResult,
   QuickExtractResult,
   QuickScanResult,
+  ReportKeyIssueRequest,
   ViewId,
 } from "@/shared/contracts"
 
@@ -85,6 +88,10 @@ interface GeneratedLayer {
   path?: string
   midiPath?: string
   sourcePath?: string
+  sourceFile?: string
+  sourceLoopId?: string
+  libraryRoot?: string
+  sourceDetectedKey?: string
   identity?: string
   sourceKeyRank?: 1 | 2
   locked?: boolean
@@ -672,6 +679,15 @@ function usePlaybackClock(layers: GeneratedLayer[], stackPlayback: boolean) {
     if (shouldResume) await startPlayback(playableIdsRef.current, nextProgress)
   }, [commitMode, commitMutedIds, commitPlaying, commitSyncEnabled, commitSyncSoloId, getCurrentProgress, startPlayback])
 
+  const setLayerMuted = useCallback((id: string, muted: boolean) => {
+    if (!playableIdsRef.current.includes(id)) return
+    const nextMutedIds = new Set(mutedIdsRef.current)
+    if (muted) nextMutedIds.add(id)
+    else nextMutedIds.delete(id)
+    if (syncSoloIdRef.current === id) commitSyncSoloId(null)
+    commitMutedIds(nextMutedIds)
+  }, [commitMutedIds, commitSyncSoloId])
+
   const togglePrimary = useCallback(async () => {
     if (syncEnabledRef.current) {
       await toggleMix()
@@ -814,6 +830,7 @@ function usePlaybackClock(layers: GeneratedLayer[], stackPlayback: boolean) {
     toggleLoopMode,
     toggleLayer,
     toggleSynchronizedSolo,
+    setLayerMuted,
     stop,
     rewind,
     reset,
@@ -1274,11 +1291,13 @@ function LayerCard({
   onScrubEnd,
   onChange,
   onToggleAlternateKey,
+  onToggleKeyIssue,
   onToggleLock,
   onRemove,
   categoryOptions,
   canRemove,
   updating = false,
+  keyIssueActive = false,
   variant = "generate",
 }: {
   layer: GeneratedLayer
@@ -1295,11 +1314,13 @@ function LayerCard({
   onScrubEnd: () => void | Promise<void>
   onChange: (layer: GeneratedLayer) => void
   onToggleAlternateKey?: () => void
+  onToggleKeyIssue?: () => void | Promise<void>
   onToggleLock?: () => void
   onRemove?: () => void
   categoryOptions?: string[]
   canRemove?: boolean
   updating?: boolean
+  keyIssueActive?: boolean
   variant?: "generate" | "extract"
 }) {
   const waveformScrubberRef = useRef<HTMLInputElement>(null)
@@ -1317,7 +1338,7 @@ function LayerCard({
   }
 
   return (
-    <Card className={cn("layer-card", isGenerateCard ? "layer-tone-spectral" : "layer-tone-extract", !isGenerateCard && "is-extract", isAudible && "is-audible", isMuted && "is-muted", isSyncSolo && "is-sync-solo")} aria-label={`${layer.category}, ${layer.file}`}>
+    <Card className={cn("layer-card", isGenerateCard ? "layer-tone-spectral" : "layer-tone-extract", !isGenerateCard && "is-extract", isAudible && "is-audible", isMuted && "is-muted", isSyncSolo && "is-sync-solo", keyIssueActive && "has-key-issue")} aria-label={`${layer.category}, ${layer.file}`}>
       <CardHeader>
         <div className="layer-heading">
           {isGenerateCard ? (
@@ -1334,6 +1355,21 @@ function LayerCard({
           </CardDescription>
         </div>
         {isGenerateCard ? <div className="layer-card-actions">
+          <button
+            type="button"
+            className={cn("layer-mini-action layer-key-issue-action", keyIssueActive && "is-active")}
+            disabled={!layer.identity || !layer.sourcePath || !layer.sourceLoopId || !layer.libraryRoot || updating}
+            aria-pressed={keyIssueActive}
+            aria-label={keyIssueActive
+              ? `Réintégrer la loop source de ${layer.role} dans les générations`
+              : `Signaler la clé de ${layer.role} comme incorrecte et exclure toute sa loop source`}
+            title={keyIssueActive
+              ? "Loop source en quarantaine — cliquer pour la réintégrer"
+              : "Wrong key — exclure toute la loop source des prochaines générations"}
+            onClick={() => void onToggleKeyIssue?.()}
+          >
+            <CircleX aria-hidden="true" /><span>Key</span>
+          </button>
           <button type="button" className={cn("layer-mini-action layer-lock-action", layer.locked && "is-active")} disabled={!layer.identity || updating} aria-pressed={Boolean(layer.locked)} aria-label={`${layer.locked ? "Libérer" : "Garder"} ${layer.role} pour la prochaine génération`} onClick={onToggleLock}>{layer.locked ? <Lock aria-hidden="true" /> : <Unlock aria-hidden="true" />}<span>Lock</span></button>
           <button type="button" className="layer-mini-action layer-remove-action" disabled={!canRemove || updating} aria-label={`Supprimer la card ${layer.role}`} onClick={onRemove}><X aria-hidden="true" /></button>
         </div> : null}
@@ -1479,6 +1515,10 @@ function aggregateCategories(roots: LibraryOverview["roots"]) {
     .sort((left, right) => right.count - left.count)
 }
 
+function sourceLoopKey(libraryRoot: string | undefined, sourceLoopId: string | undefined) {
+  return libraryRoot && sourceLoopId ? `${libraryRoot}\0${sourceLoopId}` : ""
+}
+
 function LibraryManager({
   library,
   selectedPaths,
@@ -1598,6 +1638,9 @@ function GenerateView({
   setCurrentGenerationResult,
   onAddHistory,
   onUpdateHistory,
+  keyIssues,
+  onReportKeyIssue,
+  onSetKeyIssueActive,
   onLibraryRefresh,
   playback,
 }: {
@@ -1608,6 +1651,9 @@ function GenerateView({
   setCurrentGenerationResult: React.Dispatch<React.SetStateAction<GenerateResult | null>>
   onAddHistory: (entry: HistoryEntry) => void
   onUpdateHistory: (generation: GenerateResult, layers: GeneratedLayer[]) => void
+  keyIssues: KeyIssueReport[]
+  onReportKeyIssue: (request: ReportKeyIssueRequest) => Promise<void>
+  onSetKeyIssueActive: (issueId: string, active: boolean) => Promise<void>
   onLibraryRefresh: () => Promise<void>
   playback: PlaybackClock
 }) {
@@ -1630,6 +1676,10 @@ function GenerateView({
   const generationResult = generateJob.result as GenerateResult | null
   const generationUpdateResult = generateUpdateJob.result as GenerateResult | null
   const mixActive = playback.mode === "mix"
+  const activeKeyIssues = keyIssues.filter((issue) => issue.active)
+  const activeKeyIssueBySource = new Map(
+    activeKeyIssues.map((issue) => [sourceLoopKey(issue.libraryRoot, issue.sourceLoopId), issue]),
+  )
   const selectedLibrarySet = new Set(selectedLibraryPaths)
   const selectedRoots = library.roots.filter((root) => selectedLibrarySet.has(root.path))
   const selectedLayerCount = selectedRoots.reduce((sum, root) => sum + root.layerCount, 0)
@@ -1684,6 +1734,10 @@ function GenerateView({
       path: artifact.path,
       midiPath: artifact.midiPath,
       sourcePath: artifact.sourcePath,
+      sourceFile: artifact.sourceFile,
+      sourceLoopId: artifact.sourceLoopId,
+      libraryRoot: artifact.libraryRoot,
+      sourceDetectedKey: artifact.sourceDetectedKey,
       identity: artifact.identity,
       sourceKeyRank: artifact.sourceKeyRank ?? 1,
       octave: artifact.octave ?? 0,
@@ -1727,6 +1781,10 @@ function GenerateView({
         path: artifact.path,
         midiPath: artifact.midiPath,
         sourcePath: artifact.sourcePath,
+        sourceFile: artifact.sourceFile ?? previous?.sourceFile,
+        sourceLoopId: artifact.sourceLoopId ?? previous?.sourceLoopId,
+        libraryRoot: artifact.libraryRoot ?? previous?.libraryRoot,
+        sourceDetectedKey: artifact.sourceDetectedKey ?? previous?.sourceDetectedKey,
         identity: artifact.identity,
         sourceKeyRank: artifact.sourceKeyRank ?? 1,
         locked: previous?.locked ?? artifact.locked ?? false,
@@ -1808,6 +1866,10 @@ function GenerateView({
       excludedIdentities: seedOverride == null
         ? layers.filter((layer) => !layer.locked && layer.identity).map((layer) => layer.identity as string)
         : [],
+      excludedSourceLoops: activeKeyIssues.map((issue) => ({
+        libraryRoot: issue.libraryRoot,
+        sourceLoopId: issue.sourceLoopId,
+      })),
     }).catch(() => undefined)
   }
 
@@ -1846,6 +1908,45 @@ function GenerateView({
 
   const toggleLayerLock = (slotIndex: number) => {
     setLayers((current) => current.map((layer, index) => index === slotIndex ? { ...layer, locked: !layer.locked } : layer))
+  }
+
+  const toggleKeyIssue = async (slotIndex: number) => {
+    const layer = layers[slotIndex]
+    if (!layer) return
+    const issue = activeKeyIssueBySource.get(sourceLoopKey(layer.libraryRoot, layer.sourceLoopId))
+    try {
+      if (issue) {
+        await onSetKeyIssueActive(issue.id, false)
+        playback.setLayerMuted(layer.id, false)
+        setStatus(`Source loop restored: ${layer.sourceFile ?? layer.file}`)
+        return
+      }
+      if (
+        !layer.libraryRoot
+        || !layer.sourceLoopId
+        || !layer.identity
+        || !layer.sourcePath
+        || !currentGenerationResult?.outputDirectory
+      ) {
+        setStatus("This card does not expose enough source metadata to report its key.")
+        return
+      }
+      await onReportKeyIssue({
+        libraryRoot: layer.libraryRoot,
+        sourceLoopId: layer.sourceLoopId,
+        reportedIdentity: layer.identity,
+        reportedPath: layer.sourcePath,
+        reportedFile: layer.sourceFile ?? basename(layer.sourcePath),
+        detectedKey: layer.sourceDetectedKey || "Unknown",
+        targetKey: currentGenerationResult.targetKey,
+        generationOutputDirectory: currentGenerationResult.outputDirectory,
+      })
+      setLayers((current) => current.map((item, index) => index === slotIndex ? { ...item, locked: false } : item))
+      playback.setLayerMuted(layer.id, true)
+      setStatus(`Wrong key reported · the complete source loop is now excluded`)
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "The key issue could not be saved.")
+    }
   }
 
   const removeLayerCard = (slotIndex: number) => {
@@ -1992,11 +2093,13 @@ function GenerateView({
                 onScrubEnd={playback.endScrub}
                 onChange={(next) => updateGeneratedLayer(index, next)}
                 onToggleAlternateKey={() => toggleAlternateKey(index)}
+                onToggleKeyIssue={() => toggleKeyIssue(index)}
                 onToggleLock={() => toggleLayerLock(index)}
                 onRemove={() => removeLayerCard(index)}
                 categoryOptions={selectedCategories.map((category) => category.name)}
                 canRemove={layers.length > 1}
                 updating={generateUpdateJob.busy}
+                keyIssueActive={activeKeyIssueBySource.has(sourceLoopKey(layer.libraryRoot, layer.sourceLoopId))}
               />
             ))}
             <button type="button" className="add-layer-card" onClick={addLayerCard}>
@@ -2559,11 +2662,82 @@ function historyEntryToLayer(entry: HistoryEntry): GeneratedLayer {
   }
 }
 
-function HistoryView({ history, playback, onReopen, onTrash }: { history: HistoryEntry[]; playback: PlaybackClock; onReopen: (entry: HistoryEntry) => void; onTrash: (entry: HistoryEntry) => Promise<void> }) {
+function HistoryView({
+  history,
+  keyIssues,
+  playback,
+  onReopen,
+  onTrash,
+  onSetKeyIssueActive,
+}: {
+  history: HistoryEntry[]
+  keyIssues: KeyIssueReport[]
+  playback: PlaybackClock
+  onReopen: (entry: HistoryEntry) => void
+  onTrash: (entry: HistoryEntry) => Promise<void>
+  onSetKeyIssueActive: (issueId: string, active: boolean) => Promise<void>
+}) {
+  const activeIssueCount = keyIssues.filter((issue) => issue.active).length
 
   return (
     <div className="page-stack">
-      <PageHeader eyebrow="Workspace / History" title="Generation history" description="Reopen previous combinations, compare generations and keep the stacks worth exporting." />
+      <PageHeader eyebrow="Workspace / History" title="Generation history" description="Reopen combinations and review source loops reported with an incorrect key." />
+      <section className="key-issues-section" aria-labelledby="key-issues-title">
+        <header className="history-section-heading">
+          <div>
+            <h2 id="key-issues-title">Wrong-key reports</h2>
+            <p>One report quarantines every indexed layer attached to the same source loop.</p>
+          </div>
+          <Badge variant={activeIssueCount > 0 ? "warning" : "secondary"}>{activeIssueCount} active</Badge>
+        </header>
+        {keyIssues.length > 0 ? (
+          <div className="key-issue-list">
+            {keyIssues.map((issue) => (
+              <Card key={issue.id} className={cn("key-issue-item", issue.active && "is-active")}>
+                <CardContent>
+                  <span className="key-issue-icon"><CircleAlert aria-hidden="true" /></span>
+                  <div className="key-issue-copy">
+                    <strong title={issue.reportedPath}>{issue.reportedFile}</strong>
+                    <small title={issue.sourceLoopId}>Source loop · {issue.sourceLoopId}</small>
+                    <details>
+                      <summary>{issue.affectedLayers.length} associated layer{issue.affectedLayers.length === 1 ? "" : "s"}</summary>
+                      <ul>
+                        {issue.affectedLayers.map((layer) => (
+                          <li key={`${issue.id}-${layer.path}`}>
+                            <span title={layer.path}>{layer.file}</span>
+                            <b>{layer.detectedKey}</b>
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  </div>
+                  <div className="key-issue-spec">
+                    <Badge variant={issue.active ? "warning" : "secondary"}>{issue.active ? "Quarantined" : "Restored"}</Badge>
+                    <span>Detected · {issue.detectedKey}</span>
+                    <span>Generated in · {issue.targetKey}</span>
+                  </div>
+                  <div className="key-issue-actions">
+                    <Button variant="outline" size="sm" onClick={() => void window.stemSlicer?.revealPath(issue.reportedPath)}><FolderOpen /> Reveal</Button>
+                    <Button
+                      variant={issue.active ? "outline" : "ghost"}
+                      size="sm"
+                      onClick={() => void onSetKeyIssueActive(issue.id, !issue.active)}
+                    >
+                      {issue.active ? <Check aria-hidden="true" /> : <CircleX aria-hidden="true" />}
+                      {issue.active ? "Restore" : "Exclude again"}
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        ) : <p className="key-issues-empty">No source loop has been reported.</p>}
+      </section>
+
+      <div className="history-section-heading history-generations-heading">
+        <div><h2>Generations</h2><p>Previously rendered stacks remain available here.</p></div>
+        <Badge variant="secondary">{history.length}</Badge>
+      </div>
       {history.length ? (
         <div className="history-list">
           {history.map((entry) => (
@@ -2716,6 +2890,7 @@ export function App() {
   const [quickPreviewLayers, setQuickPreviewLayers] = useState<GeneratedLayer[]>([])
   const [activeQuickTool, setActiveQuickTool] = useState<QuickToolId>("extract")
   const [history, setHistory] = useState<HistoryEntry[]>(loadGenerateHistory)
+  const [keyIssues, setKeyIssues] = useState<KeyIssueReport[]>([])
   const [currentGenerationResult, setCurrentGenerationResult] = useState<GenerateResult | null>(null)
   const quickPreviewActive = activeView === "quick-tools" && activeQuickTool === "extract" && quickPreviewLayers.length > 0
   const stackPlayback = activeView === "generate" || quickPreviewActive
@@ -2741,11 +2916,29 @@ export function App() {
     if (overview) setLibrary(overview)
   }, [])
 
+  const refreshKeyIssues = useCallback(async () => {
+    const issues = await window.stemSlicer?.getKeyIssueReports()
+    if (issues) setKeyIssues(issues)
+  }, [])
+
+  const reportKeyIssue = useCallback(async (request: ReportKeyIssueRequest) => {
+    const issues = await window.stemSlicer?.reportKeyIssue(request)
+    if (!issues) throw new Error("The desktop key-feedback service is unavailable.")
+    setKeyIssues(issues)
+  }, [])
+
+  const updateKeyIssueState = useCallback(async (issueId: string, active: boolean) => {
+    const issues = await window.stemSlicer?.setKeyIssueActive(issueId, active)
+    if (!issues) throw new Error("The desktop key-feedback service is unavailable.")
+    setKeyIssues(issues)
+  }, [])
+
   useEffect(() => {
     const api = window.stemSlicer
     if (!api) return
     void refreshLibrary()
-  }, [refreshLibrary])
+    void refreshKeyIssues()
+  }, [refreshKeyIssues, refreshLibrary])
 
   useEffect(() => {
     try {
@@ -2797,9 +2990,9 @@ export function App() {
         </div>
         <main id="main-content" tabIndex={-1} ref={mainRef} className={cn(activeView === "generate" && "generate-main", activeView === "quick-tools" && "quick-tools-main", activeView === "stem-slicer" && "stem-slicer-main")}>
           <div hidden={activeView !== "stem-slicer"}><StemSlicerView /></div>
-          <div hidden={activeView !== "generate"}><GenerateView library={library} layers={layers} setLayers={setLayers} currentGenerationResult={currentGenerationResult} setCurrentGenerationResult={setCurrentGenerationResult} onAddHistory={addHistory} onUpdateHistory={updateHistory} onLibraryRefresh={refreshLibrary} playback={playback} /></div>
+          <div hidden={activeView !== "generate"}><GenerateView library={library} layers={layers} setLayers={setLayers} currentGenerationResult={currentGenerationResult} setCurrentGenerationResult={setCurrentGenerationResult} onAddHistory={addHistory} onUpdateHistory={updateHistory} keyIssues={keyIssues} onReportKeyIssue={reportKeyIssue} onSetKeyIssueActive={updateKeyIssueState} onLibraryRefresh={refreshLibrary} playback={playback} /></div>
           <div hidden={activeView !== "quick-tools"}><QuickToolsView previewLayers={quickPreviewLayers} setPreviewLayers={setQuickPreviewLayers} playback={playback} onActiveToolChange={setActiveQuickTool} /></div>
-          <div hidden={activeView !== "history"}><HistoryView history={history} playback={playback} onReopen={reopenHistory} onTrash={trashHistory} /></div>
+          <div hidden={activeView !== "history"}><HistoryView history={history} keyIssues={keyIssues} playback={playback} onReopen={reopenHistory} onTrash={trashHistory} onSetKeyIssueActive={updateKeyIssueState} /></div>
           <div hidden={activeView !== "cloud"}><CloudView /></div>
         </main>
         <GlobalPlayer layers={playerLayers} playback={playback} contextLabel={activeView === "history" ? "History generation" : quickPreviewActive ? "Extracted stack" : "Generated stack"} />

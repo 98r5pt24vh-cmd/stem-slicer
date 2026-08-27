@@ -804,14 +804,28 @@ def library_scan(job_id: str, payload: dict) -> dict:
     }
 
 
-def generation_artifacts(rendered, request, midi_by_identity: dict[str, str] | None = None) -> list[dict]:
+def generation_artifacts(
+    rendered,
+    request,
+    midi_by_identity: dict[str, str] | None = None,
+    source_metadata_by_path: dict[str, dict] | None = None,
+) -> list[dict]:
     duration = rendered.timeline.loop_frames / rendered.timeline.sample_rate
     artifacts = []
     midi_paths = midi_by_identity or {}
+    metadata_by_path = source_metadata_by_path or {}
     for stem in rendered.stem_results:
         selection = stem.selection
+        source_path = str(selection.candidate.path.resolve())
+        source_metadata = metadata_by_path.get(source_path, {})
         alternate = selection.candidate.alternate_scanned_key
         alternate_mode = selection.candidate.alternate_scanned_mode or ""
+        detected_key = selection.candidate.scanned_key or selection.candidate.source_key
+        detected_mode = (
+            selection.candidate.scanned_mode
+            if selection.candidate.scanned_key
+            else selection.candidate.source_mode
+        )
         artifact = artifact_payload(
             stem.output_path,
             bpm=int(round(request.plan.request.target_bpm)),
@@ -825,6 +839,12 @@ def generation_artifacts(rendered, request, midi_by_identity: dict[str, str] | N
         artifact.update(
             {
                 "identity": selection.candidate.identity,
+                "sourceFile": selection.candidate.path.name,
+                "sourceLoopId": selection.candidate.source_loop_id,
+                "libraryRoot": source_metadata.get("library_root"),
+                "sourceDetectedKey": " ".join(
+                    item for item in (detected_key, detected_mode) if item
+                ),
                 "sourceKeyRank": selection.source_key_rank,
                 "octave": int(selection.manual_pitch_semitones // 12),
                 "locked": (
@@ -862,9 +882,38 @@ def generation(job_id: str, payload: dict) -> dict:
     with sqlite3.connect(f"file:{database}?mode=ro", uri=True) as connection:
         connection.row_factory = sqlite3.Row
         records = [dict(row) for row in connection.execute(query, parameters)]
+    excluded_source_loops = {
+        (
+            str(Path(str(item.get("libraryRoot") or "")).expanduser().resolve()),
+            str(item.get("sourceLoopId") or "").strip(),
+        )
+        for item in payload.get("excludedSourceLoops") or ()
+        if isinstance(item, dict)
+        and str(item.get("libraryRoot") or "").strip()
+        and str(item.get("sourceLoopId") or "").strip()
+    }
+    quarantined_count = 0
+    if excluded_source_loops:
+        eligible_records = []
+        for record in records:
+            source_identity = (
+                str(Path(str(record.get("library_root") or "")).expanduser().resolve()),
+                str(record.get("source_loop_id") or "").strip(),
+            )
+            if source_identity in excluded_source_loops:
+                quarantined_count += 1
+            else:
+                eligible_records.append(record)
+        records = eligible_records
     if not records:
         raise ValueError("No layer is available in the selected libraries.")
-    progress_percent(job_id, f"Loaded {len(records)} indexed layers", 3, "selection")
+    quarantine_label = f" · {quarantined_count} quarantined" if quarantined_count else ""
+    progress_percent(
+        job_id,
+        f"Loaded {len(records)} indexed layers{quarantine_label}",
+        3,
+        "selection",
+    )
     categories = tuple(str(item) for item in payload.get("categories") or ())
     request = GenerationRequest(
         categories=categories,
@@ -878,6 +927,11 @@ def generation(job_id: str, payload: dict) -> dict:
     )
     candidates = []
     skipped = 0
+    source_metadata_by_path = {
+        str(Path(str(record.get("path") or "")).expanduser().resolve()): record
+        for record in records
+        if record.get("path")
+    }
     for record in records:
         if not Path(str(record.get("path") or "")).is_file():
             skipped += 1
@@ -973,7 +1027,11 @@ def generation(job_id: str, payload: dict) -> dict:
         backend=ReportingBackend(),
         encoder=ReportingEncoder(),
     )
-    artifacts = generation_artifacts(rendered, render_request)
+    artifacts = generation_artifacts(
+        rendered,
+        render_request,
+        source_metadata_by_path=source_metadata_by_path,
+    )
     add_midi(job_id, artifacts, "midi", start_percent=80, end_percent=99)
     midi_by_identity = {
         str(artifact.get("identity")): str(artifact["midiPath"])
@@ -985,6 +1043,7 @@ def generation(job_id: str, payload: dict) -> dict:
         "request": render_request,
         "result": rendered,
         "midi": midi_by_identity,
+        "source_metadata": source_metadata_by_path,
     }
     while len(_generation_sessions) > 4:
         _generation_sessions.pop(next(iter(_generation_sessions)))
@@ -1066,7 +1125,12 @@ def generation_update(job_id: str, payload: dict) -> dict:
         )
     os.replace(staged_midi, midi_target)
     midi_by_identity[identity] = str(midi_target)
-    artifacts = generation_artifacts(updated_result, updated_request, midi_by_identity)
+    artifacts = generation_artifacts(
+        updated_result,
+        updated_request,
+        midi_by_identity,
+        session.get("source_metadata") or {},
+    )
     session.update({"request": updated_request, "result": updated_result, "midi": midi_by_identity})
     progress(job_id, "Layer update complete", 3, 3, "complete")
     return {

@@ -108,6 +108,10 @@ export interface GenerateJobRequest {
   bars?: number
   lockedIdentitiesBySlot?: Array<string | null>
   excludedIdentities?: string[]
+  excludedSourceLoops?: Array<{
+    libraryRoot: string
+    sourceLoopId: string
+  }>
 }
 
 export interface GenerateUpdateJobRequest {
@@ -146,10 +150,48 @@ export interface AudioArtifact {
   category?: string
   alternateKey?: string
   sourcePath?: string
+  sourceFile?: string
+  sourceLoopId?: string
+  libraryRoot?: string
+  sourceDetectedKey?: string
   identity?: string
   sourceKeyRank?: 1 | 2
   octave?: -1 | 0 | 1
   locked?: boolean
+}
+
+export interface KeyIssueAffectedLayer {
+  identity: string
+  path: string
+  file: string
+  detectedKey: string
+}
+
+export interface KeyIssueReport {
+  id: string
+  libraryRoot: string
+  sourceLoopId: string
+  reportedIdentity: string
+  reportedPath: string
+  reportedFile: string
+  detectedKey: string
+  targetKey: string
+  generationOutputDirectory: string
+  createdAt: string
+  resolvedAt?: string
+  active: boolean
+  affectedLayers: KeyIssueAffectedLayer[]
+}
+
+export interface ReportKeyIssueRequest {
+  libraryRoot: string
+  sourceLoopId: string
+  reportedIdentity: string
+  reportedPath: string
+  reportedFile: string
+  detectedKey: string
+  targetKey: string
+  generationOutputDirectory: string
 }
 
 export interface QuickScanResult {
@@ -253,6 +295,9 @@ export interface StemSlicerDesktopApi {
   getEnvironment: () => Promise<AppEnvironment>
   getLibraryOverview: () => Promise<LibraryOverview>
   removeLibraryRoot: (libraryRoot: string) => Promise<LibraryOverview>
+  getKeyIssueReports: () => Promise<KeyIssueReport[]>
+  reportKeyIssue: (request: ReportKeyIssueRequest) => Promise<KeyIssueReport[]>
+  setKeyIssueActive: (issueId: string, active: boolean) => Promise<KeyIssueReport[]>
   getMigrationModules: () => Promise<MigrationModule[]>
   getEngineStatus: () => Promise<EngineStatus>
   pickLibraryFolder: () => Promise<AudioSelection>
