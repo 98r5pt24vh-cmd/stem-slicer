@@ -10,6 +10,7 @@ import {
   Cloud,
   CloudCog,
   Database,
+  Dices,
   FolderCog,
   FolderOpen,
   History,
@@ -50,6 +51,7 @@ import {
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { basename, cn, formatCount } from "@/lib/utils"
+import { keyFamilyForKey, keyFromFamily, randomKeyOutsidePreviousFamily, TARGET_KEY_FAMILIES } from "@/lib/random-key"
 import { AUDIO_START_AHEAD_SECONDS, SharedWebAudioEngine, transportProgress } from "@/renderer/shared-web-audio-engine"
 import type {
   AudioArtifact,
@@ -141,37 +143,6 @@ const NAVIGATION: NavItem[] = [
   { id: "history", label: "History", icon: History },
   { id: "cloud", label: "Connected Libraries", icon: Cloud, badge: "WIP" },
 ]
-
-const TARGET_KEY_FAMILIES = [
-  "C major / A minor", "C♯ major / A♯ minor", "D major / B minor",
-  "D♯ major / C minor", "E major / C♯ minor", "F major / D minor",
-  "F♯ major / D♯ minor", "G major / E minor", "G♯ major / F minor",
-  "A major / F♯ minor", "A♯ major / G minor", "B major / G♯ minor",
-]
-
-const ENHARMONIC_SHARPS: Record<string, string> = {
-  "D♭": "C♯",
-  "E♭": "D♯",
-  "G♭": "F♯",
-  "A♭": "G♯",
-  "B♭": "A♯",
-}
-
-function normalizeKeyName(value: string): string {
-  const [tonic, mode] = value.trim().split(/\s+/, 2)
-  return `${ENHARMONIC_SHARPS[tonic] ?? tonic} ${mode ?? ""}`.trim()
-}
-
-function keyFamilyForKey(keyName: string): string {
-  const normalizedKey = normalizeKeyName(keyName)
-  return TARGET_KEY_FAMILIES.find((family) => family.split("/").some((member) => normalizeKeyName(member) === normalizedKey))
-    ?? TARGET_KEY_FAMILIES[0]
-}
-
-function keyFromFamily(family: string, previousKey: string): string {
-  const members = family.split("/").map((member) => member.trim())
-  return previousKey.toLowerCase().endsWith(" minor") && members[1] ? members[1] : members[0]
-}
 
 const SHARP_CAMELOT_KEYS: Record<string, string> = {
   "1A": "G♯ minor", "2A": "D♯ minor", "3A": "A♯ minor", "4A": "F minor",
@@ -1659,6 +1630,7 @@ function GenerateView({
 }) {
   const [bpm, setBpm] = useState(140)
   const [keyName, setKeyName] = useState("F minor")
+  const [randomKeyEnabled, setRandomKeyEnabled] = useState(false)
   const [status, setStatus] = useState("Local Generate engine ready")
   const [selectionMessage, setSelectionMessage] = useState("")
   const [currentSeed, setCurrentSeed] = useState<number | null>(null)
@@ -1848,18 +1820,27 @@ function GenerateView({
       setStatus("No category is available for the current selection.")
       return
     }
+    let generationKey = keyName
+    if (randomKeyEnabled && seedOverride == null) {
+      const previousGenerationKey = currentGenerationResult?.targetKey ?? keyName
+      const randomFamily = keyFamilyForKey(randomKeyOutsidePreviousFamily(previousGenerationKey))
+      generationKey = keyFromFamily(randomFamily, keyName)
+      setKeyName(generationKey)
+    }
     const seed = seedOverride ?? crypto.getRandomValues(new Uint32Array(1))[0]
     if (currentSeed !== seed) {
       setPreviousSeed(currentSeed)
       setCurrentSeed(seed)
     }
-    setStatus("Selecting and rendering real layers…")
+    setStatus(randomKeyEnabled && seedOverride == null
+      ? `Random key · ${generationKey} · selecting and rendering real layers…`
+      : "Selecting and rendering real layers…")
     void generateJob.start({
       databasePath: library.databasePath,
       libraryRoots: selectedLibraryPaths,
       categories: requestedCategories,
       targetBpm: bpm,
-      targetKey: keyName,
+      targetKey: generationKey,
       seed,
       bars: 8,
       lockedIdentitiesBySlot: layers.map((layer) => layer.locked && layer.identity ? layer.identity : null),
@@ -2005,6 +1986,23 @@ function GenerateView({
           <Select id="target-key" label="Target key" value={keyFamilyForKey(keyName)} onChange={(family) => setKeyName(keyFromFamily(family, keyName))} options={TARGET_KEY_FAMILIES} forceBelow />
           <div className="generate-action">
             <span className="sr-only" aria-live="polite">{generateJob.error || (generateJob.busy ? generateJob.message : status)}</span>
+            <button
+              type="button"
+              className={cn("random-key-toggle", randomKeyEnabled && "is-active")}
+              disabled={generateJob.busy}
+              aria-pressed={randomKeyEnabled}
+              aria-label={randomKeyEnabled ? "Disable random key for new generations" : "Enable random key for new generations"}
+              title={randomKeyEnabled
+                ? "Random key enabled — each new generation avoids the previous relative-key family"
+                : "Randomize the key on each new generation"}
+              onClick={() => {
+                const nextEnabled = !randomKeyEnabled
+                setRandomKeyEnabled(nextEnabled)
+                setStatus(nextEnabled ? "Random key enabled" : "Random key disabled")
+              }}
+            >
+              <Dices aria-hidden="true" />
+            </button>
             <Button variant="outline" className="previous-seed-button" size="sm" disabled={generateJob.busy || previousSeed == null} onClick={() => previousSeed != null && handleGenerate(previousSeed)} title={previousSeed == null ? "No previous seed yet" : `Generate seed ${previousSeed}`}><RotateCcw /> Previous</Button>
           <Button className="hardware-button generate-hardware" size="lg" onClick={() => handleGenerate()} disabled={!generateJob.busy && selectedLibraryPaths.length === 0}>
               {generateJob.busy ? <X /> : <WandSparkles />}
