@@ -15,6 +15,7 @@ import {
   Dices,
   FolderCog,
   FolderOpen,
+  GripVertical,
   HardDrive,
   History,
   Layers3,
@@ -29,7 +30,6 @@ import {
   Repeat2,
   RotateCcw,
   ScanLine,
-  Settings2,
   Square,
   SkipBack,
   SlidersHorizontal,
@@ -45,6 +45,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import { Waveform } from "@/components/waveform"
+import { StudioWaveform } from "@/components/studio-waveform"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -57,6 +58,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { basename, cn, formatCount, formatDecimalBytes } from "@/lib/utils"
 import { compactKeyFamilyLabel, keyFamilyForKey, keyFromFamily, randomKeyOutsidePreviousFamily, TARGET_KEY_FAMILIES } from "@/lib/random-key"
+import { studioLayerName } from "@/lib/source-loop-name"
 import { AUDIO_START_AHEAD_SECONDS, SharedWebAudioEngine, transportProgress } from "@/renderer/shared-web-audio-engine"
 import type {
   AudioArtifact,
@@ -1241,9 +1243,6 @@ function AppSidebar({
           <strong>Electron prototype</strong>
           <span>Local engine · 1.9B cache</span>
         </div>
-        <Button variant="ghost" size="icon" aria-label="Ouvrir les réglages" title="Réglages">
-          <Settings2 />
-        </Button>
       </div>
     </aside>
   )
@@ -2447,7 +2446,8 @@ function StemSlicerView() {
                       onDrop={() => dropToken(token)}
                       aria-label={`${token}, position ${index + 1} of ${nameTokens.length}.`}
                     >
-                      <span aria-hidden="true">⠿</span>{token}
+                      <GripVertical className="naming-token-grip" aria-hidden="true" />
+                      <span>{token}</span>
                     </button>
                   ))}
                 </div>
@@ -2843,6 +2843,7 @@ function formatEditorPosition(progress: number) {
 }
 
 function SourceLoopStudio({
+  active,
   libraryRoot,
   sourceLoopId,
   issueId,
@@ -2851,6 +2852,7 @@ function SourceLoopStudio({
   onSaved,
   onClose,
 }: {
+  active: boolean
   libraryRoot: string
   sourceLoopId: string
   issueId: string
@@ -2871,6 +2873,7 @@ function SourceLoopStudio({
   const [excludedIdentities, setExcludedIdentities] = useState<Set<string>>(() => new Set())
   const [trackVolumes, setTrackVolumes] = useState<Map<string, number>>(() => new Map())
   const [selectedIdentity, setSelectedIdentity] = useState<string | undefined>()
+  const [expandedTrackNameIdentity, setExpandedTrackNameIdentity] = useState<string | undefined>()
   const [progress, setProgress] = useState(0)
   const progressRef = useRef(0)
   const engineRef = useRef<SourceLoopPreviewEngine | null>(null)
@@ -2911,6 +2914,7 @@ function SourceLoopStudio({
     setExcludedIdentities(new Set())
     setTrackVolumes(new Map())
     setSoloIdentity(undefined)
+    setExpandedTrackNameIdentity(undefined)
     setLoopEnabled(true)
     setProgress(0)
     void api.getSourceLoopEditor(libraryRoot, sourceLoopId)
@@ -2982,6 +2986,12 @@ function SourceLoopStudio({
   }, [activeLayers, draft, loopEnabled, mutedIdentities, pausePreview, soloIdentity, trackVolumes])
 
   useEffect(() => {
+    if (active) return
+    pausePreview()
+  }, [active, pausePreview])
+
+  useEffect(() => {
+    if (!active) return
     const handleStudioSpace = (event: KeyboardEvent) => {
       if (event.code !== "Space" || event.repeat) return
       const target = event.target instanceof HTMLElement ? event.target : null
@@ -2993,7 +3003,7 @@ function SourceLoopStudio({
     }
     document.addEventListener("keydown", handleStudioSpace, true)
     return () => document.removeEventListener("keydown", handleStudioSpace, true)
-  }, [pausePreview, playing, startPreview])
+  }, [active, pausePreview, playing, startPreview])
 
   const patchLayer = (identity: string, update: Partial<SourceLoopEditorLayer>) => {
     setDraft((current) => current ? {
@@ -3075,6 +3085,7 @@ function SourceLoopStudio({
       return next
     })
     if (soloIdentity === identity) setSoloIdentity(undefined)
+    if (expandedTrackNameIdentity === identity) setExpandedTrackNameIdentity(undefined)
     if (selectedIdentity === identity) {
       setSelectedIdentity(activeLayers.find((layer) => layer.identity !== identity)?.identity)
     }
@@ -3204,7 +3215,13 @@ function SourceLoopStudio({
                       const isMuted = mutedIdentities.has(layer.identity)
                       const isSelected = selectedIdentity === layer.identity
                       const trackVolume = trackVolumes.get(layer.identity) ?? 100
-                      const sourceProgress = Math.max(0, Math.min(1, (progress * EDITOR_BEATS - layer.offsetBeats + layer.trimStartBeats) / sourceBeats))
+                      const displayName = studioLayerName({
+                        file: layer.file,
+                        bpm: draft.bpm,
+                        keyName: draft.keyName,
+                        layerIndex: layer.layerIndex ?? index + 1,
+                      })
+                      const nameTooltipId = `studio-track-name-${dialogSlug}-${index}`
                       const sourceWaveWidth = sourceBeats / visibleBeats * 100
                       const sourceWaveOffset = -layer.trimStartBeats / visibleBeats * 100
                       const maximumOffset = Math.max(0, EDITOR_BEATS - usableBeats)
@@ -3213,27 +3230,41 @@ function SourceLoopStudio({
                           <div className="mini-daw-track-meta">
                             <span className="mini-daw-track-number">{String(index + 1).padStart(2, "0")}</span>
                             <div className="mini-daw-track-head">
-                              <button
-                                type="button"
-                                className="mini-daw-track-remove"
-                                disabled={saving || activeLayers.length <= 1}
-                                aria-label={`Exclude ${layer.file} from the library when changes are saved`}
-                                title={activeLayers.length <= 1 ? "A source loop must keep at least one layer" : "Exclude this layer on save"}
-                                onClick={() => excludeLayer(layer.identity)}
-                              >
-                                <X aria-hidden="true" />
-                              </button>
-                              <span className="mini-daw-track-copy"><strong title={layer.file}>{layer.file}</strong></span>
-                              <span className="mini-daw-track-duration">{layer.duration.toFixed(1)} s</span>
+                              <div className="mini-daw-track-name">
+                                <button
+                                  type="button"
+                                  className="mini-daw-track-copy"
+                                  aria-expanded={expandedTrackNameIdentity === layer.identity}
+                                  aria-controls={nameTooltipId}
+                                  onClick={() => setExpandedTrackNameIdentity((current) => current === layer.identity ? undefined : layer.identity)}
+                                >
+                                  <strong>{displayName.loopName}</strong>
+                                  <small>{displayName.layerLabel}</small>
+                                </button>
+                                <span id={nameTooltipId} className={cn("mini-daw-track-name-tooltip", expandedTrackNameIdentity === layer.identity && "is-open")}>
+                                  <strong>{displayName.fullLabel}</strong>
+                                  <small>{layer.duration.toFixed(1)} s</small>
+                                </span>
+                              </div>
                               <div className="mini-daw-track-mix">
-                                <button type="button" className={cn(isMuted && "is-active")} aria-pressed={isMuted} aria-label={`${isMuted ? "Unmute" : "Mute"} ${layer.file}`} onClick={() => toggleMute(layer.identity)}>M</button>
-                                <button type="button" className={cn(isSolo && "is-active")} aria-pressed={isSolo} aria-label={`${isSolo ? "Disable solo for" : "Solo"} ${layer.file}`} onClick={() => toggleSolo(layer.identity)}>S</button>
+                                <button type="button" className={cn(isMuted && "is-active")} aria-pressed={isMuted} aria-label={`${isMuted ? "Unmute" : "Mute"} ${displayName.fullLabel}`} onClick={() => toggleMute(layer.identity)}>M</button>
+                                <button type="button" className={cn(isSolo && "is-active")} aria-pressed={isSolo} aria-label={`${isSolo ? "Disable solo for" : "Solo"} ${displayName.fullLabel}`} onClick={() => toggleSolo(layer.identity)}>S</button>
                               </div>
                             </div>
+                            <button
+                              type="button"
+                              className="mini-daw-track-remove"
+                              disabled={saving || activeLayers.length <= 1}
+                              aria-label={`Exclude ${displayName.fullLabel} from the library when changes are saved`}
+                              title={activeLayers.length <= 1 ? "A source loop must keep at least one layer" : "Exclude this layer on save"}
+                              onClick={() => excludeLayer(layer.identity)}
+                            >
+                              <X aria-hidden="true" />
+                            </button>
                             <div className="mini-daw-track-strip">
                               <div className="mini-daw-track-category"><LayerCategorySelect id={`editor-category-${layer.identity}`} value={layer.category} options={LAYER_CATEGORY_OPTIONS} disabled={saving} onChange={(category) => updateLayer(layer.identity, { category })} /></div>
                               <label className="mini-daw-track-volume" title={`Volume ${trackVolume}%`}>
-                                <span className="sr-only">Volume for {layer.file}</span>
+                                <span className="sr-only">Volume for {displayName.fullLabel}</span>
                                 <input type="range" min="0" max="125" value={trackVolume} onChange={(event) => updateTrackVolume(layer.identity, Number(event.target.value))} />
                               </label>
                             </div>
@@ -3338,7 +3369,7 @@ function SourceLoopStudio({
                                   className="mini-daw-wave-content"
                                   style={{ insetInlineStart: `${sourceWaveOffset}%`, width: `${sourceWaveWidth}%` }}
                                 >
-                                  <Waveform progress={sourceProgress} compact label={`${layer.file} editor waveform`} bars={layerPeaks} />
+                                  <StudioWaveform peaks={layerPeaks} />
                                 </div>
                               </div>
                               <span className="mini-daw-clip-label">{layer.category}</span>
@@ -3866,14 +3897,10 @@ export function App() {
   }, [studioActive])
 
   const navigateToView = useCallback((view: ViewId) => {
-    if (view === activeView) {
-      if (view === "history" && studioSource) setStudioSource(null)
-      return
-    }
+    if (view === activeView) return
     resetPlayback()
-    setStudioSource(null)
     setActiveView(view)
-  }, [activeView, resetPlayback, studioSource])
+  }, [activeView, resetPlayback])
 
   const openSourceLoopStudio = useCallback((issue: KeyIssueReport) => {
     resetPlayback()
@@ -3931,7 +3958,7 @@ export function App() {
           <div hidden={activeView !== "quick-tools"}><QuickToolsView previewLayers={quickPreviewLayers} setPreviewLayers={setQuickPreviewLayers} playback={playback} onActiveToolChange={setActiveQuickTool} /></div>
           <div hidden={activeView !== "history"} className={cn("history-workspace", studioActive && "is-studio")}>
             <div hidden={studioActive}><HistoryView history={history} keyIssues={keyIssues} playback={playback} onReopen={reopenHistory} onTrashSelected={trashHistoryEntries} onSetKeyIssueActive={updateKeyIssueState} onDismissKeyIssue={dismissKeyIssue} onEditSourceLoop={openSourceLoopStudio} /></div>
-            {studioSource ? <SourceLoopStudio {...studioSource} onSetKeyIssueActive={updateKeyIssueState} onSaved={async () => refreshLibrary()} onClose={closeSourceLoopStudio} /> : null}
+            {studioSource ? <SourceLoopStudio active={studioActive} {...studioSource} onSetKeyIssueActive={updateKeyIssueState} onSaved={async () => refreshLibrary()} onClose={closeSourceLoopStudio} /> : null}
           </div>
           <div hidden={activeView !== "cloud"}><CloudView /></div>
         </main>
