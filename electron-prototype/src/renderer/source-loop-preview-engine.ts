@@ -5,6 +5,7 @@ const BEATS_PER_BAR = 4
 const PEAK_COUNT = 110
 
 interface ActivePreviewNode {
+  identity: string
   source: AudioBufferSourceNode
   gain: GainNode
 }
@@ -12,10 +13,26 @@ interface ActivePreviewNode {
 export interface SourceLoopPreviewStart {
   startedAt: number
   duration: number
+  startOffset: number
+}
+
+export interface SourceLoopPreviewOptions {
+  mutedIdentities?: Iterable<string>
+  soloIdentity?: string
+  startOffset?: number
 }
 
 export function editorTimelineSeconds(bpm: number): number {
   return PREVIEW_BARS * BEATS_PER_BAR * 60 / bpm
+}
+
+export function editorTrackAudible(
+  identity: string,
+  mutedIdentities: ReadonlySet<string>,
+  soloIdentity?: string,
+): boolean {
+  if (soloIdentity) return identity === soloIdentity && !mutedIdentities.has(identity)
+  return !mutedIdentities.has(identity)
 }
 
 export function audioBufferPeaks(buffer: AudioBuffer, count = PEAK_COUNT): number[] {
@@ -52,7 +69,7 @@ export class SourceLoopPreviewEngine {
   async play(
     layers: SourceLoopEditorLayer[],
     bpm: number,
-    soloIdentity?: string,
+    options: SourceLoopPreviewOptions = {},
   ): Promise<SourceLoopPreviewStart> {
     this.stop()
     const context = this.ensureContext()
@@ -60,6 +77,8 @@ export class SourceLoopPreviewEngine {
     const duration = editorTimelineSeconds(bpm)
     const timelineFrames = Math.max(1, Math.round(duration * context.sampleRate))
     const startedAt = context.currentTime + 0.025
+    const startOffset = Math.max(0, Math.min(duration - Number.EPSILON, options.startOffset ?? 0))
+    const mutedIdentities = new Set(options.mutedIdentities ?? [])
 
     for (const layer of layers) {
       const decoded = await this.decode(layer)
@@ -70,13 +89,22 @@ export class SourceLoopPreviewEngine {
       source.loop = true
       source.loopStart = 0
       source.loopEnd = duration
-      gain.gain.value = soloIdentity && soloIdentity !== layer.identity ? 0 : 1
+      gain.gain.value = editorTrackAudible(layer.identity, mutedIdentities, options.soloIdentity) ? 1 : 0
       source.connect(gain)
       gain.connect(context.destination)
-      source.start(startedAt)
-      this.active.push({ source, gain })
+      source.start(startedAt, startOffset)
+      this.active.push({ identity: layer.identity, source, gain })
     }
-    return { startedAt, duration }
+    return { startedAt, duration, startOffset }
+  }
+
+  updateMix(mutedIdentities: Iterable<string>, soloIdentity?: string): void {
+    const muted = new Set(mutedIdentities)
+    const now = this.context?.currentTime ?? 0
+    for (const node of this.active) {
+      node.gain.gain.cancelScheduledValues(now)
+      node.gain.gain.setTargetAtTime(editorTrackAudible(node.identity, muted, soloIdentity) ? 1 : 0, now, 0.008)
+    }
   }
 
   stop(): void {

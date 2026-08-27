@@ -34,9 +34,9 @@ import {
   SlidersHorizontal,
   Sparkles,
   Trash2,
-  Tag,
   Unlock,
   Volume2,
+  VolumeX,
   WandSparkles,
   Wrench,
   X,
@@ -76,7 +76,7 @@ import type {
   SourceLoopEditorLayer,
   ViewId,
 } from "@/shared/contracts"
-import { SourceLoopPreviewEngine } from "@/renderer/source-loop-preview-engine"
+import { editorTimelineSeconds, SourceLoopPreviewEngine } from "@/renderer/source-loop-preview-engine"
 
 interface NavItem {
   id: ViewId
@@ -1266,105 +1266,40 @@ function PageHeader({
   )
 }
 
-function WrongKeyAction({
+function WrongLayerAction({
   layer,
   active,
   disabled,
-  onConfirm,
+  onReportKey,
+  onCorrectCategory,
+  onRestore,
 }: {
   layer: GeneratedLayer
   active: boolean
   disabled: boolean
-  onConfirm: () => void | Promise<void>
+  onReportKey: () => void | Promise<void>
+  onCorrectCategory: (category: string) => void | Promise<void>
+  onRestore: () => void | Promise<void>
 }) {
   const [open, setOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
-
-  const run = async () => {
-    setSaving(true)
-    setError("")
-    try {
-      await onConfirm()
-      setOpen(false)
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Unable to save the wrong-key report.")
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  if (active) {
-    return (
-      <button
-        type="button"
-        className="layer-mini-action layer-key-issue-action is-active"
-        disabled={disabled}
-        aria-pressed={true}
-        aria-label={`Réintégrer la loop source de ${layer.role} dans les générations`}
-        title="Loop source en quarantaine — sélectionner pour la réintégrer"
-        onClick={() => void run()}
-      >
-        <CircleX aria-hidden="true" /><span>Key</span>
-      </button>
-    )
-  }
-
-  return (
-    <Dialog.Root open={open} onOpenChange={(nextOpen) => { setOpen(nextOpen); if (!nextOpen) setError("") }}>
-      <Dialog.Trigger
-        className="layer-mini-action layer-key-issue-action"
-        disabled={disabled}
-        aria-label={`Signaler la clé de ${layer.role} comme incorrecte et exclure toute sa loop source`}
-        title="Wrong key — vérifier puis exclure toute la loop source"
-      >
-        <CircleX aria-hidden="true" /><span>Key</span>
-      </Dialog.Trigger>
-      <Dialog.Portal>
-        <Dialog.Backdrop className="dialog-backdrop" />
-        <Dialog.Viewport className="dialog-viewport">
-          <Dialog.Popup className="confirmation-dialog destructive-confirmation-dialog">
-            <span className="confirmation-dialog-icon"><AlertTriangle aria-hidden="true" /></span>
-            <Dialog.Title>Mark this source loop as wrong key?</Dialog.Title>
-            <Dialog.Description>
-              Every indexed layer from <strong>{layer.sourceFile ?? layer.file}</strong> will be quarantined. Any matching card will stop and disappear from this generation.
-            </Dialog.Description>
-            {error ? <p className="dialog-inline-error" role="alert">{error}</p> : null}
-            <footer>
-              <Dialog.Close className="dialog-cancel" disabled={saving}>Cancel</Dialog.Close>
-              <Button variant="destructive" disabled={saving} onClick={() => void run()}>
-                <CircleX aria-hidden="true" /> {saving ? "Saving…" : "Quarantine source loop"}
-              </Button>
-            </footer>
-          </Dialog.Popup>
-        </Dialog.Viewport>
-      </Dialog.Portal>
-    </Dialog.Root>
-  )
-}
-
-function CategoryCorrectionAction({
-  layer,
-  disabled,
-  onConfirm,
-}: {
-  layer: GeneratedLayer
-  disabled: boolean
-  onConfirm: (category: string) => void | Promise<void>
-}) {
-  const [open, setOpen] = useState(false)
+  const [wrongKey, setWrongKey] = useState(false)
+  const [wrongCategory, setWrongCategory] = useState(false)
   const [category, setCategory] = useState(layer.category)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState("")
 
   const run = async () => {
     setSaving(true)
     setError("")
     try {
-      await onConfirm(category)
+      if (active) await onRestore()
+      else {
+        if (wrongCategory) await onCorrectCategory(category)
+        if (wrongKey) await onReportKey()
+      }
       setOpen(false)
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Unable to save the category correction.")
+      setError(reason instanceof Error ? reason.message : "Unable to save this correction.")
     } finally {
       setSaving(false)
     }
@@ -1375,33 +1310,56 @@ function CategoryCorrectionAction({
       open={open}
       onOpenChange={(nextOpen) => {
         setOpen(nextOpen)
-        if (nextOpen) setCategory(layer.category)
-        else setError("")
+        setError("")
+        if (nextOpen) {
+          setWrongKey(false)
+          setWrongCategory(false)
+          setCategory(layer.category)
+        }
       }}
     >
       <Dialog.Trigger
-        className="layer-mini-action layer-category-correction-action"
+        className={cn("layer-mini-action layer-wrong-action", active && "is-active")}
         disabled={disabled}
-        aria-label={`Corriger la catégorie source de ${layer.role}`}
-        title="Wrong category — enregistrer une catégorie validée"
+        aria-pressed={active}
+        aria-label={active ? `La loop source de ${layer.role} est exclue` : `Signaler une erreur sur ${layer.role}`}
+        title={active ? "Wrong — source loop quarantined" : "Wrong — report a key or category error"}
       >
-        <Tag aria-hidden="true" /><span>Cat</span>
+        <CircleAlert aria-hidden="true" /><span>Wrong</span>
       </Dialog.Trigger>
       <Dialog.Portal>
         <Dialog.Backdrop className="dialog-backdrop" />
         <Dialog.Viewport className="dialog-viewport">
-          <Dialog.Popup className="confirmation-dialog category-correction-dialog">
-            <span className="confirmation-dialog-icon category"><Tag aria-hidden="true" /></span>
-            <Dialog.Title>Correct the source category</Dialog.Title>
-            <Dialog.Description>
-              This correction will immediately drive future generations and enter the local development truth ledger.
-            </Dialog.Description>
-            <Select id={`correct-category-${layer.id}`} label="Validated category" value={category} onChange={setCategory} options={LAYER_CATEGORY_OPTIONS} forceBelow />
+          <Dialog.Popup className="confirmation-dialog wrong-layer-dialog">
+            <span className="confirmation-dialog-icon"><CircleAlert aria-hidden="true" /></span>
+            <Dialog.Title>{active ? "This source loop is quarantined" : "What is wrong with this layer?"}</Dialog.Title>
+            <Dialog.Description>{active
+              ? `${layer.sourceFile ?? layer.file} is currently excluded from future generations.`
+              : "Select the incorrect information. Category corrections are saved immediately; a wrong key quarantines the complete source loop."}</Dialog.Description>
+            {!active ? (
+              <div className="wrong-layer-options">
+                <label className={cn("wrong-layer-option", wrongKey && "is-selected")}>
+                  <input type="checkbox" checked={wrongKey} onChange={(event) => setWrongKey(event.target.checked)} />
+                  <span><strong>Wrong key</strong><small>Exclude every indexed layer from this source loop.</small></span>
+                </label>
+                <label className={cn("wrong-layer-option", wrongCategory && "is-selected")}>
+                  <input type="checkbox" checked={wrongCategory} onChange={(event) => setWrongCategory(event.target.checked)} />
+                  <span><strong>Wrong category</strong><small>Choose the category that should drive future generations.</small></span>
+                </label>
+                {wrongCategory ? <Select id={`wrong-category-${layer.id}`} label="Correct category" value={category} onChange={setCategory} options={LAYER_CATEGORY_OPTIONS} forceBelow /> : null}
+                {wrongKey ? <p className="wrong-layer-warning"><AlertTriangle aria-hidden="true" /> Matching cards will stop and disappear after confirmation.</p> : null}
+              </div>
+            ) : null}
             {error ? <p className="dialog-inline-error" role="alert">{error}</p> : null}
             <footer>
               <Dialog.Close className="dialog-cancel" disabled={saving}>Cancel</Dialog.Close>
-              <Button disabled={saving || category === layer.category} onClick={() => void run()}>
-                <Check aria-hidden="true" /> {saving ? "Saving…" : "Save category"}
+              <Button
+                variant={active || wrongKey ? "destructive" : "default"}
+                disabled={saving || (!active && !wrongKey && (!wrongCategory || category === layer.category))}
+                onClick={() => void run()}
+              >
+                {active ? <Check aria-hidden="true" /> : <CircleAlert aria-hidden="true" />}
+                {saving ? "Saving…" : active ? "Restore source loop" : wrongKey ? "Save and quarantine loop" : "Save category"}
               </Button>
             </footer>
           </Dialog.Popup>
@@ -1428,12 +1386,15 @@ function LayerCard({
   onToggleAlternateKey,
   onToggleKeyIssue,
   onCorrectCategory,
+  onSourceEditSaved,
+  onSetKeyIssueActive,
   onToggleLock,
   onRemove,
   categoryOptions,
   canRemove,
   updating = false,
   keyIssueActive = false,
+  keyIssue,
   variant = "generate",
 }: {
   layer: GeneratedLayer
@@ -1452,12 +1413,15 @@ function LayerCard({
   onToggleAlternateKey?: () => void
   onToggleKeyIssue?: () => void | Promise<void>
   onCorrectCategory?: (category: string) => void | Promise<void>
+  onSourceEditSaved?: (editor: SourceLoopEditorData) => void | Promise<void>
+  onSetKeyIssueActive?: (issueId: string, active: boolean) => Promise<void>
   onToggleLock?: () => void
   onRemove?: () => void
   categoryOptions?: string[]
   canRemove?: boolean
   updating?: boolean
   keyIssueActive?: boolean
+  keyIssue?: KeyIssueReport
   variant?: "generate" | "extract"
 }) {
   const waveformScrubberRef = useRef<HTMLInputElement>(null)
@@ -1492,16 +1456,23 @@ function LayerCard({
           </CardDescription>
         </div>
         {isGenerateCard ? <div className="layer-card-actions">
-          <WrongKeyAction
+          <SourceLoopEditorDialog
+            libraryRoot={layer.libraryRoot}
+            sourceLoopId={layer.sourceLoopId}
+            issueId={keyIssue?.id}
+            issueActive={Boolean(keyIssue?.active)}
+            disabled={!layer.sourceLoopId || !layer.libraryRoot || updating}
+            compactTrigger
+            onSetKeyIssueActive={onSetKeyIssueActive}
+            onSaved={(editor) => onSourceEditSaved?.(editor)}
+          />
+          <WrongLayerAction
             layer={layer}
             active={keyIssueActive}
             disabled={!layer.identity || !layer.sourcePath || !layer.sourceLoopId || !layer.libraryRoot || updating}
-            onConfirm={() => onToggleKeyIssue?.()}
-          />
-          <CategoryCorrectionAction
-            layer={layer}
-            disabled={!layer.identity || !layer.sourcePath || !layer.sourceLoopId || !layer.libraryRoot || updating}
-            onConfirm={(category) => onCorrectCategory?.(category)}
+            onReportKey={() => onToggleKeyIssue?.()}
+            onCorrectCategory={(category) => onCorrectCategory?.(category)}
+            onRestore={() => onToggleKeyIssue?.()}
           />
           <button type="button" className={cn("layer-mini-action layer-lock-action", layer.locked && "is-active")} disabled={!layer.identity || updating} aria-pressed={Boolean(layer.locked)} aria-label={`${layer.locked ? "Libérer" : "Garder"} ${layer.role} pour la prochaine génération`} onClick={onToggleLock}>{layer.locked ? <Lock aria-hidden="true" /> : <Unlock aria-hidden="true" />}<span>Lock</span></button>
           <button type="button" className="layer-mini-action layer-remove-action" disabled={!canRemove || updating} aria-label={`Supprimer la card ${layer.role}`} onClick={onRemove}><X aria-hidden="true" /></button>
@@ -2123,6 +2094,30 @@ function GenerateView({
     await onLibraryRefresh()
   }
 
+  const applySourceLoopEditorSaved = async (slotIndex: number, editor: SourceLoopEditorData) => {
+    const layer = layers[slotIndex]
+    if (!layer) return
+    const editedSource = sourceLoopKey(editor.libraryRoot, editor.sourceLoopId)
+    const editedByIdentity = new Map(editor.layers.map((item) => [item.identity, item]))
+    const nextLayers = layers.map((item) => {
+      if (sourceLoopKey(item.libraryRoot, item.sourceLoopId) !== editedSource) return item
+      const editedLayer = item.identity ? editedByIdentity.get(item.identity) : undefined
+      return {
+        ...item,
+        bpm: editor.bpm,
+        keyName: editor.keyName,
+        category: editedLayer?.category ?? item.category,
+        role: editedLayer?.category ?? item.role,
+        locked: false,
+      }
+    })
+    setLayers(nextLayers)
+    if (currentGenerationResult) onUpdateHistory(currentGenerationResult, nextLayers)
+    setRecipeDirty(true)
+    setStatus(`Source loop edited · ${layer.sourceFile ?? layer.file}`)
+    await onLibraryRefresh()
+  }
+
   const removeLayerCard = (slotIndex: number) => {
     setRecipeDirty(true)
     setLayers((current) => current.length <= 1 ? current : current.filter((_, index) => index !== slotIndex))
@@ -2289,11 +2284,14 @@ function GenerateView({
                 onToggleAlternateKey={() => toggleAlternateKey(index)}
                 onToggleKeyIssue={() => toggleKeyIssue(index)}
                 onCorrectCategory={(category) => correctLayerCategory(index, category)}
+                onSourceEditSaved={(editor) => applySourceLoopEditorSaved(index, editor)}
+                onSetKeyIssueActive={onSetKeyIssueActive}
                 onToggleLock={() => toggleLayerLock(index)}
                 onRemove={() => removeLayerCard(index)}
                 categoryOptions={selectedCategories.map((category) => category.name)}
                 canRemove={layers.length > 1}
                 updating={generateUpdateJob.busy}
+                keyIssue={activeKeyIssueBySource.get(sourceLoopKey(layer.libraryRoot, layer.sourceLoopId))}
                 keyIssueActive={activeKeyIssueBySource.has(sourceLoopKey(layer.libraryRoot, layer.sourceLoopId))}
               />
             ))}
@@ -2867,14 +2865,46 @@ function trimmedEditorPeaks(peaks: number[] | undefined, layer: SourceLoopEditor
   return peaks.slice(start, Math.min(peaks.length, end))
 }
 
+function snapEditorBeat(value: number, minimum: number, maximum: number) {
+  const lower = Math.ceil(minimum * 4) / 4
+  const upper = Math.max(lower, Math.floor(maximum * 4) / 4)
+  return Math.max(lower, Math.min(upper, Math.round(value * 4) / 4))
+}
+
+function formatEditorClock(progress: number, bpm: number) {
+  const elapsed = progress * editorTimelineSeconds(bpm)
+  const minutes = Math.floor(elapsed / 60)
+  const seconds = Math.floor(elapsed % 60)
+  const milliseconds = Math.floor((elapsed % 1) * 1000)
+  return `${minutes}:${String(seconds).padStart(2, "0")}.${String(milliseconds).padStart(3, "0")}`
+}
+
+function formatEditorPosition(progress: number) {
+  const totalBeats = Math.min(EDITOR_BEATS - 0.001, Math.max(0, progress * EDITOR_BEATS))
+  const bar = Math.floor(totalBeats / 4) + 1
+  const beat = Math.floor(totalBeats % 4) + 1
+  const quarter = Math.floor((totalBeats % 1) * 4) + 1
+  return `${String(bar).padStart(2, "0")}.${beat}.${quarter}`
+}
+
 function SourceLoopEditorDialog({
-  issue,
+  libraryRoot,
+  sourceLoopId,
+  issueId,
+  issueActive = false,
+  disabled = false,
+  compactTrigger = false,
   onSetKeyIssueActive,
   onSaved,
 }: {
-  issue: KeyIssueReport
-  onSetKeyIssueActive: (issueId: string, active: boolean) => Promise<void>
-  onSaved: () => void | Promise<void>
+  libraryRoot?: string
+  sourceLoopId?: string
+  issueId?: string
+  issueActive?: boolean
+  disabled?: boolean
+  compactTrigger?: boolean
+  onSetKeyIssueActive?: (issueId: string, active: boolean) => Promise<void>
+  onSaved: (editor: SourceLoopEditorData) => void | Promise<void>
 }) {
   const [open, setOpen] = useState(false)
   const [draft, setDraft] = useState<SourceLoopEditorData | null>(null)
@@ -2884,24 +2914,25 @@ function SourceLoopEditorDialog({
   const [error, setError] = useState("")
   const [playing, setPlaying] = useState(false)
   const [soloIdentity, setSoloIdentity] = useState<string | undefined>()
+  const [mutedIdentities, setMutedIdentities] = useState<Set<string>>(() => new Set())
+  const [selectedIdentity, setSelectedIdentity] = useState<string | undefined>()
   const [progress, setProgress] = useState(0)
   const engineRef = useRef<SourceLoopPreviewEngine | null>(null)
   const animationRef = useRef<number | null>(null)
 
-  const stopPreview = useCallback(() => {
+  const pausePreview = useCallback(() => {
     engineRef.current?.stop()
     if (animationRef.current !== null) cancelAnimationFrame(animationRef.current)
     animationRef.current = null
     setPlaying(false)
-    setSoloIdentity(undefined)
-    setProgress(0)
   }, [])
 
   useEffect(() => {
     if (!open) return
     const api = window.stemSlicer
-    if (!api) {
+    if (!api || !libraryRoot || !sourceLoopId) {
       setError("The desktop source-loop editor is unavailable.")
+      setLoading(false)
       return
     }
     let cancelled = false
@@ -2911,10 +2942,14 @@ function SourceLoopEditorDialog({
     setError("")
     setDraft(null)
     setPeaks(new Map())
-    void api.getSourceLoopEditor(issue.libraryRoot, issue.sourceLoopId)
+    setMutedIdentities(new Set())
+    setSoloIdentity(undefined)
+    setProgress(0)
+    void api.getSourceLoopEditor(libraryRoot, sourceLoopId)
       .then(async (editor) => {
         if (cancelled) return
         setDraft(editor)
+        setSelectedIdentity(editor.layers[0]?.identity)
         try {
           const nextPeaks = await engine.prepare(editor.layers)
           if (!cancelled) setPeaks(nextPeaks)
@@ -2935,40 +2970,71 @@ function SourceLoopEditorDialog({
       void engine.close()
       if (engineRef.current === engine) engineRef.current = null
     }
-  }, [issue.libraryRoot, issue.sourceLoopId, open])
+  }, [libraryRoot, open, sourceLoopId])
 
-  const startPreview = async (nextSoloIdentity?: string) => {
+  const startPreview = async (startProgress = progress) => {
     if (!draft || !engineRef.current) return
-    stopPreview()
+    pausePreview()
     setError("")
     try {
-      const start = await engineRef.current.play(draft.layers, draft.bpm, nextSoloIdentity)
+      const duration = editorTimelineSeconds(draft.bpm)
+      const start = await engineRef.current.play(draft.layers, draft.bpm, {
+        mutedIdentities,
+        soloIdentity,
+        startOffset: startProgress * duration,
+      })
       setPlaying(true)
-      setSoloIdentity(nextSoloIdentity)
       const tick = () => {
         const engine = engineRef.current
         if (!engine) return
-        setProgress(Math.max(0, ((engine.currentTime - start.startedAt) % start.duration) / start.duration))
+        const elapsed = Math.max(0, engine.currentTime - start.startedAt)
+        setProgress(((start.startOffset + elapsed) % start.duration) / start.duration)
         animationRef.current = requestAnimationFrame(tick)
       }
       animationRef.current = requestAnimationFrame(tick)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to preview this source loop.")
-      stopPreview()
+      pausePreview()
     }
   }
 
-  const updateLayer = (identity: string, update: Partial<SourceLoopEditorLayer>) => {
-    stopPreview()
+  const patchLayer = (identity: string, update: Partial<SourceLoopEditorLayer>) => {
     setDraft((current) => current ? {
       ...current,
       layers: current.layers.map((layer) => layer.identity === identity ? { ...layer, ...update } : layer),
     } : current)
   }
 
+  const updateLayer = (identity: string, update: Partial<SourceLoopEditorLayer>) => {
+    pausePreview()
+    patchLayer(identity, update)
+  }
+
+  const seekPreview = (nextProgress: number) => {
+    const next = Math.max(0, Math.min(0.9999, nextProgress))
+    setProgress(next)
+    if (playing) void startPreview(next)
+  }
+
+  const toggleMute = (identity: string) => {
+    setMutedIdentities((current) => {
+      const next = new Set(current)
+      if (next.has(identity)) next.delete(identity)
+      else next.add(identity)
+      engineRef.current?.updateMix(next, soloIdentity)
+      return next
+    })
+  }
+
+  const toggleSolo = (identity: string) => {
+    const nextSolo = soloIdentity === identity ? undefined : identity
+    setSoloIdentity(nextSolo)
+    engineRef.current?.updateMix(mutedIdentities, nextSolo)
+  }
+
   const save = async () => {
     if (!draft) return
-    stopPreview()
+    pausePreview()
     setSaving(true)
     setError("")
     try {
@@ -2988,8 +3054,8 @@ function SourceLoopEditorDialog({
         })),
       })
       setDraft(saved)
-      if (issue.active) await onSetKeyIssueActive(issue.id, false)
-      await onSaved()
+      if (issueActive && issueId && onSetKeyIssueActive) await onSetKeyIssueActive(issueId, false)
+      await onSaved(saved)
       setOpen(false)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to save the source loop edits.")
@@ -2998,18 +3064,33 @@ function SourceLoopEditorDialog({
     }
   }
 
+  const dialogSlug = (issueId ?? sourceLoopId ?? "source-loop").replace(/[^a-z0-9_-]/gi, "-")
+
   return (
-    <Dialog.Root open={open} onOpenChange={(nextOpen) => { setOpen(nextOpen); if (!nextOpen) stopPreview() }}>
-      <Dialog.Trigger className="source-loop-edit-trigger"><Pencil aria-hidden="true" /> Edit</Dialog.Trigger>
+    <Dialog.Root
+      open={open}
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen)
+        if (!nextOpen) {
+          pausePreview()
+          setProgress(0)
+          setSoloIdentity(undefined)
+          setMutedIdentities(new Set())
+        }
+      }}
+    >
+      <Dialog.Trigger className={compactTrigger ? "layer-mini-action layer-edit-action" : "source-loop-edit-trigger"} disabled={disabled}>
+        <Pencil aria-hidden="true" /><span>Edit</span>
+      </Dialog.Trigger>
       <Dialog.Portal>
         <Dialog.Backdrop className="dialog-backdrop" />
         <Dialog.Viewport className="dialog-viewport source-loop-editor-viewport">
           <Dialog.Popup className="source-loop-editor-dialog">
             <header className="source-loop-editor-header">
               <div>
-                <p className="eyebrow">Source loop editor · 8 bars</p>
-                <Dialog.Title>{issue.sourceLoopId}</Dialog.Title>
-                <Dialog.Description>Correct musical metadata, categories, trims and timing without changing the source files.</Dialog.Description>
+                <p className="eyebrow">Source loop studio · 8 bars</p>
+                <Dialog.Title>{sourceLoopId ?? "Source loop"}</Dialog.Title>
+                <Dialog.Description>Edit the indexed layers directly on the timeline. Source audio remains untouched.</Dialog.Description>
               </div>
               <Dialog.Close className="dialog-close" aria-label="Close source loop editor"><X aria-hidden="true" /></Dialog.Close>
             </header>
@@ -3018,55 +3099,72 @@ function SourceLoopEditorDialog({
             {draft ? (
               <>
                 <section className="source-loop-editor-toolbar" aria-label="Loop settings and preview transport">
-                  <label className="mini-daw-number-field">
-                    <span>Source BPM</span>
-                    <Input type="number" min="40" max="300" value={draft.bpm} onChange={(event) => { stopPreview(); setDraft({ ...draft, bpm: Number(event.target.value) }) }} />
-                  </label>
-                  <Select id={`source-loop-key-${issue.id}`} label="Validated key" value={draft.keyName} onChange={(keyName) => { stopPreview(); setDraft({ ...draft, keyName }) }} options={EXACT_KEY_OPTIONS} forceBelow />
                   <div className="mini-daw-transport">
-                    <Button variant={playing && !soloIdentity ? "success" : "outline"} onClick={() => playing ? stopPreview() : void startPreview()}>
-                      {playing && !soloIdentity ? <Pause aria-hidden="true" /> : <Play className="play-glyph" aria-hidden="true" />}
-                      {playing && !soloIdentity ? "Stop preview" : "Preview loop"}
-                    </Button>
-                    <Badge variant="secondary"><Repeat2 aria-hidden="true" /> Looped</Badge>
+                    <button type="button" aria-label="Return to beginning" onClick={() => { pausePreview(); setProgress(0) }}><SkipBack aria-hidden="true" /></button>
+                    <button type="button" className={cn("mini-daw-primary-play", playing && "is-active")} aria-label={playing ? "Pause preview" : "Play preview"} onClick={() => playing ? pausePreview() : void startPreview()}>
+                      {playing ? <Pause aria-hidden="true" /> : <Play className="play-glyph" aria-hidden="true" />}
+                    </button>
+                    <span className="mini-daw-time" aria-live="off"><b>{formatEditorClock(progress, draft.bpm)}</b><i>{formatEditorPosition(progress)}</i></span>
+                    <span className="mini-daw-loop-state"><Repeat2 aria-hidden="true" /> Loop</span>
                   </div>
-                  <p>Drag clips to move them. Trim values and positions snap to ¼ beat.</p>
+                  <div className="mini-daw-project-settings">
+                    <label className="mini-daw-number-field"><span>BPM</span><Input type="number" min="40" max="300" value={draft.bpm} onChange={(event) => { pausePreview(); setDraft({ ...draft, bpm: Number(event.target.value) }) }} /></label>
+                    <Select id={`source-loop-key-${dialogSlug}`} label="Key" value={draft.keyName} onChange={(keyName) => { pausePreview(); setDraft({ ...draft, keyName }) }} options={EXACT_KEY_OPTIONS} forceBelow />
+                  </div>
                 </section>
 
                 <section className="mini-daw" aria-label="Eight-bar source loop timeline">
-                  <div className="mini-daw-ruler" aria-hidden="true">
-                    <span />
-                    <div>{Array.from({ length: 9 }, (_, index) => <i key={index} style={{ insetInlineStart: `${index * 12.5}%` }}>{index < 8 ? index + 1 : "End"}</i>)}</div>
+                  <div className="mini-daw-ruler">
+                    <div className="mini-daw-track-list-header"><SlidersHorizontal aria-hidden="true" /><span>Tracks</span><small>{draft.layers.length}</small></div>
+                    <div
+                      className="mini-daw-timeline-ruler"
+                      aria-label="Timeline ruler"
+                      onPointerDown={(event) => {
+                        const bounds = event.currentTarget.getBoundingClientRect()
+                        if (bounds.width > 0) seekPreview((event.clientX - bounds.left) / bounds.width)
+                      }}
+                    >
+                      {Array.from({ length: 9 }, (_, index) => <i key={index} style={{ insetInlineStart: `${index * 12.5}%` }}>{index < 8 ? index + 1 : "End"}</i>)}
+                    </div>
                   </div>
                   <div className="mini-daw-tracks">
-                    {draft.layers.map((layer) => {
+                    {draft.layers.map((layer, index) => {
                       const sourceBeats = Math.max(0.25, layer.duration * draft.bpm / 60)
                       const usableBeats = Math.max(0.25, sourceBeats - layer.trimStartBeats - layer.trimEndBeats)
                       const visibleBeats = Math.max(0.25, Math.min(usableBeats, EDITOR_BEATS - layer.offsetBeats))
                       const left = Math.min(100, layer.offsetBeats / EDITOR_BEATS * 100)
                       const width = Math.max(1, visibleBeats / EDITOR_BEATS * 100)
                       const layerPeaks = trimmedEditorPeaks(peaks.get(layer.identity), layer, draft.bpm)
-                      const isSolo = playing && soloIdentity === layer.identity
+                      const isSolo = soloIdentity === layer.identity
+                      const isMuted = mutedIdentities.has(layer.identity)
+                      const isSelected = selectedIdentity === layer.identity
+                      const clipProgress = Math.max(0, Math.min(1, (progress * EDITOR_BEATS - layer.offsetBeats) / visibleBeats))
+                      const maximumOffset = Math.max(0, EDITOR_BEATS - usableBeats)
                       return (
-                        <article className={cn("mini-daw-track", isSolo && "is-solo")} key={layer.identity}>
+                        <article className={cn("mini-daw-track", isSolo && "is-solo", isMuted && "is-muted", isSelected && "is-selected")} key={layer.identity} aria-label={`Track ${index + 1}: ${layer.file}`}>
                           <div className="mini-daw-track-meta">
-                            <button type="button" className={cn("mini-daw-track-play", isSolo && "is-active")} aria-label={isSolo ? `Stop ${layer.file} preview` : `Preview ${layer.file} alone`} onClick={() => isSolo ? stopPreview() : void startPreview(layer.identity)}>
-                              {isSolo ? <Pause aria-hidden="true" /> : <Play className="play-glyph" aria-hidden="true" />}
-                            </button>
-                            <span><strong title={layer.file}>{layer.file}</strong><small>{layer.layerIndex ? `Layer ${layer.layerIndex}` : "Indexed layer"} · {layer.duration.toFixed(1)} s</small></span>
+                            <span className="mini-daw-track-number">{String(index + 1).padStart(2, "0")}</span>
+                            <span className="mini-daw-track-copy"><strong title={layer.file}>{layer.file}</strong><small>{layer.layerIndex ? `Layer ${layer.layerIndex}` : "Indexed layer"} · {layer.duration.toFixed(1)} s</small></span>
+                            <div className="mini-daw-track-category"><LayerCategorySelect id={`editor-category-${layer.identity}`} value={layer.category} options={LAYER_CATEGORY_OPTIONS} disabled={saving} onChange={(category) => updateLayer(layer.identity, { category })} /></div>
+                            <div className="mini-daw-track-mix">
+                              <button type="button" className={cn(isMuted && "is-active")} aria-pressed={isMuted} aria-label={`${isMuted ? "Unmute" : "Mute"} ${layer.file}`} onClick={() => toggleMute(layer.identity)}>{isMuted ? <VolumeX aria-hidden="true" /> : <Volume2 aria-hidden="true" />}</button>
+                              <button type="button" className={cn(isSolo && "is-active")} aria-pressed={isSolo} aria-label={`${isSolo ? "Disable solo for" : "Solo"} ${layer.file}`} onClick={() => toggleSolo(layer.identity)}>S</button>
+                            </div>
                           </div>
-                          <div className="mini-daw-lane">
+                          <div
+                            className="mini-daw-lane"
+                            onPointerDown={(event) => {
+                              const bounds = event.currentTarget.getBoundingClientRect()
+                              if (bounds.width > 0) seekPreview((event.clientX - bounds.left) / bounds.width)
+                            }}
+                          >
                             <span className="mini-daw-playhead" style={{ insetInlineStart: `${progress * 100}%` }} aria-hidden="true" />
                             <div
-                              className="mini-daw-clip"
+                              className={cn("mini-daw-clip", isSelected && "is-selected")}
                               style={{ insetInlineStart: `${left}%`, width: `${width}%` }}
-                              role="slider"
+                              role="group"
                               tabIndex={0}
-                              aria-label={`Position de ${layer.file}`}
-                              aria-valuemin={0}
-                              aria-valuemax={31.75}
-                              aria-valuenow={layer.offsetBeats}
-                              aria-valuetext={`${layer.offsetBeats} beats from the loop start`}
+                              aria-label={`${layer.file} audio clip, starts at beat ${layer.offsetBeats}. Use Left and Right arrows to move it.`}
                               onKeyDown={(event) => {
                                 if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return
                                 event.preventDefault()
@@ -3074,14 +3172,16 @@ function SourceLoopEditorDialog({
                                 const nextOffset = event.key === "Home"
                                   ? 0
                                   : event.key === "End"
-                                    ? 31.75
-                                    : Math.max(0, Math.min(31.75, layer.offsetBeats + (event.key === "ArrowRight" ? step : -step)))
-                                updateLayer(layer.identity, { offsetBeats: Math.round(nextOffset * 4) / 4 })
+                                    ? maximumOffset
+                                    : snapEditorBeat(layer.offsetBeats + (event.key === "ArrowRight" ? step : -step), 0, maximumOffset)
+                                updateLayer(layer.identity, { offsetBeats: nextOffset })
                               }}
                               onPointerDown={(event) => {
                                 if (event.button !== 0) return
                                 event.preventDefault()
-                                stopPreview()
+                                event.stopPropagation()
+                                pausePreview()
+                                setSelectedIdentity(layer.identity)
                                 const clip = event.currentTarget
                                 const lane = clip.parentElement?.getBoundingClientRect()
                                 if (!lane || lane.width <= 0) return
@@ -3090,8 +3190,7 @@ function SourceLoopEditorDialog({
                                 clip.setPointerCapture(event.pointerId)
                                 const move = (moveEvent: PointerEvent) => {
                                   const deltaBeats = (moveEvent.clientX - initialX) / lane.width * EDITOR_BEATS
-                                  const nextOffset = Math.max(0, Math.min(EDITOR_BEATS - 0.25, Math.round((initialOffset + deltaBeats) * 4) / 4))
-                                  updateLayer(layer.identity, { offsetBeats: nextOffset })
+                                  patchLayer(layer.identity, { offsetBeats: snapEditorBeat(initialOffset + deltaBeats, 0, maximumOffset) })
                                 }
                                 const end = () => {
                                   clip.removeEventListener("pointermove", move)
@@ -3103,15 +3202,96 @@ function SourceLoopEditorDialog({
                                 clip.addEventListener("pointercancel", end)
                               }}
                             >
-                              <Waveform progress={isSolo ? progress : 0} compact label={`${layer.file} editor waveform`} bars={layerPeaks} />
+                              <button
+                                type="button"
+                                className="mini-daw-trim-handle is-start"
+                                aria-label={`Trim the start of ${layer.file}`}
+                                aria-valuemin={0}
+                                aria-valuemax={Math.max(0, sourceBeats - layer.trimEndBeats - 0.25)}
+                                aria-valuenow={layer.trimStartBeats}
+                                aria-orientation="horizontal"
+                                role="slider"
+                                onKeyDown={(event) => {
+                                  if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return
+                                  event.preventDefault()
+                                  event.stopPropagation()
+                                  const requested = event.key === "ArrowRight" ? 0.25 : -0.25
+                                  const delta = snapEditorBeat(requested, -Math.min(layer.trimStartBeats, layer.offsetBeats), sourceBeats - layer.trimStartBeats - layer.trimEndBeats - 0.25)
+                                  updateLayer(layer.identity, { trimStartBeats: layer.trimStartBeats + delta, offsetBeats: layer.offsetBeats + delta })
+                                }}
+                                onPointerDown={(event) => {
+                                  event.preventDefault()
+                                  event.stopPropagation()
+                                  pausePreview()
+                                  setSelectedIdentity(layer.identity)
+                                  const handle = event.currentTarget
+                                  const lane = handle.closest(".mini-daw-lane")?.getBoundingClientRect()
+                                  if (!lane || lane.width <= 0) return
+                                  const initialX = event.clientX
+                                  const initialTrim = layer.trimStartBeats
+                                  const initialOffset = layer.offsetBeats
+                                  handle.setPointerCapture(event.pointerId)
+                                  const move = (moveEvent: PointerEvent) => {
+                                    const requested = Math.round(((moveEvent.clientX - initialX) / lane.width * EDITOR_BEATS) * 4) / 4
+                                    const delta = snapEditorBeat(requested, -Math.min(initialTrim, initialOffset), sourceBeats - initialTrim - layer.trimEndBeats - 0.25)
+                                    patchLayer(layer.identity, { trimStartBeats: initialTrim + delta, offsetBeats: initialOffset + delta })
+                                  }
+                                  const end = () => {
+                                    handle.removeEventListener("pointermove", move)
+                                    handle.removeEventListener("pointerup", end)
+                                    handle.removeEventListener("pointercancel", end)
+                                  }
+                                  handle.addEventListener("pointermove", move)
+                                  handle.addEventListener("pointerup", end)
+                                  handle.addEventListener("pointercancel", end)
+                                }}
+                              />
+                              <Waveform progress={clipProgress} compact label={`${layer.file} editor waveform`} bars={layerPeaks} />
                               <span className="mini-daw-clip-label">{layer.category}</span>
+                              <button
+                                type="button"
+                                className="mini-daw-trim-handle is-end"
+                                aria-label={`Trim the end of ${layer.file}`}
+                                aria-valuemin={Math.max(0, sourceBeats - layer.trimStartBeats - (EDITOR_BEATS - layer.offsetBeats))}
+                                aria-valuemax={Math.max(0, sourceBeats - layer.trimStartBeats - 0.25)}
+                                aria-valuenow={layer.trimEndBeats}
+                                aria-orientation="horizontal"
+                                role="slider"
+                                onKeyDown={(event) => {
+                                  if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return
+                                  event.preventDefault()
+                                  event.stopPropagation()
+                                  const minimumTrim = Math.max(0, sourceBeats - layer.trimStartBeats - (EDITOR_BEATS - layer.offsetBeats))
+                                  const nextTrim = snapEditorBeat(layer.trimEndBeats + (event.key === "ArrowLeft" ? 0.25 : -0.25), minimumTrim, sourceBeats - layer.trimStartBeats - 0.25)
+                                  updateLayer(layer.identity, { trimEndBeats: nextTrim })
+                                }}
+                                onPointerDown={(event) => {
+                                  event.preventDefault()
+                                  event.stopPropagation()
+                                  pausePreview()
+                                  setSelectedIdentity(layer.identity)
+                                  const handle = event.currentTarget
+                                  const lane = handle.closest(".mini-daw-lane")?.getBoundingClientRect()
+                                  if (!lane || lane.width <= 0) return
+                                  const initialX = event.clientX
+                                  const initialTrim = layer.trimEndBeats
+                                  const minimumTrim = Math.max(0, sourceBeats - layer.trimStartBeats - (EDITOR_BEATS - layer.offsetBeats))
+                                  handle.setPointerCapture(event.pointerId)
+                                  const move = (moveEvent: PointerEvent) => {
+                                    const delta = Math.round(((moveEvent.clientX - initialX) / lane.width * EDITOR_BEATS) * 4) / 4
+                                    patchLayer(layer.identity, { trimEndBeats: snapEditorBeat(initialTrim - delta, minimumTrim, sourceBeats - layer.trimStartBeats - 0.25) })
+                                  }
+                                  const end = () => {
+                                    handle.removeEventListener("pointermove", move)
+                                    handle.removeEventListener("pointerup", end)
+                                    handle.removeEventListener("pointercancel", end)
+                                  }
+                                  handle.addEventListener("pointermove", move)
+                                  handle.addEventListener("pointerup", end)
+                                  handle.addEventListener("pointercancel", end)
+                                }}
+                              />
                             </div>
-                          </div>
-                          <div className="mini-daw-track-controls">
-                            <LayerCategorySelect id={`editor-category-${layer.identity}`} value={layer.category} options={LAYER_CATEGORY_OPTIONS} disabled={saving} onChange={(category) => updateLayer(layer.identity, { category })} />
-                            <label><span>Start</span><Input aria-label={`${layer.file} start in beats`} type="number" min="0" max="31.75" step="0.25" value={layer.offsetBeats} onChange={(event) => updateLayer(layer.identity, { offsetBeats: Number(event.target.value) })} /></label>
-                            <label><span>Trim in</span><Input aria-label={`${layer.file} trim in beats`} type="number" min="0" max={Math.max(0, sourceBeats - layer.trimEndBeats - 0.25)} step="0.25" value={layer.trimStartBeats} onChange={(event) => updateLayer(layer.identity, { trimStartBeats: Number(event.target.value) })} /></label>
-                            <label><span>Trim out</span><Input aria-label={`${layer.file} trim out beats`} type="number" min="0" max={Math.max(0, sourceBeats - layer.trimStartBeats - 0.25)} step="0.25" value={layer.trimEndBeats} onChange={(event) => updateLayer(layer.identity, { trimEndBeats: Number(event.target.value) })} /></label>
                           </div>
                         </article>
                       )
@@ -3123,10 +3303,10 @@ function SourceLoopEditorDialog({
 
             {error ? <p className="dialog-inline-error source-loop-editor-error" role="alert">{error}</p> : null}
             <footer className="source-loop-editor-footer">
-              <span><Check aria-hidden="true" /> Saving validates category corrections locally and restores the source loop.</span>
+              <span><Check aria-hidden="true" /> Clips snap to ¼ beat. Drag either edge to trim; drag the body to move.</span>
               <div>
                 <Dialog.Close className="dialog-cancel" disabled={saving}>Cancel</Dialog.Close>
-                <Button disabled={!draft || saving || loading} onClick={() => void save()}><Check aria-hidden="true" /> {saving ? "Saving edits…" : "Save and restore loop"}</Button>
+                <Button disabled={!draft || saving || loading} onClick={() => void save()}><Check aria-hidden="true" /> {saving ? "Saving edits…" : issueActive ? "Save and restore loop" : "Save changes"}</Button>
               </div>
             </footer>
           </Dialog.Popup>
@@ -3229,7 +3409,14 @@ function HistoryView({
                   </div>
                   <div className="key-issue-actions">
                     <Button variant="outline" size="sm" onClick={() => void window.stemSlicer?.revealPath(issue.reportedPath)}><FolderOpen /> Reveal</Button>
-                    <SourceLoopEditorDialog issue={issue} onSetKeyIssueActive={onSetKeyIssueActive} onSaved={onLibraryRefresh} />
+                    <SourceLoopEditorDialog
+                      libraryRoot={issue.libraryRoot}
+                      sourceLoopId={issue.sourceLoopId}
+                      issueId={issue.id}
+                      issueActive={issue.active}
+                      onSetKeyIssueActive={onSetKeyIssueActive}
+                      onSaved={async () => onLibraryRefresh()}
+                    />
                     <Button
                       variant={issue.active ? "outline" : "ghost"}
                       size="sm"
