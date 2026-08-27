@@ -206,7 +206,7 @@ function pathFromDrop(event: React.DragEvent<HTMLElement>) {
   return file && window.stemSlicer ? window.stemSlicer.pathForFile(file) : ""
 }
 
-const INITIAL_LAYERS: GeneratedLayer[] = [
+const INITIAL_LAYER_TEMPLATES: GeneratedLayer[] = [
   {
     id: "lead",
     role: "Main idea",
@@ -258,10 +258,10 @@ const INITIAL_LAYERS: GeneratedLayer[] = [
     bars: [55, 70, 64, 48, 82, 76, 59, 43, 88, 73, 57, 45, 84, 79, 61, 47, 90, 75, 58, 44, 86, 77, 60, 46, 89, 74, 56, 42, 83, 78, 62, 49, 91, 72, 54, 41, 81, 76, 59, 45, 87, 71, 53, 40, 79, 68, 51, 38],
   },
   {
-    id: "pad",
-    role: "Atmosphere",
-    file: "NRGY_129_Fm_Pad_18.wav",
-    category: "Pad",
+    id: "pluck",
+    role: "Pluck",
+    file: "NRGY_129_Fm_Pluck_18.wav",
+    category: "Pluck",
     bpm: 129,
     keyName: "F minor",
     octave: 0,
@@ -270,6 +270,14 @@ const INITIAL_LAYERS: GeneratedLayer[] = [
     alternateKey: "A♭ major",
     bars: [28, 34, 42, 47, 53, 58, 63, 68, 72, 75, 78, 81, 83, 85, 86, 87, 88, 88, 87, 86, 84, 81, 78, 74, 70, 65, 60, 55, 50, 45, 41, 37, 34, 32, 31, 30, 31, 33, 36, 40, 45, 51, 58, 65, 71, 76, 80, 82],
   },
+]
+
+const INITIAL_LAYERS: GeneratedLayer[] = [
+  INITIAL_LAYER_TEMPLATES[3],
+  INITIAL_LAYER_TEMPLATES[1],
+  INITIAL_LAYER_TEMPLATES[0],
+  INITIAL_LAYER_TEMPLATES[2],
+  INITIAL_LAYER_TEMPLATES[4],
 ]
 
 const FALLBACK_LIBRARY: LibraryOverview = {
@@ -309,7 +317,7 @@ function usePlaybackClock(layers: GeneratedLayer[], stackPlayback: boolean) {
   const [soloId, setSoloId] = useState<string | null>(null)
   const [lastSoloId, setLastSoloId] = useState<string | null>(null)
   const [syncEnabled, setSyncEnabled] = useState(stackPlayback)
-  const [loopEnabled, setLoopEnabled] = useState(false)
+  const [loopEnabled, setLoopEnabled] = useState(true)
   const [mutedIds, setMutedIds] = useState<string[]>([])
   const [syncSoloId, setSyncSoloId] = useState<string | null>(null)
   const engineRef = useRef<SharedWebAudioEngine | null>(null)
@@ -319,7 +327,7 @@ function usePlaybackClock(layers: GeneratedLayer[], stackPlayback: boolean) {
   const soloIdRef = useRef<string | null>(null)
   const lastSoloIdRef = useRef<string | null>(null)
   const syncEnabledRef = useRef(stackPlayback)
-  const loopEnabledRef = useRef(false)
+  const loopEnabledRef = useRef(true)
   const mutedIdsRef = useRef(new Set<string>())
   const syncSoloIdRef = useRef<string | null>(null)
   const playingRef = useRef(false)
@@ -744,7 +752,7 @@ function usePlaybackClock(layers: GeneratedLayer[], stackPlayback: boolean) {
     commitPlaying(false)
     setError("")
     commitSyncEnabled(stackPlayback)
-    commitLoopEnabled(false)
+    commitLoopEnabled(true)
     commitMutedIds(new Set())
     commitSyncSoloId(null)
     commitLastSoloId(null)
@@ -1752,7 +1760,7 @@ function GenerateView({
 }) {
   const [bpm, setBpm] = useState(140)
   const [keyName, setKeyName] = useState("F minor")
-  const [randomKeyEnabled, setRandomKeyEnabled] = useState(false)
+  const [randomKeyEnabled, setRandomKeyEnabled] = useState(true)
   const [status, setStatus] = useState("Local Generate engine ready")
   const [selectionMessage, setSelectionMessage] = useState("")
   const [currentSeed, setCurrentSeed] = useState<number | null>(null)
@@ -3160,6 +3168,9 @@ function SourceLoopStudio({
       {draft ? (
         <>
           <section className="source-loop-editor-toolbar" aria-label="Loop settings and preview transport">
+                  <div className="mini-daw-project-settings">
+                    <Select id={`source-loop-key-${dialogSlug}`} label="Key / relative" value={keyFamilyForKey(draft.keyName)} onChange={(family) => { pausePreview(); setDraft({ ...draft, keyName: keyFromFamily(family, draft.keyName) }) }} options={TARGET_KEY_FAMILIES} optionLabel={compactKeyFamilyLabel} className="key-family-select" forceBelow />
+                  </div>
                   <div className="mini-daw-transport">
                     <div className="player-controls">
                       <button type="button" className={cn("player-key player-loop-key", loopEnabled && "is-active")} aria-pressed={loopEnabled} aria-label={loopEnabled ? "Disable loop playback" : "Enable loop playback"} onClick={toggleLoop}><Repeat2 aria-hidden="true" /></button>
@@ -3169,10 +3180,7 @@ function SourceLoopStudio({
                       <button type="button" className="player-key" aria-label="Stop and return to beginning" onClick={() => { pausePreview(); setProgress(0) }}><SkipBack aria-hidden="true" /></button>
                     </div>
                     <span className="mini-daw-time" aria-live="off"><b>{formatEditorClock(progress, draft.bpm)}</b><i>{formatEditorPosition(progress)}</i></span>
-                  </div>
-                  <div className="mini-daw-project-settings">
                     <label className="mini-daw-number-field"><span>BPM</span><Input type="number" min="40" max="300" value={draft.bpm} onChange={(event) => { pausePreview(); setDraft({ ...draft, bpm: Number(event.target.value) }) }} /></label>
-                    <Select id={`source-loop-key-${dialogSlug}`} label="Key / relative" value={keyFamilyForKey(draft.keyName)} onChange={(family) => { pausePreview(); setDraft({ ...draft, keyName: keyFromFamily(family, draft.keyName) }) }} options={TARGET_KEY_FAMILIES} optionLabel={compactKeyFamilyLabel} className="key-family-select" forceBelow />
                   </div>
                 </section>
 

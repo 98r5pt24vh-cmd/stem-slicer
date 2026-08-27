@@ -3217,7 +3217,7 @@ td strong {
 .source-loop-editor-toolbar {
   display: grid;
   min-height: 56px;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(24px, 1fr) auto;
   align-items: center;
   gap: 18px;
   border-block-end: 1px solid rgb(255 255 255 / 0.07);
@@ -3265,6 +3265,7 @@ td strong {
 
 .mini-daw-transport {
   display: flex;
+  grid-column: 3;
   align-items: center;
   gap: 10px;
 }
@@ -3296,9 +3297,10 @@ td strong {
 
 .mini-daw-project-settings {
   display: flex;
+  grid-column: 1;
   min-width: 0;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   flex-wrap: wrap;
   gap: 12px;
 }
@@ -3915,6 +3917,7 @@ td strong {
 
   .mini-daw-transport,
   .mini-daw-project-settings {
+    grid-column: auto;
     min-width: 0;
   }
 
