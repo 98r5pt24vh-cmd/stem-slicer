@@ -7,7 +7,7 @@ import { pathToFileURL } from "node:url"
 
 import { AudioEngineService } from "./main/audio-engine"
 import { getSourceLoopEditor, saveSourceLoopEdit, setLayerCategory } from "./main/catalog-edits"
-import { listKeyIssueReports, reportKeyIssue, setKeyIssueActive } from "./main/key-feedback"
+import { dismissKeyIssueReport, listKeyIssueReports, reportKeyIssue, setKeyIssueActive } from "./main/key-feedback"
 import { readLibraryOverview, removeLibraryRoot } from "./main/library-cache"
 import { mediaMimeType, parseByteRange } from "./main/media-range"
 import { migrationModules } from "./main/migration-modules"
@@ -173,6 +173,10 @@ function registerIpc(): void {
       throw new Error("The key-issue update is invalid.")
     }
     return setKeyIssueActive(acceptedCachePath, issueId, active)
+  })
+  ipcMain.handle("key-issues:dismiss", (_event: IpcMainInvokeEvent, issueId: unknown) => {
+    if (typeof issueId !== "string") throw new Error("The key-issue report is invalid.")
+    return dismissKeyIssueReport(acceptedCachePath, issueId)
   })
   ipcMain.handle("source-loop:get-editor", (_event: IpcMainInvokeEvent, libraryRoot: unknown, sourceLoopId: unknown) =>
     getSourceLoopEditor(acceptedCachePath, libraryRoot, sourceLoopId),

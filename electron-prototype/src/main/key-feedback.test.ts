@@ -4,7 +4,7 @@ import path from "node:path"
 import { DatabaseSync } from "node:sqlite"
 import { describe, expect, it } from "vitest"
 
-import { reportKeyIssue, setKeyIssueActive } from "./key-feedback"
+import { dismissKeyIssueReport, reportKeyIssue, setKeyIssueActive } from "./key-feedback"
 
 function recoverableTestRoot(): string {
   const trash = path.join(homedir(), ".Trash")
@@ -65,5 +65,7 @@ describe("key issue feedback", () => {
     const quarantinedAgain = setKeyIssueActive(acceptedCache, reported[0].id, true)
     expect(quarantinedAgain[0].active).toBe(true)
     expect(quarantinedAgain[0].resolvedAt).toBeUndefined()
+
+    expect(dismissKeyIssueReport(acceptedCache, reported[0].id)).toEqual([])
   })
 })

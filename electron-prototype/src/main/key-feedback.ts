@@ -255,3 +255,24 @@ export function setKeyIssueActive(
   }
   return listKeyIssueReports(acceptedCachePath)
 }
+
+export function dismissKeyIssueReport(
+  acceptedCachePath: string,
+  requestedIssueId: string,
+): KeyIssueReport[] {
+  const id = normalizedText(requestedIssueId, "Key issue id")
+  const feedbackPath = feedbackDatabasePath(acceptedCachePath)
+  if (!existsSync(feedbackPath)) throw new Error("The key-issue report is unavailable.")
+  const database = new DatabaseSync(feedbackPath)
+  try {
+    ensureFeedbackSchema(database)
+    const result = database.prepare(`
+      DELETE FROM key_issue_reports
+      WHERE id = ?
+    `).run(id)
+    if (Number(result.changes) !== 1) throw new Error("The key-issue report is unavailable.")
+  } finally {
+    database.close()
+  }
+  return listKeyIssueReports(acceptedCachePath)
+}

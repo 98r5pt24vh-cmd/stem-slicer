@@ -20,6 +20,8 @@ export interface SourceLoopPreviewOptions {
   mutedIdentities?: Iterable<string>
   soloIdentity?: string
   startOffset?: number
+  loopEnabled?: boolean
+  trackVolumes?: Iterable<readonly [string, number]>
 }
 
 export function editorTimelineSeconds(bpm: number): number {
@@ -33,6 +35,16 @@ export function editorTrackAudible(
 ): boolean {
   if (soloIdentity) return identity === soloIdentity && !mutedIdentities.has(identity)
   return !mutedIdentities.has(identity)
+}
+
+export function editorTrackGain(
+  identity: string,
+  mutedIdentities: ReadonlySet<string>,
+  soloIdentity: string | undefined,
+  trackVolumes: ReadonlyMap<string, number>,
+): number {
+  if (!editorTrackAudible(identity, mutedIdentities, soloIdentity)) return 0
+  return Math.max(0, Math.min(1.25, (trackVolumes.get(identity) ?? 100) / 100))
 }
 
 export function audioBufferPeaks(buffer: AudioBuffer, count = PEAK_COUNT): number[] {
@@ -79,6 +91,7 @@ export class SourceLoopPreviewEngine {
     const startedAt = context.currentTime + 0.025
     const startOffset = Math.max(0, Math.min(duration - Number.EPSILON, options.startOffset ?? 0))
     const mutedIdentities = new Set(options.mutedIdentities ?? [])
+    const trackVolumes = new Map(options.trackVolumes ?? [])
 
     for (const layer of layers) {
       const decoded = await this.decode(layer)
@@ -86,10 +99,10 @@ export class SourceLoopPreviewEngine {
       const source = context.createBufferSource()
       const gain = context.createGain()
       source.buffer = rendered
-      source.loop = true
+      source.loop = options.loopEnabled ?? true
       source.loopStart = 0
       source.loopEnd = duration
-      gain.gain.value = editorTrackAudible(layer.identity, mutedIdentities, options.soloIdentity) ? 1 : 0
+      gain.gain.value = editorTrackGain(layer.identity, mutedIdentities, options.soloIdentity, trackVolumes)
       source.connect(gain)
       gain.connect(context.destination)
       source.start(startedAt, startOffset)
@@ -98,12 +111,17 @@ export class SourceLoopPreviewEngine {
     return { startedAt, duration, startOffset }
   }
 
-  updateMix(mutedIdentities: Iterable<string>, soloIdentity?: string): void {
+  updateMix(
+    mutedIdentities: Iterable<string>,
+    soloIdentity?: string,
+    trackVolumes: Iterable<readonly [string, number]> = [],
+  ): void {
     const muted = new Set(mutedIdentities)
+    const volumes = new Map(trackVolumes)
     const now = this.context?.currentTime ?? 0
     for (const node of this.active) {
       node.gain.gain.cancelScheduledValues(now)
-      node.gain.gain.setTargetAtTime(editorTrackAudible(node.identity, muted, soloIdentity) ? 1 : 0, now, 0.008)
+      node.gain.gain.setTargetAtTime(editorTrackGain(node.identity, muted, soloIdentity, volumes), now, 0.008)
     }
   }
 

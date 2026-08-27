@@ -342,6 +342,7 @@ export interface StemSlicerDesktopApi {
   getKeyIssueReports: () => Promise<KeyIssueReport[]>
   reportKeyIssue: (request: ReportKeyIssueRequest) => Promise<KeyIssueReport[]>
   setKeyIssueActive: (issueId: string, active: boolean) => Promise<KeyIssueReport[]>
+  dismissKeyIssueReport: (issueId: string) => Promise<KeyIssueReport[]>
   getSourceLoopEditor: (libraryRoot: string, sourceLoopId: string) => Promise<SourceLoopEditorData>
   saveSourceLoopEdit: (request: SaveSourceLoopEditRequest) => Promise<SourceLoopEditorData>
   setLayerCategory: (request: SetLayerCategoryRequest) => Promise<SourceLoopEditorLayer>

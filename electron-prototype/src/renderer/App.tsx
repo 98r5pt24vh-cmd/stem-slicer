@@ -36,7 +36,6 @@ import {
   Trash2,
   Unlock,
   Volume2,
-  VolumeX,
   WandSparkles,
   Wrench,
   X,
@@ -157,7 +156,7 @@ const NAVIGATION: NavItem[] = [
   { id: "quick-tools", label: "Quick Tools", icon: Wrench },
   { id: "generate", label: "Generate", icon: Sparkles },
   { id: "history", label: "History", icon: History },
-  { id: "cloud", label: "Connected Libraries", icon: Cloud, badge: "WIP" },
+  { id: "cloud", label: "Cloud", icon: Cloud, badge: "WIP" },
 ]
 
 const LAYER_CATEGORY_OPTIONS = [
@@ -165,10 +164,6 @@ const LAYER_CATEGORY_OPTIONS = [
   "Vocal Chop", "Bells", "Strings", "Texture", "Guitar Lead", "Guitar Chords",
   "Vocal", "Arp", "Brass", "Accent", "Percussion",
 ]
-
-const EXACT_KEY_OPTIONS = TARGET_KEY_FAMILIES.flatMap((family) =>
-  family.split("/").map((key) => key.trim()),
-)
 
 const SHARP_CAMELOT_KEYS: Record<string, string> = {
   "1A": "G♯ minor", "2A": "D♯ minor", "3A": "A♯ minor", "4A": "F minor",
@@ -2873,12 +2868,20 @@ function SourceLoopStudio({
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
   const [playing, setPlaying] = useState(false)
+  const [loopEnabled, setLoopEnabled] = useState(true)
   const [soloIdentity, setSoloIdentity] = useState<string | undefined>()
   const [mutedIdentities, setMutedIdentities] = useState<Set<string>>(() => new Set())
+  const [trackVolumes, setTrackVolumes] = useState<Map<string, number>>(() => new Map())
   const [selectedIdentity, setSelectedIdentity] = useState<string | undefined>()
   const [progress, setProgress] = useState(0)
+  const progressRef = useRef(0)
   const engineRef = useRef<SourceLoopPreviewEngine | null>(null)
   const animationRef = useRef<number | null>(null)
+  const scrubResumeRef = useRef(false)
+
+  useEffect(() => {
+    progressRef.current = progress
+  }, [progress])
 
   const pausePreview = useCallback(() => {
     engineRef.current?.stop()
@@ -2902,13 +2905,16 @@ function SourceLoopStudio({
     setDraft(null)
     setPeaks(new Map())
     setMutedIdentities(new Set())
+    setTrackVolumes(new Map())
     setSoloIdentity(undefined)
+    setLoopEnabled(true)
     setProgress(0)
     void api.getSourceLoopEditor(libraryRoot, sourceLoopId)
       .then(async (editor) => {
         if (cancelled) return
         setDraft(editor)
         setSelectedIdentity(editor.layers[0]?.identity)
+        setTrackVolumes(new Map(editor.layers.map((layer) => [layer.identity, 100])))
         try {
           const nextPeaks = await engine.prepare(editor.layers)
           if (!cancelled) setPeaks(nextPeaks)
@@ -2931,23 +2937,37 @@ function SourceLoopStudio({
     }
   }, [libraryRoot, sourceLoopId])
 
-  const startPreview = async (startProgress = progress) => {
+  const startPreview = useCallback(async (requestedStartProgress?: number, requestedLoopEnabled = loopEnabled) => {
     if (!draft || !engineRef.current) return
     pausePreview()
     setError("")
     try {
       const duration = editorTimelineSeconds(draft.bpm)
+      const startProgress = requestedStartProgress ?? progressRef.current
+      const effectiveProgress = startProgress >= 0.9999 ? 0 : Math.max(0, startProgress)
       const start = await engineRef.current.play(draft.layers, draft.bpm, {
         mutedIdentities,
         soloIdentity,
-        startOffset: startProgress * duration,
+        startOffset: effectiveProgress * duration,
+        loopEnabled: requestedLoopEnabled,
+        trackVolumes,
       })
       setPlaying(true)
       const tick = () => {
         const engine = engineRef.current
         if (!engine) return
         const elapsed = Math.max(0, engine.currentTime - start.startedAt)
-        setProgress(((start.startOffset + elapsed) % start.duration) / start.duration)
+        const playheadSeconds = start.startOffset + elapsed
+        if (!requestedLoopEnabled && playheadSeconds >= start.duration) {
+          engine.stop()
+          animationRef.current = null
+          setProgress(1)
+          setPlaying(false)
+          return
+        }
+        setProgress(requestedLoopEnabled
+          ? (playheadSeconds % start.duration) / start.duration
+          : Math.min(1, playheadSeconds / start.duration))
         animationRef.current = requestAnimationFrame(tick)
       }
       animationRef.current = requestAnimationFrame(tick)
@@ -2955,7 +2975,21 @@ function SourceLoopStudio({
       setError(reason instanceof Error ? reason.message : "Unable to preview this source loop.")
       pausePreview()
     }
-  }
+  }, [draft, loopEnabled, mutedIdentities, pausePreview, soloIdentity, trackVolumes])
+
+  useEffect(() => {
+    const handleStudioSpace = (event: KeyboardEvent) => {
+      if (event.code !== "Space" || event.repeat) return
+      const target = event.target instanceof HTMLElement ? event.target : null
+      if (target?.closest("input, textarea, select, [contenteditable='true'], [role='textbox'], [role='combobox'], [role='listbox']")) return
+      event.preventDefault()
+      event.stopPropagation()
+      if (playing) pausePreview()
+      else void startPreview()
+    }
+    document.addEventListener("keydown", handleStudioSpace, true)
+    return () => document.removeEventListener("keydown", handleStudioSpace, true)
+  }, [pausePreview, playing, startPreview])
 
   const patchLayer = (identity: string, update: Partial<SourceLoopEditorLayer>) => {
     setDraft((current) => current ? {
@@ -2969,10 +3003,33 @@ function SourceLoopStudio({
     patchLayer(identity, update)
   }
 
-  const seekPreview = (nextProgress: number) => {
-    const next = Math.max(0, Math.min(0.9999, nextProgress))
+  const pointerProgress = (event: React.PointerEvent<HTMLElement>) => {
+    const bounds = event.currentTarget.getBoundingClientRect()
+    if (bounds.width <= 0) return progress
+    return Math.max(0, Math.min(0.9999, (event.clientX - bounds.left) / bounds.width))
+  }
+
+  const beginTimelineScrub = (event: React.PointerEvent<HTMLElement>) => {
+    if (event.button !== 0) return
+    event.preventDefault()
+    scrubResumeRef.current = playing
+    if (playing) pausePreview()
+    event.currentTarget.setPointerCapture(event.pointerId)
+    setProgress(pointerProgress(event))
+  }
+
+  const moveTimelineScrub = (event: React.PointerEvent<HTMLElement>) => {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) setProgress(pointerProgress(event))
+  }
+
+  const endTimelineScrub = (event: React.PointerEvent<HTMLElement>) => {
+    if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
+    const next = pointerProgress(event)
+    event.currentTarget.releasePointerCapture(event.pointerId)
     setProgress(next)
-    if (playing) void startPreview(next)
+    const shouldResume = scrubResumeRef.current
+    scrubResumeRef.current = false
+    if (shouldResume) void startPreview(next)
   }
 
   const toggleMute = (identity: string) => {
@@ -2980,7 +3037,7 @@ function SourceLoopStudio({
       const next = new Set(current)
       if (next.has(identity)) next.delete(identity)
       else next.add(identity)
-      engineRef.current?.updateMix(next, soloIdentity)
+      engineRef.current?.updateMix(next, soloIdentity, trackVolumes)
       return next
     })
   }
@@ -2988,7 +3045,25 @@ function SourceLoopStudio({
   const toggleSolo = (identity: string) => {
     const nextSolo = soloIdentity === identity ? undefined : identity
     setSoloIdentity(nextSolo)
-    engineRef.current?.updateMix(mutedIdentities, nextSolo)
+    engineRef.current?.updateMix(mutedIdentities, nextSolo, trackVolumes)
+  }
+
+  const updateTrackVolume = (identity: string, volume: number) => {
+    setTrackVolumes((current) => {
+      const next = new Map(current)
+      next.set(identity, volume)
+      engineRef.current?.updateMix(mutedIdentities, soloIdentity, next)
+      return next
+    })
+  }
+
+  const toggleLoop = () => {
+    const nextLoopEnabled = !loopEnabled
+    const shouldResume = playing
+    const resumeAt = progress
+    pausePreview()
+    setLoopEnabled(nextLoopEnabled)
+    if (shouldResume) void startPreview(resumeAt, nextLoopEnabled)
   }
 
   const save = async () => {
@@ -3044,16 +3119,16 @@ function SourceLoopStudio({
         <>
           <section className="source-loop-editor-toolbar" aria-label="Loop settings and preview transport">
                   <div className="mini-daw-transport">
-                    <button type="button" aria-label="Return to beginning" onClick={() => { pausePreview(); setProgress(0) }}><SkipBack aria-hidden="true" /></button>
+                    <span className="mini-daw-time" aria-live="off"><b>{formatEditorClock(progress, draft.bpm)}</b><i>{formatEditorPosition(progress)}</i></span>
                     <button type="button" className={cn("mini-daw-primary-play", playing && "is-active")} aria-label={playing ? "Pause preview" : "Play preview"} onClick={() => playing ? pausePreview() : void startPreview()}>
                       {playing ? <Pause aria-hidden="true" /> : <Play className="play-glyph" aria-hidden="true" />}
                     </button>
-                    <span className="mini-daw-time" aria-live="off"><b>{formatEditorClock(progress, draft.bpm)}</b><i>{formatEditorPosition(progress)}</i></span>
-                    <span className="mini-daw-loop-state"><Repeat2 aria-hidden="true" /> Loop</span>
+                    <button type="button" aria-label="Return to beginning" onClick={() => { pausePreview(); setProgress(0) }}><SkipBack aria-hidden="true" /></button>
+                    <button type="button" className={cn("mini-daw-loop-state", loopEnabled && "is-active")} aria-pressed={loopEnabled} aria-label={loopEnabled ? "Disable loop playback" : "Enable loop playback"} onClick={toggleLoop}><Repeat2 aria-hidden="true" /><span>Loop</span></button>
                   </div>
                   <div className="mini-daw-project-settings">
                     <label className="mini-daw-number-field"><span>BPM</span><Input type="number" min="40" max="300" value={draft.bpm} onChange={(event) => { pausePreview(); setDraft({ ...draft, bpm: Number(event.target.value) }) }} /></label>
-                    <Select id={`source-loop-key-${dialogSlug}`} label="Key" value={draft.keyName} onChange={(keyName) => { pausePreview(); setDraft({ ...draft, keyName }) }} options={EXACT_KEY_OPTIONS} forceBelow />
+                    <Select id={`source-loop-key-${dialogSlug}`} label="Key / relative" value={keyFamilyForKey(draft.keyName)} onChange={(family) => { pausePreview(); setDraft({ ...draft, keyName: keyFromFamily(family, draft.keyName) }) }} options={TARGET_KEY_FAMILIES} forceBelow />
                   </div>
                 </section>
 
@@ -3062,11 +3137,24 @@ function SourceLoopStudio({
                     <div className="mini-daw-track-list-header"><SlidersHorizontal aria-hidden="true" /><span>Tracks</span><small>{draft.layers.length}</small></div>
                     <div
                       className="mini-daw-timeline-ruler"
-                      aria-label="Timeline ruler"
-                      onPointerDown={(event) => {
-                        const bounds = event.currentTarget.getBoundingClientRect()
-                        if (bounds.width > 0) seekPreview((event.clientX - bounds.left) / bounds.width)
+                      role="slider"
+                      tabIndex={0}
+                      aria-label="Timeline playhead"
+                      aria-valuemin={0}
+                      aria-valuemax={EDITOR_BEATS}
+                      aria-valuenow={Math.round(progress * EDITOR_BEATS * 4) / 4}
+                      aria-valuetext={`Bar and beat ${formatEditorPosition(progress)}`}
+                      onKeyDown={(event) => {
+                        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return
+                        event.preventDefault()
+                        pausePreview()
+                        const step = event.shiftKey ? 4 / EDITOR_BEATS : 0.25 / EDITOR_BEATS
+                        setProgress(event.key === "Home" ? 0 : event.key === "End" ? 0.9999 : Math.max(0, Math.min(0.9999, progress + (event.key === "ArrowRight" ? step : -step))))
                       }}
+                      onPointerDown={beginTimelineScrub}
+                      onPointerMove={moveTimelineScrub}
+                      onPointerUp={endTimelineScrub}
+                      onPointerCancel={endTimelineScrub}
                     >
                       {Array.from({ length: 9 }, (_, index) => <i key={index} style={{ insetInlineStart: `${index * 12.5}%` }}>{index < 8 ? index + 1 : "End"}</i>)}
                     </div>
@@ -3082,6 +3170,7 @@ function SourceLoopStudio({
                       const isSolo = soloIdentity === layer.identity
                       const isMuted = mutedIdentities.has(layer.identity)
                       const isSelected = selectedIdentity === layer.identity
+                      const trackVolume = trackVolumes.get(layer.identity) ?? 100
                       const clipProgress = Math.max(0, Math.min(1, (progress * EDITOR_BEATS - layer.offsetBeats) / visibleBeats))
                       const maximumOffset = Math.max(0, EDITOR_BEATS - usableBeats)
                       return (
@@ -3091,16 +3180,21 @@ function SourceLoopStudio({
                             <span className="mini-daw-track-copy"><strong title={layer.file}>{layer.file}</strong><small>{layer.layerIndex ? `Layer ${layer.layerIndex}` : "Indexed layer"} · {layer.duration.toFixed(1)} s</small></span>
                             <div className="mini-daw-track-category"><LayerCategorySelect id={`editor-category-${layer.identity}`} value={layer.category} options={LAYER_CATEGORY_OPTIONS} disabled={saving} onChange={(category) => updateLayer(layer.identity, { category })} /></div>
                             <div className="mini-daw-track-mix">
-                              <button type="button" className={cn(isMuted && "is-active")} aria-pressed={isMuted} aria-label={`${isMuted ? "Unmute" : "Mute"} ${layer.file}`} onClick={() => toggleMute(layer.identity)}>{isMuted ? <VolumeX aria-hidden="true" /> : <Volume2 aria-hidden="true" />}</button>
                               <button type="button" className={cn(isSolo && "is-active")} aria-pressed={isSolo} aria-label={`${isSolo ? "Disable solo for" : "Solo"} ${layer.file}`} onClick={() => toggleSolo(layer.identity)}>S</button>
+                              <button type="button" className={cn(isMuted && "is-active")} aria-pressed={isMuted} aria-label={`${isMuted ? "Unmute" : "Mute"} ${layer.file}`} onClick={() => toggleMute(layer.identity)}>M</button>
                             </div>
+                            <label className="mini-daw-track-volume" title={`${trackVolume}%`}>
+                              <Volume2 aria-hidden="true" />
+                              <span className="sr-only">Volume for {layer.file}</span>
+                              <input type="range" min="0" max="125" value={trackVolume} onChange={(event) => updateTrackVolume(layer.identity, Number(event.target.value))} />
+                            </label>
                           </div>
                           <div
                             className="mini-daw-lane"
-                            onPointerDown={(event) => {
-                              const bounds = event.currentTarget.getBoundingClientRect()
-                              if (bounds.width > 0) seekPreview((event.clientX - bounds.left) / bounds.width)
-                            }}
+                            onPointerDown={beginTimelineScrub}
+                            onPointerMove={moveTimelineScrub}
+                            onPointerUp={endTimelineScrub}
+                            onPointerCancel={endTimelineScrub}
                           >
                             <span className="mini-daw-playhead" style={{ insetInlineStart: `${progress * 100}%` }} aria-hidden="true" />
                             <div
@@ -3264,6 +3358,7 @@ function HistoryView({
   onReopen,
   onTrashSelected,
   onSetKeyIssueActive,
+  onDismissKeyIssue,
   onEditSourceLoop,
 }: {
   history: HistoryEntry[]
@@ -3272,6 +3367,7 @@ function HistoryView({
   onReopen: (entry: HistoryEntry) => void
   onTrashSelected: (entries: HistoryEntry[]) => Promise<void>
   onSetKeyIssueActive: (issueId: string, active: boolean) => Promise<void>
+  onDismissKeyIssue: (issueId: string) => Promise<void>
   onEditSourceLoop: (issue: KeyIssueReport) => void
 }) {
   const activeIssueCount = keyIssues.filter((issue) => issue.active).length
@@ -3279,6 +3375,8 @@ function HistoryView({
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState("")
+  const [dismissingIssueId, setDismissingIssueId] = useState<string | null>(null)
+  const [issueError, setIssueError] = useState("")
   const selectedEntries = history.filter((entry) => selectedIds.has(entry.id))
   const allSelected = history.length > 0 && selectedEntries.length === history.length
 
@@ -3308,6 +3406,18 @@ function HistoryView({
       setDeleteError(reason instanceof Error ? reason.message : "Unable to move the selected generations to Trash.")
     } finally {
       setDeleting(false)
+    }
+  }
+
+  const dismissIssue = async (issueId: string) => {
+    setDismissingIssueId(issueId)
+    setIssueError("")
+    try {
+      await onDismissKeyIssue(issueId)
+    } catch (reason) {
+      setIssueError(reason instanceof Error ? reason.message : "Unable to remove this report from the list.")
+    } finally {
+      setDismissingIssueId(null)
     }
   }
 
@@ -3361,12 +3471,23 @@ function HistoryView({
                       {issue.active ? <Check aria-hidden="true" /> : <CircleX aria-hidden="true" />}
                       {issue.active ? "Restore" : "Exclude again"}
                     </Button>
+                    <button
+                      type="button"
+                      className="key-issue-dismiss"
+                      disabled={dismissingIssueId === issue.id}
+                      aria-label={`Remove ${issue.reportedFile} report from the list`}
+                      title="Remove report from list"
+                      onClick={() => void dismissIssue(issue.id)}
+                    >
+                      <X aria-hidden="true" />
+                    </button>
                   </div>
                 </CardContent>
               </Card>
             ))}
           </div>
         ) : <p className="key-issues-empty">No source loop has been reported.</p>}
+        {issueError ? <p className="dialog-inline-error" role="alert">{issueError}</p> : null}
       </section>
 
       <div className="history-section-heading history-generations-heading">
@@ -3445,12 +3566,12 @@ function HistoryView({
 function CloudView() {
   return (
     <div className="page-stack">
-      <PageHeader eyebrow="Workspace / Connected Libraries" title="Mix trusted producer libraries" description="A future permission layer will let Generate combine your local catalogue with libraries explicitly shared by other producers." actions={<Badge variant="warning">WIP</Badge>} />
+      <PageHeader eyebrow="Workspace / Cloud" title="Mix trusted producer libraries" description="A future permission layer will let Generate combine your local catalogue with libraries explicitly shared by other producers." actions={<Badge variant="warning">WIP</Badge>} />
       <Card className="cloud-hero">
         <CardContent>
           <span className="cloud-symbol"><CloudCog /></span>
           <Badge variant="warning">Working in progress</Badge>
-          <h2>Connected Libraries</h2>
+          <h2>Cloud</h2>
           <p>Permission, identity, remote indexing and revocation will live here. No cloud connection exists in this prototype yet.</p>
           <Button variant="outline" disabled><Plus /> Invite a producer</Button>
         </CardContent>
@@ -3612,6 +3733,12 @@ export function App() {
     setKeyIssues(issues)
   }, [])
 
+  const dismissKeyIssue = useCallback(async (issueId: string) => {
+    const issues = await window.stemSlicer?.dismissKeyIssueReport(issueId)
+    if (!issues) throw new Error("The desktop key-feedback service is unavailable.")
+    setKeyIssues(issues)
+  }, [])
+
   useEffect(() => {
     const api = window.stemSlicer
     if (!api) return
@@ -3635,6 +3762,19 @@ export function App() {
     }
     mainRef.current?.focus()
   }, [activeView, studioActive])
+
+  useEffect(() => {
+    if (studioActive) return
+    const blockSpaceActivation = (event: KeyboardEvent) => {
+      if (event.code !== "Space") return
+      const target = event.target instanceof HTMLElement ? event.target : null
+      if (target?.closest("input, textarea, select, [contenteditable='true'], [role='textbox'], [role='combobox'], [role='listbox']")) return
+      event.preventDefault()
+      event.stopPropagation()
+    }
+    document.addEventListener("keydown", blockSpaceActivation, true)
+    return () => document.removeEventListener("keydown", blockSpaceActivation, true)
+  }, [studioActive])
 
   const navigateToView = useCallback((view: ViewId) => {
     if (view === activeView) {
@@ -3701,7 +3841,7 @@ export function App() {
           <div hidden={activeView !== "generate"}><GenerateView library={library} layers={layers} setLayers={setLayers} currentGenerationResult={currentGenerationResult} setCurrentGenerationResult={setCurrentGenerationResult} onAddHistory={addHistory} onUpdateHistory={updateHistory} keyIssues={keyIssues} onReportKeyIssue={reportKeyIssue} onSetKeyIssueActive={updateKeyIssueState} onLibraryRefresh={refreshLibrary} playback={playback} /></div>
           <div hidden={activeView !== "quick-tools"}><QuickToolsView previewLayers={quickPreviewLayers} setPreviewLayers={setQuickPreviewLayers} playback={playback} onActiveToolChange={setActiveQuickTool} /></div>
           <div hidden={activeView !== "history"} className={cn("history-workspace", studioActive && "is-studio")}>
-            <div hidden={studioActive}><HistoryView history={history} keyIssues={keyIssues} playback={playback} onReopen={reopenHistory} onTrashSelected={trashHistoryEntries} onSetKeyIssueActive={updateKeyIssueState} onEditSourceLoop={openSourceLoopStudio} /></div>
+            <div hidden={studioActive}><HistoryView history={history} keyIssues={keyIssues} playback={playback} onReopen={reopenHistory} onTrashSelected={trashHistoryEntries} onSetKeyIssueActive={updateKeyIssueState} onDismissKeyIssue={dismissKeyIssue} onEditSourceLoop={openSourceLoopStudio} /></div>
             {studioSource ? <SourceLoopStudio {...studioSource} onSetKeyIssueActive={updateKeyIssueState} onSaved={async () => refreshLibrary()} onClose={closeSourceLoopStudio} /> : null}
           </div>
           <div hidden={activeView !== "cloud"}><CloudView /></div>
