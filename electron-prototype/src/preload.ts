@@ -8,6 +8,7 @@ const api: StemSlicerDesktopApi = {
   getLibraryOverview: () => ipcRenderer.invoke("library:get-overview"),
   removeLibraryRoot: (libraryRoot) => ipcRenderer.invoke("library:remove-root", libraryRoot),
   getKeyIssueReports: () => ipcRenderer.invoke("key-issues:list"),
+  getCategoryCorrections: () => ipcRenderer.invoke("category-corrections:list"),
   reportKeyIssue: (request) => ipcRenderer.invoke("key-issues:report", request),
   setKeyIssueActive: (issueId, active) => ipcRenderer.invoke("key-issues:set-active", issueId, active),
   dismissKeyIssueReport: (issueId) => ipcRenderer.invoke("key-issues:dismiss", issueId),

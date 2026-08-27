@@ -12,6 +12,7 @@ import math
 import os
 from pathlib import Path
 import queue
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -38,6 +39,75 @@ _analyzer = None
 _classifier = None
 _midi_converter = None
 _generation_sessions: dict[str, dict] = {}
+_PRIMARY_PRODUCER = "+NRGY"
+_COMPACT_KEY = re.compile(r"^[A-G](?:#|b|♯|♭)?(?:(?:m|min|minor|maj|major))?$", re.IGNORECASE)
+_MODE_TOKEN = re.compile(r"^(?:m|min|minor|maj|major)$", re.IGNORECASE)
+
+
+def _key_token_count(tokens: list[str], index: int) -> int:
+    token = tokens[index] if 0 <= index < len(tokens) else ""
+    if not _COMPACT_KEY.fullmatch(token):
+        return 0
+    tonic_only = re.fullmatch(r"[A-G](?:#|b|♯|♭)?", token, re.IGNORECASE)
+    following = tokens[index + 1] if index + 1 < len(tokens) else ""
+    return 2 if tonic_only and _MODE_TOKEN.fullmatch(following) else 1
+
+
+def _unique_producers(values) -> list[str]:
+    credits = [_PRIMARY_PRODUCER]
+    seen = {_PRIMARY_PRODUCER.casefold()}
+    for raw_value in values:
+        value = str(raw_value or "").strip()
+        if not value:
+            continue
+        if value.casefold() == _PRIMARY_PRODUCER.casefold():
+            value = _PRIMARY_PRODUCER
+        if value.casefold() in seen:
+            continue
+        seen.add(value.casefold())
+        credits.append(value)
+    return credits
+
+
+def _source_provenance(filename: str) -> dict[str, object]:
+    stem = Path(str(filename or "")).stem
+    source = re.sub(r"(?:[_\s-])(?:layer\s*)?l?\d+$", "", stem, flags=re.IGNORECASE).strip()
+    tokens = [token for token in re.split(r"\s+", source) if token]
+    if not tokens:
+        return {"loop_name": "Source loop", "producers": [_PRIMARY_PRODUCER]}
+    leading_index = 0
+    if tokens[0].isdigit() and int(tokens[0]) > 300:
+        leading_index = 1
+    leading_key_tokens = _key_token_count(tokens, leading_index)
+    bpm_index = next(
+        (
+            index
+            for index, token in enumerate(tokens)
+            if index >= leading_index
+            and token.isdigit()
+            and 40 <= int(token) <= 300
+        ),
+        -1,
+    )
+    if bpm_index < 0:
+        fallback = " ".join(tokens[leading_index + leading_key_tokens :]).strip()
+        return {"loop_name": fallback or source or "Source loop", "producers": [_PRIMARY_PRODUCER]}
+    loop_name = " ".join(tokens[leading_index + leading_key_tokens : bpm_index]).strip() or "Source loop"
+    producer_start = bpm_index + 1
+    if leading_key_tokens == 0:
+        producer_start += _key_token_count(tokens, producer_start)
+    return {
+        "loop_name": loop_name,
+        "producers": _unique_producers(tokens[producer_start:]),
+    }
+
+
+def _generation_producers(selections) -> list[str]:
+    return _unique_producers(
+        producer
+        for selection in selections
+        for producer in _source_provenance(selection.candidate.path.name)["producers"]
+    )
 
 
 def send(payload: dict) -> None:
@@ -818,6 +888,7 @@ def generation_artifacts(
         selection = stem.selection
         source_path = str(selection.candidate.path.resolve())
         source_metadata = metadata_by_path.get(source_path, {})
+        provenance = _source_provenance(selection.candidate.path.name)
         alternate = selection.candidate.alternate_scanned_key
         alternate_mode = selection.candidate.alternate_scanned_mode or ""
         detected_key = selection.candidate.scanned_key or selection.candidate.source_key
@@ -841,6 +912,8 @@ def generation_artifacts(
                 "identity": selection.candidate.identity,
                 "sourceFile": selection.candidate.path.name,
                 "sourceLoopId": selection.candidate.source_loop_id,
+                "sourceLoopName": provenance["loop_name"],
+                "producers": provenance["producers"],
                 "libraryRoot": source_metadata.get("library_root"),
                 "sourceDetectedKey": " ".join(
                     item for item in (detected_key, detected_mode) if item
@@ -966,6 +1039,17 @@ def generation(job_id: str, payload: dict) -> dict:
         12,
         "selection",
     )
+    generation_number = max(1, int(payload.get("generationNumber") or 1))
+    producers = _generation_producers(plan.selections)
+    display_name = " ".join(
+        (
+            "L",
+            "Generation",
+            f"{generation_number:02d}",
+            str(int(round(request.target_bpm))),
+            *producers,
+        )
+    )
 
     class ReportingBackend:
         def __init__(self) -> None:
@@ -1029,7 +1113,7 @@ def generation(job_id: str, payload: dict) -> dict:
     render_request = RenderRequest(
         plan=plan,
         output_root=Path.home() / "Documents" / "Stem Slicer" / "Generated Loops",
-        generation_name="Generated Loop",
+        generation_name=display_name,
     )
     rendered = render_generation(
         render_request,
@@ -1053,6 +1137,9 @@ def generation(job_id: str, payload: dict) -> dict:
         "result": rendered,
         "midi": midi_by_identity,
         "source_metadata": source_metadata_by_path,
+        "generation_number": generation_number,
+        "display_name": display_name,
+        "producers": producers,
     }
     while len(_generation_sessions) > 4:
         _generation_sessions.pop(next(iter(_generation_sessions)))
@@ -1065,6 +1152,9 @@ def generation(job_id: str, payload: dict) -> dict:
         "seed": request.seed,
         "targetBpm": request.target_bpm,
         "targetKey": request.target_key,
+        "generationNumber": generation_number,
+        "displayName": display_name,
+        "producers": producers,
         "elapsedSeconds": elapsed_seconds,
         "selectionSeconds": selection_seconds,
         "layers": artifacts,
@@ -1149,6 +1239,9 @@ def generation_update(job_id: str, payload: dict) -> dict:
         "seed": updated_request.plan.request.seed,
         "targetBpm": updated_request.plan.request.target_bpm,
         "targetKey": updated_request.plan.request.target_key,
+        "generationNumber": session.get("generation_number"),
+        "displayName": session.get("display_name"),
+        "producers": session.get("producers") or [_PRIMARY_PRODUCER],
         "layers": artifacts,
     }
 

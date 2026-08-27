@@ -111,6 +111,7 @@ export interface GenerateJobRequest {
   targetBpm: number
   targetKey: string
   seed: number
+  generationNumber: number
   bars?: number
   lockedIdentitiesBySlot?: Array<string | null>
   excludedIdentities?: string[]
@@ -158,6 +159,8 @@ export interface AudioArtifact {
   sourcePath?: string
   sourceFile?: string
   sourceLoopId?: string
+  sourceLoopName?: string
+  producers?: string[]
   libraryRoot?: string
   sourceDetectedKey?: string
   identity?: string
@@ -187,6 +190,17 @@ export interface KeyIssueReport {
   resolvedAt?: string
   active: boolean
   affectedLayers: KeyIssueAffectedLayer[]
+}
+
+export interface CategoryCorrection {
+  identity: string
+  libraryRoot: string
+  sourceLoopId: string
+  path: string
+  filename: string
+  previousCategory?: string
+  correctedCategory: string
+  validatedAt: string
 }
 
 export interface ReportKeyIssueRequest {
@@ -293,6 +307,9 @@ export interface GenerateResult {
   seed: number
   targetBpm: number
   targetKey: string
+  generationNumber?: number
+  displayName?: string
+  producers?: string[]
   elapsedSeconds?: number
   selectionSeconds?: number
   layers: AudioArtifact[]
@@ -348,6 +365,7 @@ export interface StemSlicerDesktopApi {
   getLibraryOverview: () => Promise<LibraryOverview>
   removeLibraryRoot: (libraryRoot: string) => Promise<LibraryOverview>
   getKeyIssueReports: () => Promise<KeyIssueReport[]>
+  getCategoryCorrections: () => Promise<CategoryCorrection[]>
   reportKeyIssue: (request: ReportKeyIssueRequest) => Promise<KeyIssueReport[]>
   setKeyIssueActive: (issueId: string, active: boolean) => Promise<KeyIssueReport[]>
   dismissKeyIssueReport: (issueId: string) => Promise<KeyIssueReport[]>

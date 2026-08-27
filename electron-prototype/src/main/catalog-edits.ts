@@ -3,11 +3,23 @@ import { existsSync, mkdirSync } from "node:fs"
 import { DatabaseSync } from "node:sqlite"
 
 import type {
+  CategoryCorrection,
   SaveSourceLoopEditRequest,
   SetLayerCategoryRequest,
   SourceLoopEditorData,
   SourceLoopEditorLayer,
 } from "../shared/contracts"
+
+interface CategoryFeedbackRow {
+  identity: string
+  library_root: string
+  source_loop_id: string
+  path: string
+  filename: string
+  previous_category: string | null
+  corrected_category: string
+  validated_at: string
+}
 
 const CATEGORIES = new Set([
   "Bass",
@@ -237,6 +249,32 @@ function recordCategoryTruth(
       correctedCategory,
       new Date().toISOString(),
     )
+  } finally {
+    database.close()
+  }
+}
+
+export function listCategoryCorrections(acceptedCachePath: string): CategoryCorrection[] {
+  const feedbackPath = feedbackDatabasePath(acceptedCachePath)
+  mkdirSync(path.dirname(feedbackPath), { recursive: true })
+  const database = new DatabaseSync(feedbackPath)
+  try {
+    ensureTruthFeedbackSchema(database)
+    const rows = database.prepare(`
+      SELECT *
+      FROM category_truth_feedback
+      ORDER BY validated_at DESC
+    `).all() as unknown as CategoryFeedbackRow[]
+    return rows.map((row) => ({
+      identity: row.identity,
+      libraryRoot: row.library_root,
+      sourceLoopId: row.source_loop_id,
+      path: row.path,
+      filename: row.filename,
+      previousCategory: row.previous_category ?? undefined,
+      correctedCategory: row.corrected_category,
+      validatedAt: row.validated_at,
+    }))
   } finally {
     database.close()
   }

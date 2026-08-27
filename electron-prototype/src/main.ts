@@ -6,7 +6,7 @@ import { existsSync, statSync } from "node:fs"
 import { pathToFileURL } from "node:url"
 
 import { AudioEngineService } from "./main/audio-engine"
-import { getSourceLoopEditor, saveSourceLoopEdit, setLayerCategory } from "./main/catalog-edits"
+import { getSourceLoopEditor, listCategoryCorrections, saveSourceLoopEdit, setLayerCategory } from "./main/catalog-edits"
 import { dismissKeyIssueReport, listKeyIssueReports, reportKeyIssue, setKeyIssueActive } from "./main/key-feedback"
 import { readLibraryOverview, removeLibraryRoot } from "./main/library-cache"
 import { mediaMimeType, parseByteRange } from "./main/media-range"
@@ -167,6 +167,7 @@ function registerIpc(): void {
     return removeLibraryRoot(acceptedCachePath, libraryRoot)
   })
   ipcMain.handle("key-issues:list", () => listKeyIssueReports(acceptedCachePath))
+  ipcMain.handle("category-corrections:list", () => listCategoryCorrections(acceptedCachePath))
   ipcMain.handle("key-issues:report", (_event: IpcMainInvokeEvent, request: ReportKeyIssueRequest) =>
     reportKeyIssue(acceptedCachePath, request),
   )

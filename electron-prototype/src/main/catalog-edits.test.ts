@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite"
 
 import { describe, expect, it } from "vitest"
 
-import { getSourceLoopEditor, saveSourceLoopEdit, setLayerCategory } from "./catalog-edits"
+import { getSourceLoopEditor, listCategoryCorrections, saveSourceLoopEdit, setLayerCategory } from "./catalog-edits"
 import { readLibraryOverview } from "./library-cache"
 
 function recoverableTestRoot(): string {
@@ -114,6 +114,14 @@ describe("catalogue edits", () => {
     })
     expect(corrected.category).toBe("Texture")
     expect(getSourceLoopEditor(fixture.acceptedCache, fixture.libraryRoot, "loop-source").layers[1].category).toBe("Texture")
+    expect(listCategoryCorrections(fixture.acceptedCache)).toEqual([
+      expect.objectContaining({
+        identity: "identity-2",
+        filename: "Loop_L2.mp3",
+        previousCategory: "Pad",
+        correctedCategory: "Texture",
+      }),
+    ])
   })
 
   it("excludes only the selected layer while preserving its catalogue record", () => {

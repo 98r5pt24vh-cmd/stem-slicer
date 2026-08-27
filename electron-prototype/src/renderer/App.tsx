@@ -25,7 +25,6 @@ import {
   Pencil,
   Play,
   Plus,
-  Radio,
   RefreshCw,
   Repeat2,
   RotateCcw,
@@ -59,6 +58,7 @@ import { Input } from "@/components/ui/input"
 import { basename, cn, formatCount, formatDecimalBytes } from "@/lib/utils"
 import { compactKeyFamilyLabel, keyFamilyForKey, keyFromFamily, randomKeyOutsidePreviousFamily, TARGET_KEY_FAMILIES } from "@/lib/random-key"
 import { studioLayerName } from "@/lib/source-loop-name"
+import { generationDisplayName, PRIMARY_PRODUCER, producerMonogram, producersForLayers, provenanceForLayer, stripAudioExtension, uniqueProducerCredits } from "@/lib/source-provenance"
 import { AUDIO_START_AHEAD_SECONDS, SharedWebAudioEngine, transportProgress } from "@/renderer/shared-web-audio-engine"
 import type {
   AudioArtifact,
@@ -66,6 +66,7 @@ import type {
   AudioJobRequest,
   AudioJobResult,
   BatchJobResult,
+  CategoryCorrection,
   GenerateResult,
   GenerationStorageUsage,
   KeyIssueReport,
@@ -104,6 +105,8 @@ interface GeneratedLayer {
   sourcePath?: string
   sourceFile?: string
   sourceLoopId?: string
+  sourceLoopName?: string
+  producers?: string[]
   libraryRoot?: string
   sourceDetectedKey?: string
   identity?: string
@@ -117,6 +120,9 @@ interface HistoryEntry {
   bpm: number
   keyName: string
   recipe: string
+  generationNumber: number
+  displayName: string
+  producers: string[]
   createdAt: string
   layerCount: number
   generation: GenerateResult
@@ -290,20 +296,50 @@ const FALLBACK_LIBRARY: LibraryOverview = {
 }
 
 const HISTORY_STORAGE_KEY = "stem-slicer-electron.generate-history.v1"
+const GENERATION_SEQUENCE_STORAGE_KEY = "stem-slicer-electron.generation-sequence.v1"
 
 function loadGenerateHistory(): HistoryEntry[] {
   try {
     const stored = window.localStorage.getItem(HISTORY_STORAGE_KEY)
     if (!stored) return []
     const parsed = JSON.parse(stored)
-    return Array.isArray(parsed)
-      ? parsed
-        .filter((item) => item && typeof item === "object" && item.generation?.masterPath && Array.isArray(item.layers))
-        .map((item) => ({ ...item, recipe: "Generated" }))
-      : []
+    if (!Array.isArray(parsed)) return []
+    const entries = parsed.filter((item) => item && typeof item === "object" && item.generation?.masterPath && Array.isArray(item.layers))
+    return entries.map((item, index) => {
+      const layers = item.layers.map((layer: GeneratedLayer) => {
+        const provenance = provenanceForLayer(layer)
+        return { ...layer, sourceLoopName: provenance.loopName, producers: provenance.producers }
+      })
+      const fallbackNumber = Math.max(1, entries.length - index)
+      const generationNumber = Number(item.generationNumber ?? item.generation?.generationNumber) || fallbackNumber
+      const producers = Array.isArray(item.producers) && item.producers.length
+        ? producersForLayers([{ producers: item.producers }])
+        : producersForLayers(layers)
+      const displayName = String(item.displayName ?? item.generation?.displayName ?? "").trim()
+        || generationDisplayName(generationNumber, Number(item.bpm) || 140, producers)
+      return {
+        ...item,
+        recipe: "Generated",
+        generationNumber,
+        displayName,
+        producers,
+        generation: { ...item.generation, generationNumber, displayName, producers },
+        layers,
+      }
+    })
   } catch {
     return []
   }
+}
+
+function loadGenerationSequence(): number {
+  const stored = Number(window.localStorage.getItem(GENERATION_SEQUENCE_STORAGE_KEY))
+  return Number.isFinite(stored) ? Math.max(0, Math.round(stored)) : 0
+}
+
+function displayNameForGeneration(result: GenerateResult, layers: GeneratedLayer[], fallbackNumber = 1): string {
+  return result.displayName?.trim()
+    || generationDisplayName(result.generationNumber ?? fallbackNumber, result.targetBpm, result.producers?.length ? result.producers : producersForLayers(layers))
 }
 
 type PlaybackMode = "idle" | "solo" | "mix"
@@ -1396,7 +1432,6 @@ function LayerCard({
   onScrubStart,
   onScrubEnd,
   onChange,
-  onToggleAlternateKey,
   onToggleKeyIssue,
   onCorrectCategory,
   onToggleLock,
@@ -1420,7 +1455,6 @@ function LayerCard({
   onScrubStart: () => void
   onScrubEnd: () => void | Promise<void>
   onChange: (layer: GeneratedLayer) => void
-  onToggleAlternateKey?: () => void
   onToggleKeyIssue?: () => void | Promise<void>
   onCorrectCategory?: (category: string) => void | Promise<void>
   onToggleLock?: () => void
@@ -1433,6 +1467,9 @@ function LayerCard({
 }) {
   const waveformScrubberRef = useRef<HTMLInputElement>(null)
   const isGenerateCard = variant === "generate"
+  const provenance = layer.identity
+    ? provenanceForLayer(layer)
+    : { loopName: "Ready to generate", producers: [PRIMARY_PRODUCER] }
   const visibleProgress = mixActive || isAudible ? progress : 0
   const seekWaveformFromPointer = (event: React.PointerEvent<HTMLDivElement>) => {
     const bounds = event.currentTarget.getBoundingClientRect()
@@ -1446,7 +1483,7 @@ function LayerCard({
   }
 
   return (
-    <Card className={cn("layer-card", isGenerateCard ? "layer-tone-spectral" : "layer-tone-extract", !isGenerateCard && "is-extract", isAudible && "is-audible", isMuted && "is-muted", isSyncSolo && "is-sync-solo", keyIssueActive && "has-key-issue")} aria-label={`${layer.category}, ${layer.file}`}>
+    <Card className={cn("layer-card", isGenerateCard ? "layer-tone-spectral" : "layer-tone-extract", !isGenerateCard && "is-extract", isAudible && "is-audible", isMuted && "is-muted", isSyncSolo && "is-sync-solo", keyIssueActive && "has-key-issue")} aria-label={`${layer.category}, ${provenance.loopName}, ${provenance.producers.join(", ")}`}>
       <CardHeader>
         <div className="layer-heading">
           {isGenerateCard ? (
@@ -1458,9 +1495,19 @@ function LayerCard({
               onChange={(category) => onChange({ ...layer, category, locked: false })}
             />
           ) : <CardTitle className="layer-category-static">{layer.category}</CardTitle>}
-          <CardDescription className="truncate" title={layer.file}>
-            {layer.file}
-          </CardDescription>
+          {isGenerateCard ? (
+            <div className="layer-provenance">
+              <strong className="truncate" title={stripAudioExtension(layer.sourceFile ?? layer.file)}>{provenance.loopName}</strong>
+              <span className="layer-producer-credit" aria-label={`Producers: ${provenance.producers.join(", ")}`}>
+                <span className="producer-avatar-stack" aria-hidden="true">
+                  {provenance.producers.slice(0, 3).map((producer) => <i key={producer}>{producerMonogram(producer)}</i>)}
+                </span>
+                <span className="truncate">{provenance.producers.join(" · ")}</span>
+              </span>
+            </div>
+          ) : (
+            <CardDescription className="truncate" title={layer.file}>{stripAudioExtension(layer.file)}</CardDescription>
+          )}
         </div>
         {isGenerateCard ? <div className="layer-card-actions">
           <WrongLayerAction
@@ -1538,19 +1585,9 @@ function LayerCard({
             <span className="wave-time tabular" aria-hidden="true">
               {(visibleProgress * layer.duration).toFixed(1)} / {layer.duration.toFixed(1)} s
             </span>
+            <span className="wave-bpm tabular"><MetronomeIcon /> {layer.bpm} BPM</span>
+            <span className="wave-key"><Music2 aria-hidden="true" /> {layer.keyName}</span>
           </div>
-        </div>
-
-        <div className="layer-metadata">
-          <span><MetronomeIcon /> {layer.bpm} BPM</span>
-          <span><Music2 aria-hidden="true" /> {layer.keyName}</span>
-          {layer.alternateKey && layer.identity && onToggleAlternateKey ? (
-            <button type="button" className="layer-alt-key" disabled={updating} title="Basculer entre la clé Top-1 et Top-2" onClick={onToggleAlternateKey}>
-              <Radio aria-hidden="true" /> {layer.sourceKeyRank === 2 ? "Top-1" : layer.alternateKey}
-            </button>
-          ) : (
-            <span className="muted" title="Aucune seconde clé mesurée"><CircleAlert aria-hidden="true" /> Top-2 unavailable</span>
-          )}
         </div>
 
         <div className="layer-controls">
@@ -1743,6 +1780,8 @@ function GenerateView({
   onReportKeyIssue,
   onSetKeyIssueActive,
   onLibraryRefresh,
+  onCategoryCorrectionsRefresh,
+  nextGenerationNumber,
   playback,
 }: {
   library: LibraryOverview
@@ -1756,6 +1795,8 @@ function GenerateView({
   onReportKeyIssue: (request: ReportKeyIssueRequest) => Promise<void>
   onSetKeyIssueActive: (issueId: string, active: boolean) => Promise<void>
   onLibraryRefresh: () => Promise<void>
+  onCategoryCorrectionsRefresh: () => Promise<void>
+  nextGenerationNumber: number
   playback: PlaybackClock
 }) {
   const [bpm, setBpm] = useState(140)
@@ -1838,6 +1879,8 @@ function GenerateView({
       sourcePath: artifact.sourcePath,
       sourceFile: artifact.sourceFile,
       sourceLoopId: artifact.sourceLoopId,
+      sourceLoopName: artifact.sourceLoopName,
+      producers: artifact.producers,
       libraryRoot: artifact.libraryRoot,
       sourceDetectedKey: artifact.sourceDetectedKey,
       identity: artifact.identity,
@@ -1849,17 +1892,23 @@ function GenerateView({
     setLayers(nextLayers)
     const elapsedLabel = generationResult.elapsedSeconds ? ` in ${generationResult.elapsedSeconds.toFixed(1)}s` : ""
     setStatus(`${generationResult.layers.length} real layers generated${elapsedLabel}`)
+    const generationNumber = generationResult.generationNumber ?? nextGenerationNumber
+    const producers = generationResult.producers?.length ? generationResult.producers : producersForLayers(nextLayers)
+    const displayName = displayNameForGeneration(generationResult, nextLayers, generationNumber)
     onAddHistory({
       id: crypto.randomUUID(),
       bpm: generationResult.targetBpm,
       keyName: generationResult.targetKey,
       recipe: "Generated",
+      generationNumber,
+      displayName,
+      producers,
       createdAt: new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit" }).format(new Date()),
       layerCount: generationResult.layers.length,
       generation: generationResult,
       layers: nextLayers,
     })
-  }, [generationResult, onAddHistory, playback, setCurrentGenerationResult, setLayers])
+  }, [generationResult, nextGenerationNumber, onAddHistory, playback, setCurrentGenerationResult, setLayers])
 
   useEffect(() => {
     if (!generationUpdateResult) return
@@ -1885,6 +1934,8 @@ function GenerateView({
         sourcePath: artifact.sourcePath,
         sourceFile: artifact.sourceFile ?? previous?.sourceFile,
         sourceLoopId: artifact.sourceLoopId ?? previous?.sourceLoopId,
+        sourceLoopName: artifact.sourceLoopName ?? previous?.sourceLoopName,
+        producers: artifact.producers ?? previous?.producers,
         libraryRoot: artifact.libraryRoot ?? previous?.libraryRoot,
         sourceDetectedKey: artifact.sourceDetectedKey ?? previous?.sourceDetectedKey,
         identity: artifact.identity,
@@ -1972,6 +2023,7 @@ function GenerateView({
       targetBpm: bpm,
       targetKey: generationKey,
       seed,
+      generationNumber: nextGenerationNumber,
       bars: 8,
       lockedIdentitiesBySlot: layers.map((layer) => layer.locked && layer.identity ? layer.identity : null),
       excludedIdentities: seedOverride == null
@@ -2000,20 +2052,6 @@ function GenerateView({
       slotIndex,
       update: "octave",
       octave: next.octave as -1 | 0 | 1,
-    }).catch(() => undefined)
-  }
-
-  const toggleAlternateKey = (slotIndex: number) => {
-    const layer = layers[slotIndex]
-    if (!currentGenerationResult?.outputDirectory || !layer?.identity || !layer.alternateKey || generateUpdateJob.busy) return
-    const nextRank = layer.sourceKeyRank === 2 ? 1 : 2
-    setStatus(`Updating ${layer.role} source key…`)
-    void generateUpdateJob.start({
-      outputDirectory: currentGenerationResult.outputDirectory,
-      identity: layer.identity,
-      slotIndex,
-      update: "source-key",
-      sourceKeyRank: nextRank,
     }).catch(() => undefined)
   }
 
@@ -2089,6 +2127,7 @@ function GenerateView({
     setRecipeDirty(true)
     setStatus(`Category validated · ${layer.sourceFile ?? layer.file} is now ${corrected.category}`)
     await onLibraryRefresh()
+    await onCategoryCorrectionsRefresh()
   }
 
   const removeLayerCard = (slotIndex: number) => {
@@ -2254,7 +2293,6 @@ function GenerateView({
                 onSeek={(nextProgress) => playback.previewScrub(layer.id, nextProgress)}
                 onScrubEnd={playback.endScrub}
                 onChange={(next) => updateGeneratedLayer(index, next)}
-                onToggleAlternateKey={() => toggleAlternateKey(index)}
                 onToggleKeyIssue={() => toggleKeyIssue(index)}
                 onCorrectCategory={(category) => correctLayerCategory(index, category)}
                 onToggleLock={() => toggleLayerLock(index)}
@@ -2801,7 +2839,7 @@ function QuickToolsView({
 
 function HistoryPlayButton({ entry, playing, onToggle }: { entry: HistoryEntry; playing: boolean; onToggle: () => void }) {
   return (
-    <Button variant="outline" size="sm" onClick={onToggle} aria-label={`${playing ? "Pause" : "Play"} ${entry.recipe} generation`}>{playing ? <Pause /> : <Play className="play-glyph" />}</Button>
+    <Button variant="outline" size="sm" onClick={onToggle} aria-label={`${playing ? "Pause" : "Play"} ${entry.displayName}`}>{playing ? <Pause /> : <Play className="play-glyph" />}</Button>
   )
 }
 
@@ -2813,8 +2851,8 @@ function historyEntryToLayer(entry: HistoryEntry): GeneratedLayer {
   const referenceLayer = entry.layers.find((layer) => layer.bars.length > 0) ?? entry.layers[0]
   return {
     id: historyLayerId(entry.id),
-    role: `${entry.recipe} combination`,
-    file: `${entry.recipe} combination`,
+    role: entry.displayName,
+    file: entry.displayName,
     category: "History",
     bpm: entry.bpm,
     keyName: entry.keyName,
@@ -2822,6 +2860,7 @@ function historyEntryToLayer(entry: HistoryEntry): GeneratedLayer {
     volume: 100,
     duration: Math.max(0, ...entry.layers.map((layer) => layer.duration)),
     path: entry.generation.masterPath,
+    producers: entry.producers,
     bars: referenceLayer?.bars ?? INITIAL_LAYERS[0].bars,
   }
 }
@@ -3459,6 +3498,7 @@ function SourceLoopStudio({
 function HistoryView({
   history,
   keyIssues,
+  categoryCorrections,
   playback,
   onReopen,
   onTrashSelected,
@@ -3468,12 +3508,13 @@ function HistoryView({
 }: {
   history: HistoryEntry[]
   keyIssues: KeyIssueReport[]
+  categoryCorrections: CategoryCorrection[]
   playback: PlaybackClock
   onReopen: (entry: HistoryEntry) => void
   onTrashSelected: (entries: HistoryEntry[]) => Promise<void>
   onSetKeyIssueActive: (issueId: string, active: boolean) => Promise<void>
   onDismissKeyIssue: (issueId: string) => Promise<void>
-  onEditSourceLoop: (issue: KeyIssueReport) => void
+  onEditSourceLoop: (request: SourceLoopStudioRequest) => void
 }) {
   const activeIssueCount = keyIssues.filter((issue) => issue.active).length
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
@@ -3541,15 +3582,16 @@ function HistoryView({
 
   return (
     <div className="page-stack">
-      <PageHeader eyebrow="Workspace / History" title="Generation history" description="Reopen combinations and review source loops reported with an incorrect key." />
+      <PageHeader eyebrow="Workspace / History" title="Generation history" description="Reopen generated loops and review every correction saved to the local library." />
       <section className="key-issues-section" aria-labelledby="key-issues-title">
         <header className="history-section-heading">
           <div>
-            <h2 id="key-issues-title">Wrong-key reports</h2>
-            <p>One report quarantines every indexed layer attached to the same source loop.</p>
+            <h2 id="key-issues-title">Library corrections</h2>
+            <p>Review quarantined source loops and the category fixes already added to the truth feedback.</p>
           </div>
-          <Badge variant={activeIssueCount > 0 ? "warning" : "secondary"}>{activeIssueCount} active</Badge>
+          <Badge variant={activeIssueCount > 0 ? "warning" : "secondary"}>{activeIssueCount} loop issue{activeIssueCount === 1 ? "" : "s"} · {categoryCorrections.length} category fix{categoryCorrections.length === 1 ? "" : "es"}</Badge>
         </header>
+        <div className="history-subsection-heading"><h3>Source loops to review</h3><span>{activeIssueCount} active</span></div>
         {keyIssues.length > 0 ? (
           <div className="key-issue-list">
             {keyIssues.map((issue) => (
@@ -3578,8 +3620,8 @@ function HistoryView({
                   </div>
                   <div className="key-issue-actions">
                     <Button variant="outline" size="sm" onClick={() => void window.stemSlicer?.revealPath(issue.reportedPath)}><FolderOpen /> Reveal</Button>
-                    <Button variant="outline" size="sm" onClick={() => onEditSourceLoop(issue)}>
-                      <Pencil aria-hidden="true" /> Edit
+                    <Button variant="outline" size="sm" onClick={() => onEditSourceLoop({ libraryRoot: issue.libraryRoot, sourceLoopId: issue.sourceLoopId, issueId: issue.id, issueActive: issue.active })}>
+                      <Pencil aria-hidden="true" /> Studio
                     </Button>
                     <Button
                       variant={issue.active ? "outline" : "ghost"}
@@ -3604,8 +3646,39 @@ function HistoryView({
               </Card>
             ))}
           </div>
-        ) : <p className="key-issues-empty">No source loop has been reported.</p>}
+        ) : <p className="key-issues-empty">No source loop is awaiting review.</p>}
         {issueError ? <p className="dialog-inline-error" role="alert">{issueError}</p> : null}
+
+        <div className="category-corrections-block">
+          <div className="history-subsection-heading"><h3>Category corrections</h3><span>{categoryCorrections.length} saved</span></div>
+          {categoryCorrections.length > 0 ? (
+            <div className="category-correction-list">
+              {categoryCorrections.map((correction) => {
+                const provenance = provenanceForLayer({ sourceFile: correction.filename, sourceLoopId: correction.sourceLoopId })
+                const relatedIssue = keyIssues.find((issue) => sourceLoopKey(issue.libraryRoot, issue.sourceLoopId) === sourceLoopKey(correction.libraryRoot, correction.sourceLoopId))
+                return (
+                  <Card key={correction.identity} className="category-correction-item">
+                    <CardContent>
+                      <span className="category-correction-icon"><Check aria-hidden="true" /></span>
+                      <div className="category-correction-copy">
+                        <strong title={stripAudioExtension(correction.filename)}>{provenance.loopName}</strong>
+                        <small>{provenance.producers.join(" · ")}</small>
+                      </div>
+                      <div className="category-correction-change">
+                        <span>{correction.previousCategory || "Unassigned"}</span><ChevronDown aria-hidden="true" /><b>{correction.correctedCategory}</b>
+                      </div>
+                      <time dateTime={correction.validatedAt}>{new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(correction.validatedAt))}</time>
+                      <div className="category-correction-actions">
+                        <Button variant="outline" size="sm" onClick={() => void window.stemSlicer?.revealPath(correction.path)}><FolderOpen aria-hidden="true" /> Reveal</Button>
+                        <Button variant="outline" size="sm" onClick={() => onEditSourceLoop({ libraryRoot: correction.libraryRoot, sourceLoopId: correction.sourceLoopId, issueId: relatedIssue?.id ?? "", issueActive: relatedIssue?.active ?? false })}><Pencil aria-hidden="true" /> Studio</Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )
+              })}
+            </div>
+          ) : <p className="key-issues-empty">No category correction has been saved yet.</p>}
+        </div>
       </section>
 
       <div className="history-section-heading history-generations-heading">
@@ -3639,32 +3712,68 @@ function HistoryView({
       </div>
       {history.length ? (
         <div className="history-list">
-          {history.map((entry) => (
-            <Card key={entry.id} className={cn("history-item", selectedIds.has(entry.id) && "is-selected")}>
-              <CardContent>
-                <label className="history-select-control">
-                  <input
-                    type="checkbox"
-                    checked={selectedIds.has(entry.id)}
-                    onChange={(event) => toggleSelected(entry.id, event.target.checked)}
-                  />
-                  <span className="sr-only">Select {entry.recipe} generation from {entry.createdAt}</span>
-                </label>
-                <span className="history-icon"><History /></span>
-                <div><strong>{entry.recipe} combination</strong><small>{entry.createdAt} · {entry.layerCount} layers</small></div>
-                <div className="history-spec"><Badge variant="secondary">{entry.recipe}</Badge><span>{entry.bpm} BPM</span><span>{entry.keyName}</span></div>
-                <div className="history-actions">
-                  <HistoryPlayButton entry={entry} playing={playback.playing && playback.mode === "solo" && playback.soloId === historyLayerId(entry.id)} onToggle={() => void playback.toggleLayer(historyLayerId(entry.id))} />
-                  <Button variant="outline" size="sm" onClick={() => void window.stemSlicer?.revealPath(entry.generation.outputDirectory)}><FolderOpen /> Open</Button>
-                  <Button variant="outline" className="history-reload" size="sm" onClick={() => onReopen(entry)}><RefreshCw /> Reload</Button>
-                  <Button variant="outline" size="sm" draggable onClick={() => void window.stemSlicer?.revealPath(entry.generation.masterPath)} onDragStart={(event) => { event.preventDefault(); window.stemSlicer?.startFileDrag(entry.generation.masterPath) }}><Layers3 /> Drag</Button>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+          {history.map((entry) => {
+            const credits = uniqueProducerCredits(entry.producers)
+            return (
+              <Card key={entry.id} className={cn("history-item", selectedIds.has(entry.id) && "is-selected")}>
+                <CardContent>
+                  <label className="history-select-control">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(entry.id)}
+                      onChange={(event) => toggleSelected(entry.id, event.target.checked)}
+                    />
+                    <span className="sr-only">Select {entry.displayName} from {entry.createdAt}</span>
+                  </label>
+                  <span className="history-icon"><History aria-hidden="true" /></span>
+                  <details className="history-generation-details">
+                    <summary>
+                      <span><strong>{entry.displayName}</strong><small>{entry.createdAt} · {entry.layerCount} layers</small></span>
+                      <ChevronDown aria-hidden="true" />
+                    </summary>
+                    <div className="history-source-breakdown">
+                      <p>Source attribution</p>
+                      <ul>
+                        {entry.layers.map((layer, index) => {
+                          const provenance = provenanceForLayer(layer)
+                          return (
+                            <li key={`${entry.id}-${layer.identity ?? layer.id}-${index}`}>
+                              <span className="history-source-index tabular">{String(index + 1).padStart(2, "0")}</span>
+                              <span className="producer-avatar-stack" aria-hidden="true">
+                                {provenance.producers.slice(0, 3).map((producer) => <i key={producer}>{producerMonogram(producer)}</i>)}
+                              </span>
+                              <span className="history-source-copy">
+                                <strong title={stripAudioExtension(layer.sourceFile ?? layer.file)}>{provenance.loopName}</strong>
+                                <small>{provenance.producers.join(" · ")}</small>
+                              </span>
+                              <Badge variant="secondary">{layer.category}</Badge>
+                            </li>
+                          )
+                        })}
+                      </ul>
+                    </div>
+                  </details>
+                  <div className="history-spec">
+                    <span className="history-credit-line" title={credits.join(", ")}>
+                      <span className="producer-avatar-stack" aria-hidden="true">{credits.slice(0, 3).map((producer) => <i key={producer}>{producerMonogram(producer)}</i>)}</span>
+                      {credits.join(" · ")}
+                    </span>
+                    <span>{entry.bpm} BPM</span>
+                    <span>{entry.keyName}</span>
+                  </div>
+                  <div className="history-actions">
+                    <HistoryPlayButton entry={entry} playing={playback.playing && playback.mode === "solo" && playback.soloId === historyLayerId(entry.id)} onToggle={() => void playback.toggleLayer(historyLayerId(entry.id))} />
+                    <Button variant="outline" size="sm" onClick={() => void window.stemSlicer?.revealPath(entry.generation.outputDirectory)}><FolderOpen aria-hidden="true" /> Open</Button>
+                    <Button variant="outline" className="history-reload" size="sm" onClick={() => onReopen(entry)}><RefreshCw aria-hidden="true" /> Reload</Button>
+                    <Button variant="outline" size="sm" draggable onClick={() => void window.stemSlicer?.revealPath(entry.generation.masterPath)} onDragStart={(event) => { event.preventDefault(); window.stemSlicer?.startFileDrag(entry.generation.masterPath) }}><Layers3 aria-hidden="true" /> Drag</Button>
+                  </div>
+                </CardContent>
+              </Card>
+            )
+          })}
         </div>
       ) : (
-        <EmptyState icon={History} title="No generation yet" description="Generate a combination and it will appear here with its musical constraints." action={<span className="empty-hint">Open Generate to create the first entry.</span>} />
+        <EmptyState icon={History} title="No generation yet" description="Generated loops will appear here with their source attribution and producer credits." action={<span className="empty-hint">Open Generate to create the first entry.</span>} />
       )}
       <Dialog.Root open={deleteOpen} onOpenChange={(open) => { setDeleteOpen(open); if (!open) setDeleteError("") }}>
         <Dialog.Portal>
@@ -3708,7 +3817,7 @@ function CloudView() {
   )
 }
 
-function GlobalPlayer({ layers, playback, contextLabel }: { layers: GeneratedLayer[]; playback: PlaybackClock; contextLabel: string }) {
+function GlobalPlayer({ layers, playback, contextLabel, displayName }: { layers: GeneratedLayer[]; playback: PlaybackClock; contextLabel: string; displayName?: string }) {
   const timelineScrubberRef = useRef<HTMLInputElement>(null)
   const soloLayer = layers.find((layer) => layer.id === playback.soloId)
   const audibleMixLayers = layers.filter((layer) => !playback.mutedIds.has(layer.id))
@@ -3725,19 +3834,16 @@ function GlobalPlayer({ layers, playback, contextLabel }: { layers: GeneratedLay
   const primaryPlaying = playback.playing && (syncEnabled ? playback.mode === "mix" : playback.mode === "solo")
   const timelineLayer = syncEnabled ? layers.find((layer) => layer.path) : soloLayer
   const duration = timelineLayer?.duration ?? currentLayer?.duration ?? 0
-  const activeFileNames = activeLayers.map((layer) => layer.file).join(" · ")
-  const playerTitle = activeLayers.length === 1
-    ? activeLayers[0].file
-    : activeLayers.length > 1
-      ? `${activeLayers.length} files playing`
-      : "No file playing"
-  const playerDetails = activeLayers.length === 1
-    ? `${activeLayers[0].category} · ${activeLayers[0].bpm} BPM · ${activeLayers[0].keyName}`
-    : activeLayers.length > 1
-      ? activeFileNames
-      : layers.length > 0
-        ? "Choose a card or start synchronized play"
-        : "No audio layers"
+  const activeFileNames = activeLayers.map((layer) => stripAudioExtension(layer.file)).join(" · ")
+  const generatedName = displayName?.trim()
+  const playerTitle = generatedName
+    || (activeLayers.length === 1 ? stripAudioExtension(activeLayers[0].file) : "No generation loaded")
+  const referenceLayer = activeLayers[0] ?? layers[0]
+  const playerDetails = generatedName && referenceLayer
+    ? `${layers.length} layer${layers.length === 1 ? "" : "s"} · ${referenceLayer.bpm} BPM · ${referenceLayer.keyName}`
+    : activeLayers.length === 1
+      ? `${activeLayers[0].category} · ${activeLayers[0].bpm} BPM · ${activeLayers[0].keyName}`
+      : "Generate a loop to start the synchronized preview"
   const seekTimelineFromPointer = (event: React.PointerEvent<HTMLDivElement>) => {
     if (!timelineLayer) return
     const bounds = event.currentTarget.getBoundingClientRect()
@@ -3816,7 +3922,9 @@ export function App() {
   const [quickPreviewLayers, setQuickPreviewLayers] = useState<GeneratedLayer[]>([])
   const [activeQuickTool, setActiveQuickTool] = useState<QuickToolId>("extract")
   const [history, setHistory] = useState<HistoryEntry[]>(loadGenerateHistory)
+  const [generationSequence, setGenerationSequence] = useState(loadGenerationSequence)
   const [keyIssues, setKeyIssues] = useState<KeyIssueReport[]>([])
+  const [categoryCorrections, setCategoryCorrections] = useState<CategoryCorrection[]>([])
   const [studioSource, setStudioSource] = useState<SourceLoopStudioRequest | null>(null)
   const [currentGenerationResult, setCurrentGenerationResult] = useState<GenerateResult | null>(null)
   const studioActive = activeView === "history" && studioSource !== null
@@ -3828,9 +3936,17 @@ export function App() {
   const resetPlayback = playback.reset
   const mainRef = useRef<HTMLElement>(null)
   const initialViewRef = useRef(true)
+  const nextGenerationNumber = Math.max(generationSequence, 0, ...history.map((entry) => entry.generationNumber)) + 1
+  const currentGenerationDisplayName = currentGenerationResult
+    ? displayNameForGeneration(currentGenerationResult, layers, Math.max(1, nextGenerationNumber - 1))
+    : undefined
+  const historyPlaybackName = activeView === "history"
+    ? history.find((entry) => historyLayerId(entry.id) === playback.soloId)?.displayName
+    : undefined
 
   const addHistory = useCallback((entry: HistoryEntry) => {
     setHistory((items) => [entry, ...items.filter((item) => item.generation.outputDirectory !== entry.generation.outputDirectory)])
+    setGenerationSequence((current) => Math.max(current, entry.generationNumber))
   }, [])
 
   const updateHistory = useCallback((generation: GenerateResult, updatedLayers: GeneratedLayer[]) => {
@@ -3847,6 +3963,11 @@ export function App() {
   const refreshKeyIssues = useCallback(async () => {
     const issues = await window.stemSlicer?.getKeyIssueReports()
     if (issues) setKeyIssues(issues)
+  }, [])
+
+  const refreshCategoryCorrections = useCallback(async () => {
+    const corrections = await window.stemSlicer?.getCategoryCorrections()
+    if (corrections) setCategoryCorrections(corrections)
   }, [])
 
   const reportKeyIssue = useCallback(async (request: ReportKeyIssueRequest) => {
@@ -3872,7 +3993,8 @@ export function App() {
     if (!api) return
     void refreshLibrary()
     void refreshKeyIssues()
-  }, [refreshKeyIssues, refreshLibrary])
+    void refreshCategoryCorrections()
+  }, [refreshCategoryCorrections, refreshKeyIssues, refreshLibrary])
 
   useEffect(() => {
     try {
@@ -3881,6 +4003,14 @@ export function App() {
       // History persistence is best-effort; generated files remain on disk.
     }
   }, [history])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(GENERATION_SEQUENCE_STORAGE_KEY, String(generationSequence))
+    } catch {
+      // Rendered filenames still retain their generation number if local storage is unavailable.
+    }
+  }, [generationSequence])
 
   useEffect(() => {
     document.title = `${studioActive ? "Studio" : NAVIGATION.find((item) => item.id === activeView)?.label ?? "Stem Slicer"} · Stem Slicer Prototype`
@@ -3910,14 +4040,9 @@ export function App() {
     setActiveView(view)
   }, [activeView, resetPlayback])
 
-  const openSourceLoopStudio = useCallback((issue: KeyIssueReport) => {
+  const openSourceLoopStudio = useCallback((request: SourceLoopStudioRequest) => {
     resetPlayback()
-    setStudioSource({
-      libraryRoot: issue.libraryRoot,
-      sourceLoopId: issue.sourceLoopId,
-      issueId: issue.id,
-      issueActive: issue.active,
-    })
+    setStudioSource(request)
   }, [resetPlayback])
 
   const closeSourceLoopStudio = useCallback(() => {
@@ -3962,15 +4087,15 @@ export function App() {
       <div className="app-workspace">
         <main id="main-content" tabIndex={-1} ref={mainRef} className={cn(activeView === "generate" && "generate-main", activeView === "quick-tools" && "quick-tools-main", activeView === "stem-slicer" && "stem-slicer-main", studioActive && "studio-main")}>
           <div hidden={activeView !== "stem-slicer"}><StemSlicerView /></div>
-          <div hidden={activeView !== "generate"}><GenerateView library={library} layers={layers} setLayers={setLayers} currentGenerationResult={currentGenerationResult} setCurrentGenerationResult={setCurrentGenerationResult} onAddHistory={addHistory} onUpdateHistory={updateHistory} keyIssues={keyIssues} onReportKeyIssue={reportKeyIssue} onSetKeyIssueActive={updateKeyIssueState} onLibraryRefresh={refreshLibrary} playback={playback} /></div>
+          <div hidden={activeView !== "generate"}><GenerateView library={library} layers={layers} setLayers={setLayers} currentGenerationResult={currentGenerationResult} setCurrentGenerationResult={setCurrentGenerationResult} onAddHistory={addHistory} onUpdateHistory={updateHistory} keyIssues={keyIssues} onReportKeyIssue={reportKeyIssue} onSetKeyIssueActive={updateKeyIssueState} onLibraryRefresh={refreshLibrary} onCategoryCorrectionsRefresh={refreshCategoryCorrections} nextGenerationNumber={nextGenerationNumber} playback={playback} /></div>
           <div hidden={activeView !== "quick-tools"}><QuickToolsView previewLayers={quickPreviewLayers} setPreviewLayers={setQuickPreviewLayers} playback={playback} onActiveToolChange={setActiveQuickTool} /></div>
           <div hidden={activeView !== "history"} className={cn("history-workspace", studioActive && "is-studio")}>
-            <div hidden={studioActive}><HistoryView history={history} keyIssues={keyIssues} playback={playback} onReopen={reopenHistory} onTrashSelected={trashHistoryEntries} onSetKeyIssueActive={updateKeyIssueState} onDismissKeyIssue={dismissKeyIssue} onEditSourceLoop={openSourceLoopStudio} /></div>
-            {studioSource ? <SourceLoopStudio active={studioActive} {...studioSource} onSetKeyIssueActive={updateKeyIssueState} onSaved={async () => refreshLibrary()} onClose={closeSourceLoopStudio} /> : null}
+            <div hidden={studioActive}><HistoryView history={history} keyIssues={keyIssues} categoryCorrections={categoryCorrections} playback={playback} onReopen={reopenHistory} onTrashSelected={trashHistoryEntries} onSetKeyIssueActive={updateKeyIssueState} onDismissKeyIssue={dismissKeyIssue} onEditSourceLoop={openSourceLoopStudio} /></div>
+            {studioSource ? <SourceLoopStudio active={studioActive} {...studioSource} onSetKeyIssueActive={updateKeyIssueState} onSaved={async () => { await refreshLibrary(); await refreshCategoryCorrections() }} onClose={closeSourceLoopStudio} /> : null}
           </div>
           <div hidden={activeView !== "cloud"}><CloudView /></div>
         </main>
-        {!studioActive ? <GlobalPlayer layers={playerLayers} playback={playback} contextLabel={activeView === "history" ? "History generation" : quickPreviewActive ? "Extracted stack" : "Generated stack"} /> : null}
+        {!studioActive ? <GlobalPlayer layers={playerLayers} playback={playback} contextLabel={activeView === "history" ? "History generation" : quickPreviewActive ? "Extracted stack" : "Generated stack"} displayName={activeView === "generate" ? currentGenerationDisplayName : historyPlaybackName} /> : null}
       </div>
     </div>
   )
