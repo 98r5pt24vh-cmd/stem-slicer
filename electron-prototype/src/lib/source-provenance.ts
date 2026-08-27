@@ -92,9 +92,21 @@ export function producersForLayers(layers: ProvenanceLayer[]): string[] {
   return uniqueProducerCredits(layers.flatMap((layer) => provenanceForLayer(layer).producers))
 }
 
-export function generationDisplayName(generationNumber: number, bpm: number, producers: Iterable<string>): string {
+export function compactGenerationKey(keyName: string): string {
+  const normalized = keyName
+    .trim()
+    .replaceAll("♯", "#")
+    .replaceAll("♭", "b")
+  const match = /^([A-G](?:#|b)?)(?:\s*(major|maj|minor|min|m))?$/i.exec(normalized)
+  if (!match) return normalized.replace(/\s+/g, "") || "Key"
+  const tonic = `${match[1][0].toUpperCase()}${match[1].slice(1)}`
+  const mode = match[2]?.toLowerCase() ?? "major"
+  return `${tonic}${mode === "minor" || mode === "min" || mode === "m" ? "m" : ""}`
+}
+
+export function generationDisplayName(generationNumber: number, bpm: number, keyName: string, producers: Iterable<string>): string {
   const number = Math.max(1, Math.round(generationNumber)).toString().padStart(2, "0")
-  return `L Generation ${number} ${Math.round(bpm)} ${uniqueProducerCredits(producers).join(" ")}`
+  return `L Gen${number}_${Math.round(bpm)}_${compactGenerationKey(keyName)} ${uniqueProducerCredits(producers).join(" ")}`
 }
 
 export function producerMonogram(producer: string): string {

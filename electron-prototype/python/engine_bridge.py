@@ -110,6 +110,61 @@ def _generation_producers(selections) -> list[str]:
     )
 
 
+def _compact_generation_key(key_name: str) -> str:
+    normalized = str(key_name or "").strip().replace("♯", "#").replace("♭", "b")
+    match = re.fullmatch(
+        r"([A-G](?:#|b)?)(?:\s*(major|maj|minor|min|m))?",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return re.sub(r"\s+", "", normalized) or "Key"
+    tonic = f"{match.group(1)[0].upper()}{match.group(1)[1:]}"
+    mode = (match.group(2) or "major").casefold()
+    return f"{tonic}{'m' if mode in {'minor', 'min', 'm'} else ''}"
+
+
+def _generation_display_name(
+    generation_number: int,
+    target_bpm: float,
+    target_key: str,
+    producers,
+) -> str:
+    return (
+        f"L Gen{max(1, int(generation_number)):02d}_"
+        f"{int(round(float(target_bpm)))}_"
+        f"{_compact_generation_key(target_key)} "
+        f"{' '.join(_unique_producers(producers))}"
+    )
+
+
+def _rename_generation_master(rendered, display_name: str):
+    invalid_filename = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+    filename_stem = invalid_filename.sub("_", str(display_name)).strip(" .") or "Generated Loop"
+    desired_path = rendered.output_directory / f"{filename_stem}.mp3"
+    if rendered.master_path == desired_path:
+        return rendered
+    if desired_path.exists():
+        raise RuntimeError(f"Refusing to overwrite an existing generated master: {desired_path}")
+
+    manifest = json.loads(rendered.manifest_path.read_text(encoding="utf-8"))
+    outputs = manifest.get("outputs")
+    if not isinstance(outputs, dict):
+        raise RuntimeError("The generated-loop manifest has no output map.")
+    outputs["master"] = desired_path.name
+    outputs["presentation"] = desired_path.name
+    temporary_manifest = rendered.manifest_path.with_name(
+        f".{uuid.uuid4().hex}-{rendered.manifest_path.name}"
+    )
+    temporary_manifest.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    os.replace(rendered.master_path, desired_path)
+    os.replace(temporary_manifest, rendered.manifest_path)
+    return replace(rendered, master_path=desired_path, presentation_path=desired_path)
+
+
 def send(payload: dict) -> None:
     with _write_lock:
         sys.stdout.write(json.dumps(payload, ensure_ascii=False, default=str) + "\n")
@@ -1041,14 +1096,11 @@ def generation(job_id: str, payload: dict) -> dict:
     )
     generation_number = max(1, int(payload.get("generationNumber") or 1))
     producers = _generation_producers(plan.selections)
-    display_name = " ".join(
-        (
-            "L",
-            "Generation",
-            f"{generation_number:02d}",
-            str(int(round(request.target_bpm))),
-            *producers,
-        )
+    display_name = _generation_display_name(
+        generation_number,
+        request.target_bpm,
+        request.target_key,
+        producers,
     )
 
     class ReportingBackend:
@@ -1120,6 +1172,7 @@ def generation(job_id: str, payload: dict) -> dict:
         backend=ReportingBackend(),
         encoder=ReportingEncoder(),
     )
+    rendered = _rename_generation_master(rendered, display_name)
     artifacts = generation_artifacts(
         rendered,
         render_request,

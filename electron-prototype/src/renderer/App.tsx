@@ -315,8 +315,12 @@ function loadGenerateHistory(): HistoryEntry[] {
       const producers = Array.isArray(item.producers) && item.producers.length
         ? producersForLayers([{ producers: item.producers }])
         : producersForLayers(layers)
-      const displayName = String(item.displayName ?? item.generation?.displayName ?? "").trim()
-        || generationDisplayName(generationNumber, Number(item.bpm) || 140, producers)
+      const displayName = generationDisplayName(
+        generationNumber,
+        Number(item.bpm) || 140,
+        String(item.keyName ?? item.generation?.targetKey ?? "A minor"),
+        producers,
+      )
       return {
         ...item,
         recipe: "Generated",
@@ -338,8 +342,23 @@ function loadGenerationSequence(): number {
 }
 
 function displayNameForGeneration(result: GenerateResult, layers: GeneratedLayer[], fallbackNumber = 1): string {
-  return result.displayName?.trim()
-    || generationDisplayName(result.generationNumber ?? fallbackNumber, result.targetBpm, result.producers?.length ? result.producers : producersForLayers(layers))
+  return generationDisplayName(
+    result.generationNumber ?? fallbackNumber,
+    result.targetBpm,
+    result.targetKey,
+    result.producers?.length ? result.producers : producersForLayers(layers),
+  )
+}
+
+function ProducerAvatarStack({ producers }: { producers: string[] }) {
+  const visible = producers.length > 3 ? producers.slice(0, 2) : producers.slice(0, 3)
+  const hiddenCount = Math.max(0, producers.length - visible.length)
+  return (
+    <span className="producer-avatar-stack" aria-hidden="true">
+      {visible.map((producer) => <i key={producer}>{producerMonogram(producer)}</i>)}
+      {hiddenCount > 0 ? <i className="is-overflow">+{hiddenCount}</i> : null}
+    </span>
+  )
 }
 
 type PlaybackMode = "idle" | "solo" | "mix"
@@ -1499,10 +1518,8 @@ function LayerCard({
             <div className="layer-provenance">
               <strong className="truncate" title={stripAudioExtension(layer.sourceFile ?? layer.file)}>{provenance.loopName}</strong>
               <span className="layer-producer-credit" aria-label={`Producers: ${provenance.producers.join(", ")}`}>
-                <span className="producer-avatar-stack" aria-hidden="true">
-                  {provenance.producers.slice(0, 3).map((producer) => <i key={producer}>{producerMonogram(producer)}</i>)}
-                </span>
-                <span className="truncate">{provenance.producers.join(" · ")}</span>
+                <ProducerAvatarStack producers={provenance.producers} />
+                <span className="truncate">{provenance.producers.join(", ")}</span>
               </span>
             </div>
           ) : (
@@ -3662,7 +3679,7 @@ function HistoryView({
                       <span className="category-correction-icon"><Check aria-hidden="true" /></span>
                       <div className="category-correction-copy">
                         <strong title={stripAudioExtension(correction.filename)}>{provenance.loopName}</strong>
-                        <small>{provenance.producers.join(" · ")}</small>
+                        <small>{provenance.producers.join(", ")}</small>
                       </div>
                       <div className="category-correction-change">
                         <span>{correction.previousCategory || "Unassigned"}</span><ChevronDown aria-hidden="true" /><b>{correction.correctedCategory}</b>
@@ -3739,12 +3756,10 @@ function HistoryView({
                           return (
                             <li key={`${entry.id}-${layer.identity ?? layer.id}-${index}`}>
                               <span className="history-source-index tabular">{String(index + 1).padStart(2, "0")}</span>
-                              <span className="producer-avatar-stack" aria-hidden="true">
-                                {provenance.producers.slice(0, 3).map((producer) => <i key={producer}>{producerMonogram(producer)}</i>)}
-                              </span>
+                              <ProducerAvatarStack producers={provenance.producers} />
                               <span className="history-source-copy">
                                 <strong title={stripAudioExtension(layer.sourceFile ?? layer.file)}>{provenance.loopName}</strong>
-                                <small>{provenance.producers.join(" · ")}</small>
+                                <small>{provenance.producers.join(", ")}</small>
                               </span>
                               <Badge variant="secondary">{layer.category}</Badge>
                             </li>
@@ -3755,8 +3770,8 @@ function HistoryView({
                   </details>
                   <div className="history-spec">
                     <span className="history-credit-line" title={credits.join(", ")}>
-                      <span className="producer-avatar-stack" aria-hidden="true">{credits.slice(0, 3).map((producer) => <i key={producer}>{producerMonogram(producer)}</i>)}</span>
-                      {credits.join(" · ")}
+                      <ProducerAvatarStack producers={credits} />
+                      {credits.join(", ")}
                     </span>
                     <span>{entry.bpm} BPM</span>
                     <span>{entry.keyName}</span>

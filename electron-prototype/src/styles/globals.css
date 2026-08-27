@@ -574,7 +574,7 @@ main:focus {
   width: min(100%, 1480px);
   margin-inline: auto;
   padding: clamp(24px, 3vw, 44px);
-  -webkit-app-region: drag;
+  -webkit-app-region: no-drag;
 }
 
 .page-stack > * {
@@ -1888,8 +1888,8 @@ main:focus {
 
 .producer-avatar-stack i {
   display: grid;
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   margin-inline-start: -3px;
   place-items: center;
   border: 1px solid rgb(225 213 0 / 0.24);
@@ -1897,10 +1897,18 @@ main:focus {
   background: linear-gradient(145deg, #31382b, #10140e);
   color: color-mix(in srgb, var(--signal-yellow) 74%, white);
   box-shadow: 0 0 0 1px rgb(4 7 4 / 0.88);
-  font-size: 5px;
+  font-size: 5.5px;
   font-style: normal;
   font-weight: 800;
   letter-spacing: -0.04em;
+}
+
+.producer-avatar-stack i.is-overflow {
+  border-color: rgb(255 255 255 / 0.14);
+  background: #20251d;
+  color: #aeb6aa;
+  font-size: 6px;
+  letter-spacing: -0.06em;
 }
 
 .layer-category-static {

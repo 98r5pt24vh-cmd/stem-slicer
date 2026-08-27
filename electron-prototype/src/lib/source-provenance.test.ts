@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 
 import {
+  compactGenerationKey,
   generationDisplayName,
   sourceProvenance,
   stripAudioExtension,
@@ -26,8 +27,9 @@ describe("source provenance", () => {
     expect(uniqueProducerCredits(["XT", "+nrgy", "xt", "Liv"])).toEqual(["+NRGY", "XT", "Liv"])
   })
 
-  it("builds the canonical generated-loop name", () => {
-    expect(generationDisplayName(1, 140, ["XT", "+NRGY"])).toBe("L Generation 01 140 +NRGY XT")
+  it("builds the compact generated-loop name with its key", () => {
+    expect(generationDisplayName(1, 140, "D# minor", ["XT", "+NRGY"])).toBe("L Gen01_140_D#m +NRGY XT")
+    expect(compactGenerationKey("G♭ major")).toBe("Gb")
   })
 
   it("removes only a final audio extension", () => {
