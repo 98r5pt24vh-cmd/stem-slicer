@@ -13,7 +13,7 @@ from pathlib import Path
 
 import numpy as np
 
-from export_category_review import CATEGORIES
+from category_taxonomy import TRAINABLE_CATEGORIES
 
 
 V2_FEATURE_ID = "mert-dsp:c0af6eae387f84d1a5dbebb2f7162f15f2ff261a11f7a8b43c3867f88dff6b2d"
@@ -106,9 +106,10 @@ def main() -> int:
         raise RuntimeError(f"Original source groups map to multiple active loops: {ambiguous!r}")
 
     def canonical_gold_group(reviewed: dict[str, str]) -> str:
-        if reviewed["origin_set"] == "candidate":
+        original_entry = original_by_hash.get(reviewed["sha256"])
+        if original_entry is None:
             return f"loop:{reviewed['source_group']}"
-        original = original_by_hash[reviewed["sha256"]][1]
+        original = original_entry[1]
         mapped = old_group_mappings.get(original["source_group"])
         if mapped:
             return f"loop:{next(iter(mapped))}"
@@ -121,7 +122,7 @@ def main() -> int:
 
     for reviewed in reviewed_rows:
         label = reviewed["final_label"]
-        if label not in CATEGORIES:
+        if label not in TRAINABLE_CATEGORIES:
             raise RuntimeError(f"Unknown reviewed label: {label}")
         sha256 = reviewed["sha256"]
         original_entry = original_by_hash.get(sha256)

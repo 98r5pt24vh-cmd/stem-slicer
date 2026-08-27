@@ -24,7 +24,7 @@ from sklearn.model_selection import StratifiedGroupKFold
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
-from export_category_review import CATEGORIES
+from category_taxonomy import TRAINABLE_CATEGORIES
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
@@ -34,6 +34,7 @@ if str(REPOSITORY_ROOT) not in sys.path:
 
 SELECTION_SEEDS = (17, 29, 43)
 CONFIRMATION_SEEDS = (59, 71, 83)
+FINAL_SEEDS = (137, 149, 163)
 C_VALUES = (0.01, 0.03, 0.1)
 
 
@@ -125,6 +126,27 @@ def ordered_probabilities(model: object, matrix: np.ndarray, scope: np.ndarray) 
     return raw[:, order]
 
 
+def remap_legacy_probabilities(
+    model: object, matrix: np.ndarray, scope: np.ndarray
+) -> np.ndarray:
+    """Map the deployed v2 scores onto the reviewed v3 taxonomy."""
+
+    raw = model.predict_proba(matrix)
+    model_classes = model.classes_.astype(str)
+    remapped = np.zeros((len(matrix), len(scope)), dtype=np.float64)
+    scope_positions = {label: index for index, label in enumerate(scope)}
+    for source_index, source_label in enumerate(model_classes):
+        destination_label = "Pluck" if source_label == "Rhythmic Pluck" else source_label
+        destination_index = scope_positions.get(destination_label)
+        if destination_index is not None:
+            remapped[:, destination_index] += raw[:, source_index]
+    totals = remapped.sum(axis=1, keepdims=True)
+    if np.any(totals <= 0.0):
+        raise RuntimeError("Legacy model scores could not be mapped to the v3 taxonomy")
+    remapped /= totals
+    return remapped
+
+
 def oof_probabilities(
     data: dict[str, object],
     feature: str,
@@ -136,7 +158,7 @@ def oof_probabilities(
     roles = data["roles"]
     producers = data["producers"]
     matrix = data[feature]
-    scope = np.asarray(CATEGORIES, dtype=str)
+    scope = np.asarray(TRAINABLE_CATEGORIES, dtype=str)
     gold = np.flatnonzero((roles == "gold_layer") & np.isin(labels, scope))
     auxiliary = np.flatnonzero(
         (roles == "auxiliary_training_only") & np.isin(labels, scope)
@@ -159,7 +181,7 @@ def oof_probabilities(
 def metrics(data: dict[str, object], probabilities: np.ndarray) -> dict[str, object]:
     labels = data["labels"]
     roles = data["roles"]
-    scope = np.asarray(CATEGORIES, dtype=str)
+    scope = np.asarray(TRAINABLE_CATEGORIES, dtype=str)
     gold = np.flatnonzero((roles == "gold_layer") & np.isin(labels, scope))
     predicted = scope[np.argmax(probabilities, axis=2)]
     macro = [
@@ -191,7 +213,7 @@ def candidate_metrics(
     labels = data["labels"]
     roles = data["roles"]
     origin_sets = data["origin_sets"]
-    scope = np.asarray(CATEGORIES, dtype=str)
+    scope = np.asarray(TRAINABLE_CATEGORIES, dtype=str)
     gold = np.flatnonzero((roles == "gold_layer") & np.isin(labels, scope))
     local_candidate = np.flatnonzero(origin_sets[gold] == "candidate")
     truth = labels[gold[local_candidate]]
@@ -239,7 +261,7 @@ def combine_classwise(
     base: np.ndarray, temporal: np.ndarray, temporal_classes: list[str]
 ) -> np.ndarray:
     combined = base.copy()
-    for index, label in enumerate(CATEGORIES):
+    for index, label in enumerate(TRAINABLE_CATEGORIES):
         if label in temporal_classes:
             combined[:, :, index] = temporal[:, :, index]
     combined /= combined.sum(axis=2, keepdims=True)
@@ -254,8 +276,10 @@ def current_model_challenge(
     )
     payload = joblib.load(current_model_path)
     model = payload["model"] if isinstance(payload, dict) else payload
-    scope = np.asarray(CATEGORIES, dtype=str)
-    probabilities = ordered_probabilities(model, data["temporal"][candidate], scope)
+    scope = np.asarray(TRAINABLE_CATEGORIES, dtype=str)
+    probabilities = remap_legacy_probabilities(
+        model, data["temporal"][candidate], scope
+    )
     predicted = scope[np.argmax(probabilities, axis=1)]
     truth = data["labels"][candidate]
     report = classification_report(
@@ -263,7 +287,10 @@ def current_model_challenge(
     )
     return {
         "rows": int(len(candidate)),
-        "note": "Manually reviewed, previously unseen high-confidence v2 candidates; targeted rather than random.",
+        "note": (
+            "Manually reviewed, previously unseen candidates actively sampled from "
+            "the deployed v2; targeted rather than random."
+        ),
         "accuracy": float(accuracy_score(truth, predicted)),
         "macro_f1_all_14_classes": float(
             f1_score(truth, predicted, labels=scope, average="macro", zero_division=0)
@@ -292,7 +319,7 @@ def main() -> int:
     temporal_selected_metrics = metrics(data, selected_temporal)
     temporal_classes = [
         label
-        for label in CATEGORIES
+        for label in TRAINABLE_CATEGORIES
         if temporal_selected_metrics["per_class_f1"][label]
         > base_selected_metrics["per_class_f1"][label] + 0.01
     ]
@@ -307,6 +334,11 @@ def main() -> int:
     confirmation_classwise = combine_classwise(
         confirmation_base, confirmation_temporal, temporal_classes
     )
+    final_base = oof_probabilities(data, "base", base_c, FINAL_SEEDS)
+    final_temporal = oof_probabilities(data, "temporal", temporal_c, FINAL_SEEDS)
+    final_classwise = combine_classwise(
+        final_base, final_temporal, temporal_classes
+    )
 
     gold_count = int(np.sum(data["roles"] == "gold_layer"))
     gold_groups = len(
@@ -314,7 +346,7 @@ def main() -> int:
     )
     result = {
         "protocol": {
-            "classes": list(CATEGORIES),
+            "classes": list(TRAINABLE_CATEGORIES),
             "gold_rows": gold_count,
             "gold_source_groups": gold_groups,
             "auxiliary_training_only": int(
@@ -322,6 +354,7 @@ def main() -> int:
             ),
             "selection_seeds": list(SELECTION_SEEDS),
             "confirmation_seeds": list(CONFIRMATION_SEEDS),
+            "final_seeds": list(FINAL_SEEDS),
             "folds": 4,
             "grouped_by_source_loop": True,
             "auxiliary_never_scored": True,
@@ -349,14 +382,28 @@ def main() -> int:
             "temporal": metrics(data, confirmation_temporal),
             "classwise": metrics(data, confirmation_classwise),
         },
+        "final": {
+            "base": metrics(data, final_base),
+            "temporal": metrics(data, final_temporal),
+            "classwise": metrics(data, final_classwise),
+        },
         "confirmation_candidate_challenge": {
             "note": (
-                "Only the 138 newly reviewed candidate rows are scored; every row and "
+                "Only newly reviewed candidate rows are scored; every row and "
                 "all siblings from its source loop are excluded from that fold's training."
             ),
             "base": candidate_metrics(data, confirmation_base),
             "temporal": candidate_metrics(data, confirmation_temporal),
             "classwise": candidate_metrics(data, confirmation_classwise),
+        },
+        "final_candidate_challenge": {
+            "note": (
+                "Final untouched seeds; only newly reviewed candidate rows are scored "
+                "and complete source-loop groups remain isolated."
+            ),
+            "base": candidate_metrics(data, final_base),
+            "temporal": candidate_metrics(data, final_temporal),
+            "classwise": candidate_metrics(data, final_classwise),
         },
     }
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -369,7 +416,7 @@ def main() -> int:
         "current_v2_candidate_challenge "
         f"accuracy={result['current_v2_candidate_challenge']['accuracy']:.4f}"
     )
-    for phase in ("selection", "confirmation"):
+    for phase in ("selection", "confirmation", "final"):
         print(phase)
         for name in ("base", "temporal", "classwise"):
             value = result[phase][name]
@@ -380,6 +427,13 @@ def main() -> int:
     print("confirmation_candidate_challenge")
     for name in ("base", "temporal", "classwise"):
         value = result["confirmation_candidate_challenge"][name]
+        print(
+            f"  {name:10s} macro_f1={value['macro_f1_all_14_classes_mean']:.4f} "
+            f"accuracy={value['accuracy_mean']:.4f}"
+        )
+    print("final_candidate_challenge")
+    for name in ("base", "temporal", "classwise"):
+        value = result["final_candidate_challenge"][name]
         print(
             f"  {name:10s} macro_f1={value['macro_f1_all_14_classes_mean']:.4f} "
             f"accuracy={value['accuracy_mean']:.4f}"
