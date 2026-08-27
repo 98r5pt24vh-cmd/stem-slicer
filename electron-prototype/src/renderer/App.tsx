@@ -1386,15 +1386,12 @@ function LayerCard({
   onToggleAlternateKey,
   onToggleKeyIssue,
   onCorrectCategory,
-  onSourceEditSaved,
-  onSetKeyIssueActive,
   onToggleLock,
   onRemove,
   categoryOptions,
   canRemove,
   updating = false,
   keyIssueActive = false,
-  keyIssue,
   variant = "generate",
 }: {
   layer: GeneratedLayer
@@ -1413,15 +1410,12 @@ function LayerCard({
   onToggleAlternateKey?: () => void
   onToggleKeyIssue?: () => void | Promise<void>
   onCorrectCategory?: (category: string) => void | Promise<void>
-  onSourceEditSaved?: (editor: SourceLoopEditorData) => void | Promise<void>
-  onSetKeyIssueActive?: (issueId: string, active: boolean) => Promise<void>
   onToggleLock?: () => void
   onRemove?: () => void
   categoryOptions?: string[]
   canRemove?: boolean
   updating?: boolean
   keyIssueActive?: boolean
-  keyIssue?: KeyIssueReport
   variant?: "generate" | "extract"
 }) {
   const waveformScrubberRef = useRef<HTMLInputElement>(null)
@@ -1456,16 +1450,6 @@ function LayerCard({
           </CardDescription>
         </div>
         {isGenerateCard ? <div className="layer-card-actions">
-          <SourceLoopEditorDialog
-            libraryRoot={layer.libraryRoot}
-            sourceLoopId={layer.sourceLoopId}
-            issueId={keyIssue?.id}
-            issueActive={Boolean(keyIssue?.active)}
-            disabled={!layer.sourceLoopId || !layer.libraryRoot || updating}
-            compactTrigger
-            onSetKeyIssueActive={onSetKeyIssueActive}
-            onSaved={(editor) => onSourceEditSaved?.(editor)}
-          />
           <WrongLayerAction
             layer={layer}
             active={keyIssueActive}
@@ -2094,30 +2078,6 @@ function GenerateView({
     await onLibraryRefresh()
   }
 
-  const applySourceLoopEditorSaved = async (slotIndex: number, editor: SourceLoopEditorData) => {
-    const layer = layers[slotIndex]
-    if (!layer) return
-    const editedSource = sourceLoopKey(editor.libraryRoot, editor.sourceLoopId)
-    const editedByIdentity = new Map(editor.layers.map((item) => [item.identity, item]))
-    const nextLayers = layers.map((item) => {
-      if (sourceLoopKey(item.libraryRoot, item.sourceLoopId) !== editedSource) return item
-      const editedLayer = item.identity ? editedByIdentity.get(item.identity) : undefined
-      return {
-        ...item,
-        bpm: editor.bpm,
-        keyName: editor.keyName,
-        category: editedLayer?.category ?? item.category,
-        role: editedLayer?.category ?? item.role,
-        locked: false,
-      }
-    })
-    setLayers(nextLayers)
-    if (currentGenerationResult) onUpdateHistory(currentGenerationResult, nextLayers)
-    setRecipeDirty(true)
-    setStatus(`Source loop edited · ${layer.sourceFile ?? layer.file}`)
-    await onLibraryRefresh()
-  }
-
   const removeLayerCard = (slotIndex: number) => {
     setRecipeDirty(true)
     setLayers((current) => current.length <= 1 ? current : current.filter((_, index) => index !== slotIndex))
@@ -2284,14 +2244,11 @@ function GenerateView({
                 onToggleAlternateKey={() => toggleAlternateKey(index)}
                 onToggleKeyIssue={() => toggleKeyIssue(index)}
                 onCorrectCategory={(category) => correctLayerCategory(index, category)}
-                onSourceEditSaved={(editor) => applySourceLoopEditorSaved(index, editor)}
-                onSetKeyIssueActive={onSetKeyIssueActive}
                 onToggleLock={() => toggleLayerLock(index)}
                 onRemove={() => removeLayerCard(index)}
                 categoryOptions={selectedCategories.map((category) => category.name)}
                 canRemove={layers.length > 1}
                 updating={generateUpdateJob.busy}
-                keyIssue={activeKeyIssueBySource.get(sourceLoopKey(layer.libraryRoot, layer.sourceLoopId))}
                 keyIssueActive={activeKeyIssueBySource.has(sourceLoopKey(layer.libraryRoot, layer.sourceLoopId))}
               />
             ))}
@@ -2893,7 +2850,6 @@ function SourceLoopEditorDialog({
   issueId,
   issueActive = false,
   disabled = false,
-  compactTrigger = false,
   onSetKeyIssueActive,
   onSaved,
 }: {
@@ -2902,7 +2858,6 @@ function SourceLoopEditorDialog({
   issueId?: string
   issueActive?: boolean
   disabled?: boolean
-  compactTrigger?: boolean
   onSetKeyIssueActive?: (issueId: string, active: boolean) => Promise<void>
   onSaved: (editor: SourceLoopEditorData) => void | Promise<void>
 }) {
@@ -3079,7 +3034,7 @@ function SourceLoopEditorDialog({
         }
       }}
     >
-      <Dialog.Trigger className={compactTrigger ? "layer-mini-action layer-edit-action" : "source-loop-edit-trigger"} disabled={disabled}>
+      <Dialog.Trigger className="source-loop-edit-trigger" disabled={disabled}>
         <Pencil aria-hidden="true" /><span>Edit</span>
       </Dialog.Trigger>
       <Dialog.Portal>

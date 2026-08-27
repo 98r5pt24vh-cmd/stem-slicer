@@ -1784,10 +1784,6 @@ main:focus {
   min-width: 42px;
 }
 
-.layer-edit-action {
-  min-width: 42px;
-}
-
 .layer-wrong-action {
   min-width: 50px;
   border-color: rgb(230 57 0 / 0.34);
@@ -8058,12 +8054,6 @@ main.quick-tools-main {
   .layer-lock-action:hover:not(:disabled) {
     border-color: rgb(225 213 0 / 0.48);
     background: rgb(225 213 0 / 0.1);
-    color: var(--signal-yellow);
-  }
-
-  .layer-edit-action:hover:not(:disabled) {
-    border-color: rgb(225 213 0 / 0.34);
-    background: rgb(225 213 0 / 0.07);
     color: var(--signal-yellow);
   }
 
