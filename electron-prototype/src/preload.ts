@@ -4,6 +4,7 @@ import type { AudioJobEvent, StemSlicerDesktopApi } from "./shared/contracts"
 
 const api: StemSlicerDesktopApi = {
   getEnvironment: () => ipcRenderer.invoke("app:get-environment"),
+  getGenerationStorageUsage: () => ipcRenderer.invoke("history:get-storage-usage"),
   getLibraryOverview: () => ipcRenderer.invoke("library:get-overview"),
   removeLibraryRoot: (libraryRoot) => ipcRenderer.invoke("library:remove-root", libraryRoot),
   getKeyIssueReports: () => ipcRenderer.invoke("key-issues:list"),

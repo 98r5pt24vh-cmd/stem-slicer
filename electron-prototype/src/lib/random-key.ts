@@ -26,6 +26,13 @@ export function keyFamilyForKey(keyName: string): string {
     ?? TARGET_KEY_FAMILIES[0]
 }
 
+export function compactKeyFamilyLabel(family: string): string {
+  return family
+    .split("/")
+    .map((member) => member.trim().replace(/ major$/i, " MAJ").replace(/ minor$/i, " min"))
+    .join("/")
+}
+
 export function keyFromFamily(family: string, previousKey: string): string {
   const members = family.split("/").map((member) => member.trim())
   return previousKey.toLowerCase().endsWith(" minor") && members[1] ? members[1] : members[0]

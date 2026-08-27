@@ -15,6 +15,7 @@ import {
   Dices,
   FolderCog,
   FolderOpen,
+  HardDrive,
   History,
   Layers3,
   Lock,
@@ -54,8 +55,8 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { basename, cn, formatCount } from "@/lib/utils"
-import { keyFamilyForKey, keyFromFamily, randomKeyOutsidePreviousFamily, TARGET_KEY_FAMILIES } from "@/lib/random-key"
+import { basename, cn, formatCount, formatDecimalBytes } from "@/lib/utils"
+import { compactKeyFamilyLabel, keyFamilyForKey, keyFromFamily, randomKeyOutsidePreviousFamily, TARGET_KEY_FAMILIES } from "@/lib/random-key"
 import { AUDIO_START_AHEAD_SECONDS, SharedWebAudioEngine, transportProgress } from "@/renderer/shared-web-audio-engine"
 import type {
   AudioArtifact,
@@ -64,6 +65,7 @@ import type {
   AudioJobResult,
   BatchJobResult,
   GenerateResult,
+  GenerationStorageUsage,
   KeyIssueReport,
   LibraryOverview,
   QuickConvertResult,
@@ -1005,6 +1007,7 @@ function Select({
   disabled = false,
   forceBelow = false,
   className,
+  optionLabel,
 }: {
   id: string
   label: string
@@ -1014,14 +1017,16 @@ function Select({
   disabled?: boolean
   forceBelow?: boolean
   className?: string
+  optionLabel?: (option: string) => string
 }) {
   const labelId = `${id}-label`
+  const items = options.map((option) => ({ label: optionLabel?.(option) ?? option, value: option }))
   return (
     <div className={cn("control-field", className)}>
       <span id={labelId}>{label}</span>
       <BaseSelect.Root
         id={id}
-        items={options.map((option) => ({ label: option, value: option }))}
+        items={items}
         value={value}
         disabled={disabled}
         onValueChange={(nextValue) => {
@@ -1045,7 +1050,7 @@ function Select({
               <BaseSelect.List className="custom-select-list">
                 {options.map((option) => (
                   <BaseSelect.Item className="custom-select-item" key={option} value={option}>
-                    <BaseSelect.ItemText>{option}</BaseSelect.ItemText>
+                    <BaseSelect.ItemText>{optionLabel?.(option) ?? option}</BaseSelect.ItemText>
                     <BaseSelect.ItemIndicator><Check aria-hidden="true" /></BaseSelect.ItemIndicator>
                   </BaseSelect.Item>
                 ))}
@@ -1256,13 +1261,13 @@ function PageHeader({
   actions?: React.ReactNode
 }) {
   return (
-    <header className="page-header">
+    <header className="page-header app-drag-region">
       <div>
         <p className="eyebrow">{eyebrow}</p>
         <h1>{title}</h1>
         <p className="page-description">{description}</p>
       </div>
-      {actions ? <div className="page-actions">{actions}</div> : null}
+      {actions ? <div className="page-actions app-no-drag">{actions}</div> : null}
     </header>
   )
 }
@@ -2132,7 +2137,7 @@ function GenerateView({
               onChange={(event) => setBpm(Number(event.target.value))}
             />
           </label>
-          <Select id="target-key" label="Target key" value={keyFamilyForKey(keyName)} onChange={(family) => setKeyName(keyFromFamily(family, keyName))} options={TARGET_KEY_FAMILIES} forceBelow />
+          <Select id="target-key" label="Target key" value={keyFamilyForKey(keyName)} onChange={(family) => setKeyName(keyFromFamily(family, keyName))} options={TARGET_KEY_FAMILIES} optionLabel={compactKeyFamilyLabel} className="key-family-select" forceBelow />
           <div className="generate-action">
             <span className="sr-only" aria-live="polite">{generateJob.error || (generateJob.busy ? generateJob.message : status)}</span>
             <button
@@ -2466,7 +2471,7 @@ function StemSlicerView() {
               </label>
               <div className="unified-target-field">
                 <label className="unified-target-heading"><input type="checkbox" checked={targetKeyEnabled} onChange={(event) => setTargetKeyEnabled(event.target.checked)} /><b>Target key</b></label>
-                <Select id="stem-target-key" label="Stem Slicer target key" value={targetKey} onChange={setTargetKey} options={TARGET_KEY_FAMILIES} disabled={!targetKeyEnabled} className="inline-select" />
+                <Select id="stem-target-key" label="Stem Slicer target key" value={targetKey} onChange={setTargetKey} options={TARGET_KEY_FAMILIES} optionLabel={compactKeyFamilyLabel} disabled={!targetKeyEnabled} className="inline-select key-family-select" />
               </div>
               <div className="unified-convert-route"><Repeat2 aria-hidden="true" /><div><span>Conversion input</span><strong>{layerExtraction ? "Extracted layers" : "Source loops"}</strong><small>Automatically follows the extraction setting.</small></div></div>
             </div>
@@ -2666,7 +2671,7 @@ function QuickToolsView({
                 </label>
                 <div className="quick-setting-card quick-setting-key">
                   <label className="quick-setting-heading"><input type="checkbox" checked={extractKeyEnabled} onChange={(event) => setExtractKeyEnabled(event.target.checked)} /><b>Target key</b></label>
-                  <Select id="quick-extract-key" label="Quick Extract target key" value={extractKey} onChange={setExtractKey} options={TARGET_KEY_FAMILIES} disabled={!extractKeyEnabled} className="inline-select" />
+                  <Select id="quick-extract-key" label="Quick Extract target key" value={extractKey} onChange={setExtractKey} options={TARGET_KEY_FAMILIES} optionLabel={compactKeyFamilyLabel} disabled={!extractKeyEnabled} className="inline-select key-family-select" />
                 </div>
               </div>
 
@@ -2770,7 +2775,7 @@ function QuickToolsView({
                 <span className="quick-source-action">Browse loop</span>
               </button>
               <label className="quick-convert-field"><span>Target BPM</span><Input aria-label="Quick Convert target BPM" type="number" min="40" max="300" value={convertBpm} onChange={(event) => setConvertBpm(Number(event.target.value))} /></label>
-              <Select id="quick-convert-key" label="Target key" value={convertKey} onChange={setConvertKey} options={TARGET_KEY_FAMILIES} />
+              <Select id="quick-convert-key" label="Target key" value={convertKey} onChange={setConvertKey} options={TARGET_KEY_FAMILIES} optionLabel={compactKeyFamilyLabel} className="key-family-select" />
               <Button className="quick-run-button" onClick={runConvert} disabled={!convertJob.busy && !convertFile}>{convertJob.busy ? <X /> : <Repeat2 />} {convertJob.busy ? "Cancel" : "Convert"}</Button>
             </div>
 
@@ -3102,8 +3107,8 @@ function SourceLoopStudio({
 
   return (
     <section className="source-loop-studio" aria-labelledby="source-loop-studio-title">
-      <header className="source-loop-editor-header">
-        <button type="button" className="source-loop-studio-back" onClick={onClose}>
+      <header className="source-loop-editor-header app-drag-region">
+        <button type="button" className="source-loop-studio-back app-no-drag" onClick={onClose}>
           <ChevronLeft aria-hidden="true" /><span>History</span>
         </button>
         <div className="source-loop-studio-title">
@@ -3119,16 +3124,18 @@ function SourceLoopStudio({
         <>
           <section className="source-loop-editor-toolbar" aria-label="Loop settings and preview transport">
                   <div className="mini-daw-transport">
+                    <div className="player-controls">
+                      <button type="button" className={cn("player-key player-loop-key", loopEnabled && "is-active")} aria-pressed={loopEnabled} aria-label={loopEnabled ? "Disable loop playback" : "Enable loop playback"} onClick={toggleLoop}><Repeat2 aria-hidden="true" /></button>
+                      <button type="button" className={cn("player-key player-key-primary", playing && "is-active")} aria-label={playing ? "Pause preview" : "Play preview"} onClick={() => playing ? pausePreview() : void startPreview()}>
+                        {playing ? <Pause aria-hidden="true" /> : <Play className="play-glyph" aria-hidden="true" />}
+                      </button>
+                      <button type="button" className="player-key" aria-label="Stop and return to beginning" onClick={() => { pausePreview(); setProgress(0) }}><SkipBack aria-hidden="true" /></button>
+                    </div>
                     <span className="mini-daw-time" aria-live="off"><b>{formatEditorClock(progress, draft.bpm)}</b><i>{formatEditorPosition(progress)}</i></span>
-                    <button type="button" className={cn("mini-daw-primary-play", playing && "is-active")} aria-label={playing ? "Pause preview" : "Play preview"} onClick={() => playing ? pausePreview() : void startPreview()}>
-                      {playing ? <Pause aria-hidden="true" /> : <Play className="play-glyph" aria-hidden="true" />}
-                    </button>
-                    <button type="button" aria-label="Return to beginning" onClick={() => { pausePreview(); setProgress(0) }}><SkipBack aria-hidden="true" /></button>
-                    <button type="button" className={cn("mini-daw-loop-state", loopEnabled && "is-active")} aria-pressed={loopEnabled} aria-label={loopEnabled ? "Disable loop playback" : "Enable loop playback"} onClick={toggleLoop}><Repeat2 aria-hidden="true" /><span>Loop</span></button>
                   </div>
                   <div className="mini-daw-project-settings">
                     <label className="mini-daw-number-field"><span>BPM</span><Input type="number" min="40" max="300" value={draft.bpm} onChange={(event) => { pausePreview(); setDraft({ ...draft, bpm: Number(event.target.value) }) }} /></label>
-                    <Select id={`source-loop-key-${dialogSlug}`} label="Key / relative" value={keyFamilyForKey(draft.keyName)} onChange={(family) => { pausePreview(); setDraft({ ...draft, keyName: keyFromFamily(family, draft.keyName) }) }} options={TARGET_KEY_FAMILIES} forceBelow />
+                    <Select id={`source-loop-key-${dialogSlug}`} label="Key / relative" value={keyFamilyForKey(draft.keyName)} onChange={(family) => { pausePreview(); setDraft({ ...draft, keyName: keyFromFamily(family, draft.keyName) }) }} options={TARGET_KEY_FAMILIES} optionLabel={compactKeyFamilyLabel} className="key-family-select" forceBelow />
                   </div>
                 </section>
 
@@ -3377,13 +3384,26 @@ function HistoryView({
   const [deleteError, setDeleteError] = useState("")
   const [dismissingIssueId, setDismissingIssueId] = useState<string | null>(null)
   const [issueError, setIssueError] = useState("")
+  const [storageUsage, setStorageUsage] = useState<GenerationStorageUsage | null>(null)
+  const [storageError, setStorageError] = useState("")
   const selectedEntries = history.filter((entry) => selectedIds.has(entry.id))
   const allSelected = history.length > 0 && selectedEntries.length === history.length
+
+  const refreshStorageUsage = useCallback(async () => {
+    setStorageError("")
+    try {
+      const usage = await window.stemSlicer?.getGenerationStorageUsage()
+      if (usage) setStorageUsage(usage)
+    } catch (reason) {
+      setStorageError(reason instanceof Error ? reason.message : "Generation storage is unavailable.")
+    }
+  }, [])
 
   useEffect(() => {
     const availableIds = new Set(history.map((entry) => entry.id))
     setSelectedIds((current) => new Set([...current].filter((id) => availableIds.has(id))))
-  }, [history])
+    void refreshStorageUsage()
+  }, [history, refreshStorageUsage])
 
   const toggleSelected = (entryId: string, selected: boolean) => {
     setSelectedIds((current) => {
@@ -3492,21 +3512,31 @@ function HistoryView({
 
       <div className="history-section-heading history-generations-heading">
         <div><h2>Generations</h2><p>Previously rendered stacks remain available here.</p></div>
-        <div className="history-selection-actions" aria-live="polite">
-          <span>{selectedEntries.length > 0 ? `${selectedEntries.length} selected` : `${history.length} generations`}</span>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={history.length === 0}
-            aria-pressed={allSelected}
-            onClick={() => setSelectedIds(allSelected ? new Set() : new Set(history.map((entry) => entry.id)))}
+        <div className="history-generation-tools">
+          <span
+            className={cn("history-storage-usage", storageError && "is-unavailable")}
+            role="status"
+            title={storageError || (storageUsage ? `${storageUsage.folders} generation folders · ${storageUsage.files} files` : "Calculating generation storage")}
           >
-            {allSelected ? <Square aria-hidden="true" /> : <CheckSquare2 aria-hidden="true" />}
-            {allSelected ? "Clear selection" : "Select all"}
-          </Button>
-          <Button variant="destructive" size="sm" disabled={selectedEntries.length === 0} onClick={() => setDeleteOpen(true)}>
-            <Trash2 aria-hidden="true" /> Move selected to Trash
-          </Button>
+            <HardDrive aria-hidden="true" />
+            <span><b>{storageUsage ? formatDecimalBytes(storageUsage.bytes) : "…"}</b><small>generation storage</small></span>
+          </span>
+          <div className="history-selection-actions" aria-live="polite">
+            <span>{selectedEntries.length > 0 ? `${selectedEntries.length} selected` : `${history.length} generations`}</span>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={history.length === 0}
+              aria-pressed={allSelected}
+              onClick={() => setSelectedIds(allSelected ? new Set() : new Set(history.map((entry) => entry.id)))}
+            >
+              {allSelected ? <Square aria-hidden="true" /> : <CheckSquare2 aria-hidden="true" />}
+              {allSelected ? "Clear selection" : "Select all"}
+            </Button>
+            <Button variant="destructive" size="sm" disabled={selectedEntries.length === 0} onClick={() => setDeleteOpen(true)}>
+              <Trash2 aria-hidden="true" /> Move selected to Trash
+            </Button>
+          </div>
         </div>
       </div>
       {history.length ? (
@@ -3619,8 +3649,8 @@ function GlobalPlayer({ layers, playback, contextLabel }: { layers: GeneratedLay
   }
 
   return (
-    <footer className="global-player app-no-drag" aria-label="Global audio preview">
-      <div className="player-current">
+    <footer className="global-player app-drag-region" aria-label="Global audio preview">
+      <div className="player-current app-no-drag">
         <span className="player-art"><AudioLines aria-hidden="true" /></span>
         <div>
           <strong title={activeFileNames || undefined}>{playerTitle}</strong>
@@ -3628,7 +3658,7 @@ function GlobalPlayer({ layers, playback, contextLabel }: { layers: GeneratedLay
         </div>
         {playback.error ? <Badge variant="warning" title={playback.error}>Audio unavailable</Badge> : null}
       </div>
-      <div className="player-core">
+      <div className="player-core app-no-drag">
         <div className="player-controls">
           <button type="button" className={cn("player-key player-loop-key", playback.loopEnabled && "is-active")} onClick={() => void playback.toggleLoopMode()} aria-pressed={playback.loopEnabled} aria-label={playback.loopEnabled ? "Disable loop playback" : "Enable loop playback"}><Repeat2 aria-hidden="true" /></button>
           <button type="button" className={cn("player-key player-key-primary", primaryPlaying && "is-active")} onClick={() => void playback.togglePrimary()} aria-label={syncEnabled ? mixPlaying ? "Pause all layers" : "Play all layers" : primaryPlaying ? "Pause selected layer" : "Play selected layer"}>{primaryPlaying ? <Pause aria-hidden="true" /> : <Play className="play-glyph" aria-hidden="true" />}</button>
@@ -3675,7 +3705,7 @@ function GlobalPlayer({ layers, playback, contextLabel }: { layers: GeneratedLay
           <span className="tabular">{((timelineLayer ? playback.progress : 0) * duration).toFixed(1)} / {duration.toFixed(1)} s</span>
         </div>
       </div>
-      <label className="player-volume"><Volume2 aria-hidden="true" /><span className="sr-only">Preview volume</span><span className="volume-range"><input type="range" min="0" max="125" value={playback.masterVolume} onChange={(event) => playback.setMasterVolume(Number(event.target.value))} /><span className="volume-unity-marker" aria-hidden="true" /></span><output className="tabular">{playback.masterVolume}%</output></label>
+      <label className="player-volume app-no-drag"><Volume2 aria-hidden="true" /><span className="sr-only">Preview volume</span><span className="volume-range"><input type="range" min="0" max="125" value={playback.masterVolume} onChange={(event) => playback.setMasterVolume(Number(event.target.value))} /><span className="volume-unity-marker" aria-hidden="true" /></span><output className="tabular">{playback.masterVolume}%</output></label>
     </footer>
   )
 }

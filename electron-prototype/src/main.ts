@@ -11,6 +11,7 @@ import { dismissKeyIssueReport, listKeyIssueReports, reportKeyIssue, setKeyIssue
 import { readLibraryOverview, removeLibraryRoot } from "./main/library-cache"
 import { mediaMimeType, parseByteRange } from "./main/media-range"
 import { migrationModules } from "./main/migration-modules"
+import { readGenerationStorageUsage } from "./main/storage-usage"
 import type {
   AudioJobKind,
   AudioJobRequest,
@@ -155,6 +156,7 @@ function registerIpc(): void {
     acceptedCachePath,
     acceptedCacheAccess: "read-only" as const,
   }))
+  ipcMain.handle("history:get-storage-usage", () => readGenerationStorageUsage(generatedOutputRoot))
   ipcMain.handle("library:get-overview", () =>
     readLibraryOverview(acceptedCachePath),
   )

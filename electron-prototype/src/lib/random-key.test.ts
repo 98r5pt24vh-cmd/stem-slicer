@@ -1,10 +1,16 @@
 import { describe, expect, it } from "vitest"
 
 import {
+  compactKeyFamilyLabel,
   keyFamilyForKey,
   randomKeyOutsidePreviousFamily,
   TARGET_KEY_FAMILIES,
 } from "./random-key"
+
+it("formats relative-key families compactly without changing their stored value", () => {
+  expect(compactKeyFamilyLabel("C♯ major / A♯ minor")).toBe("C♯ MAJ/A♯ min")
+  expect(compactKeyFamilyLabel("F major / D minor")).toBe("F MAJ/D min")
+})
 
 describe("random key generation", () => {
   it("never reuses the previous relative-key family", () => {

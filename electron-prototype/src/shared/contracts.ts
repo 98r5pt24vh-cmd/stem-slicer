@@ -17,6 +17,12 @@ export interface AppEnvironment {
   acceptedCacheAccess: "read-only"
 }
 
+export interface GenerationStorageUsage {
+  bytes: number
+  folders: number
+  files: number
+}
+
 export interface LibraryRootSummary {
   path: string
   name: string
@@ -337,6 +343,7 @@ export interface EngineStatus {
 
 export interface StemSlicerDesktopApi {
   getEnvironment: () => Promise<AppEnvironment>
+  getGenerationStorageUsage: () => Promise<GenerationStorageUsage>
   getLibraryOverview: () => Promise<LibraryOverview>
   removeLibraryRoot: (libraryRoot: string) => Promise<LibraryOverview>
   getKeyIssueReports: () => Promise<KeyIssueReport[]>

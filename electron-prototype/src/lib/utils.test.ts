@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { basename, cn, formatCount } from "./utils"
+import { basename, cn, formatCount, formatDecimalBytes } from "./utils"
 
 describe("renderer utilities", () => {
   it("extracts names from macOS and Windows paths", () => {
@@ -10,6 +10,11 @@ describe("renderer utilities", () => {
 
   it("uses French decimal grouping for catalogue counts", () => {
     expect(formatCount(13_203).replace(/\s/g, " ")).toBe("13 203")
+  })
+
+  it("formats storage with decimal macOS units", () => {
+    expect(formatDecimalBytes(850_000_000)).toBe("850 Mo")
+    expect(formatDecimalBytes(2_560_000_000)).toBe("2,56 Go")
   })
 
   it("merges conflicting Tailwind classes", () => {
