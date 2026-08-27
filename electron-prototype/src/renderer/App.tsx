@@ -2,7 +2,9 @@ import { Dialog } from "@base-ui/react/dialog"
 import { Select as BaseSelect } from "@base-ui/react/select"
 import {
   AudioLines,
+  AlertTriangle,
   Check,
+  CheckSquare2,
   ChevronDown,
   ChevronLeft,
   CircleAlert,
@@ -18,6 +20,7 @@ import {
   Lock,
   Music2,
   Pause,
+  Pencil,
   Play,
   Plus,
   Radio,
@@ -26,10 +29,12 @@ import {
   RotateCcw,
   ScanLine,
   Settings2,
+  Square,
   SkipBack,
   SlidersHorizontal,
   Sparkles,
   Trash2,
+  Tag,
   Unlock,
   Volume2,
   WandSparkles,
@@ -66,8 +71,12 @@ import type {
   QuickExtractResult,
   QuickScanResult,
   ReportKeyIssueRequest,
+  SetLayerCategoryRequest,
+  SourceLoopEditorData,
+  SourceLoopEditorLayer,
   ViewId,
 } from "@/shared/contracts"
+import { SourceLoopPreviewEngine } from "@/renderer/source-loop-preview-engine"
 
 interface NavItem {
   id: ViewId
@@ -143,6 +152,16 @@ const NAVIGATION: NavItem[] = [
   { id: "history", label: "History", icon: History },
   { id: "cloud", label: "Connected Libraries", icon: Cloud, badge: "WIP" },
 ]
+
+const LAYER_CATEGORY_OPTIONS = [
+  "Bass", "Chords", "Counter", "Keys", "Piano", "Lead", "Pad", "Pluck",
+  "Vocal Chop", "Bells", "Strings", "Texture", "Guitar Lead", "Guitar Chords",
+  "Vocal", "Arp", "Brass", "Accent", "Percussion",
+]
+
+const EXACT_KEY_OPTIONS = TARGET_KEY_FAMILIES.flatMap((family) =>
+  family.split("/").map((key) => key.trim()),
+)
 
 const SHARP_CAMELOT_KEYS: Record<string, string> = {
   "1A": "G♯ minor", "2A": "D♯ minor", "3A": "A♯ minor", "4A": "F minor",
@@ -1247,6 +1266,151 @@ function PageHeader({
   )
 }
 
+function WrongKeyAction({
+  layer,
+  active,
+  disabled,
+  onConfirm,
+}: {
+  layer: GeneratedLayer
+  active: boolean
+  disabled: boolean
+  onConfirm: () => void | Promise<void>
+}) {
+  const [open, setOpen] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState("")
+
+  const run = async () => {
+    setSaving(true)
+    setError("")
+    try {
+      await onConfirm()
+      setOpen(false)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to save the wrong-key report.")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (active) {
+    return (
+      <button
+        type="button"
+        className="layer-mini-action layer-key-issue-action is-active"
+        disabled={disabled}
+        aria-pressed={true}
+        aria-label={`Réintégrer la loop source de ${layer.role} dans les générations`}
+        title="Loop source en quarantaine — sélectionner pour la réintégrer"
+        onClick={() => void run()}
+      >
+        <CircleX aria-hidden="true" /><span>Key</span>
+      </button>
+    )
+  }
+
+  return (
+    <Dialog.Root open={open} onOpenChange={(nextOpen) => { setOpen(nextOpen); if (!nextOpen) setError("") }}>
+      <Dialog.Trigger
+        className="layer-mini-action layer-key-issue-action"
+        disabled={disabled}
+        aria-label={`Signaler la clé de ${layer.role} comme incorrecte et exclure toute sa loop source`}
+        title="Wrong key — vérifier puis exclure toute la loop source"
+      >
+        <CircleX aria-hidden="true" /><span>Key</span>
+      </Dialog.Trigger>
+      <Dialog.Portal>
+        <Dialog.Backdrop className="dialog-backdrop" />
+        <Dialog.Viewport className="dialog-viewport">
+          <Dialog.Popup className="confirmation-dialog destructive-confirmation-dialog">
+            <span className="confirmation-dialog-icon"><AlertTriangle aria-hidden="true" /></span>
+            <Dialog.Title>Mark this source loop as wrong key?</Dialog.Title>
+            <Dialog.Description>
+              Every indexed layer from <strong>{layer.sourceFile ?? layer.file}</strong> will be quarantined. Any matching card will stop and disappear from this generation.
+            </Dialog.Description>
+            {error ? <p className="dialog-inline-error" role="alert">{error}</p> : null}
+            <footer>
+              <Dialog.Close className="dialog-cancel" disabled={saving}>Cancel</Dialog.Close>
+              <Button variant="destructive" disabled={saving} onClick={() => void run()}>
+                <CircleX aria-hidden="true" /> {saving ? "Saving…" : "Quarantine source loop"}
+              </Button>
+            </footer>
+          </Dialog.Popup>
+        </Dialog.Viewport>
+      </Dialog.Portal>
+    </Dialog.Root>
+  )
+}
+
+function CategoryCorrectionAction({
+  layer,
+  disabled,
+  onConfirm,
+}: {
+  layer: GeneratedLayer
+  disabled: boolean
+  onConfirm: (category: string) => void | Promise<void>
+}) {
+  const [open, setOpen] = useState(false)
+  const [category, setCategory] = useState(layer.category)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState("")
+
+  const run = async () => {
+    setSaving(true)
+    setError("")
+    try {
+      await onConfirm(category)
+      setOpen(false)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to save the category correction.")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Dialog.Root
+      open={open}
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen)
+        if (nextOpen) setCategory(layer.category)
+        else setError("")
+      }}
+    >
+      <Dialog.Trigger
+        className="layer-mini-action layer-category-correction-action"
+        disabled={disabled}
+        aria-label={`Corriger la catégorie source de ${layer.role}`}
+        title="Wrong category — enregistrer une catégorie validée"
+      >
+        <Tag aria-hidden="true" /><span>Cat</span>
+      </Dialog.Trigger>
+      <Dialog.Portal>
+        <Dialog.Backdrop className="dialog-backdrop" />
+        <Dialog.Viewport className="dialog-viewport">
+          <Dialog.Popup className="confirmation-dialog category-correction-dialog">
+            <span className="confirmation-dialog-icon category"><Tag aria-hidden="true" /></span>
+            <Dialog.Title>Correct the source category</Dialog.Title>
+            <Dialog.Description>
+              This correction will immediately drive future generations and enter the local development truth ledger.
+            </Dialog.Description>
+            <Select id={`correct-category-${layer.id}`} label="Validated category" value={category} onChange={setCategory} options={LAYER_CATEGORY_OPTIONS} forceBelow />
+            {error ? <p className="dialog-inline-error" role="alert">{error}</p> : null}
+            <footer>
+              <Dialog.Close className="dialog-cancel" disabled={saving}>Cancel</Dialog.Close>
+              <Button disabled={saving || category === layer.category} onClick={() => void run()}>
+                <Check aria-hidden="true" /> {saving ? "Saving…" : "Save category"}
+              </Button>
+            </footer>
+          </Dialog.Popup>
+        </Dialog.Viewport>
+      </Dialog.Portal>
+    </Dialog.Root>
+  )
+}
+
 function LayerCard({
   layer,
   progress,
@@ -1263,6 +1427,7 @@ function LayerCard({
   onChange,
   onToggleAlternateKey,
   onToggleKeyIssue,
+  onCorrectCategory,
   onToggleLock,
   onRemove,
   categoryOptions,
@@ -1286,6 +1451,7 @@ function LayerCard({
   onChange: (layer: GeneratedLayer) => void
   onToggleAlternateKey?: () => void
   onToggleKeyIssue?: () => void | Promise<void>
+  onCorrectCategory?: (category: string) => void | Promise<void>
   onToggleLock?: () => void
   onRemove?: () => void
   categoryOptions?: string[]
@@ -1326,21 +1492,17 @@ function LayerCard({
           </CardDescription>
         </div>
         {isGenerateCard ? <div className="layer-card-actions">
-          <button
-            type="button"
-            className={cn("layer-mini-action layer-key-issue-action", keyIssueActive && "is-active")}
+          <WrongKeyAction
+            layer={layer}
+            active={keyIssueActive}
             disabled={!layer.identity || !layer.sourcePath || !layer.sourceLoopId || !layer.libraryRoot || updating}
-            aria-pressed={keyIssueActive}
-            aria-label={keyIssueActive
-              ? `Réintégrer la loop source de ${layer.role} dans les générations`
-              : `Signaler la clé de ${layer.role} comme incorrecte et exclure toute sa loop source`}
-            title={keyIssueActive
-              ? "Loop source en quarantaine — cliquer pour la réintégrer"
-              : "Wrong key — exclure toute la loop source des prochaines générations"}
-            onClick={() => void onToggleKeyIssue?.()}
-          >
-            <CircleX aria-hidden="true" /><span>Key</span>
-          </button>
+            onConfirm={() => onToggleKeyIssue?.()}
+          />
+          <CategoryCorrectionAction
+            layer={layer}
+            disabled={!layer.identity || !layer.sourcePath || !layer.sourceLoopId || !layer.libraryRoot || updating}
+            onConfirm={(category) => onCorrectCategory?.(category)}
+          />
           <button type="button" className={cn("layer-mini-action layer-lock-action", layer.locked && "is-active")} disabled={!layer.identity || updating} aria-pressed={Boolean(layer.locked)} aria-label={`${layer.locked ? "Libérer" : "Garder"} ${layer.role} pour la prochaine génération`} onClick={onToggleLock}>{layer.locked ? <Lock aria-hidden="true" /> : <Unlock aria-hidden="true" />}<span>Lock</span></button>
           <button type="button" className="layer-mini-action layer-remove-action" disabled={!canRemove || updating} aria-label={`Supprimer la card ${layer.role}`} onClick={onRemove}><X aria-hidden="true" /></button>
         </div> : null}
@@ -1922,12 +2084,43 @@ function GenerateView({
         targetKey: currentGenerationResult.targetKey,
         generationOutputDirectory: currentGenerationResult.outputDirectory,
       })
-      setLayers((current) => current.map((item, index) => index === slotIndex ? { ...item, locked: false } : item))
-      playback.setLayerMuted(layer.id, true)
-      setStatus(`Wrong key reported · the complete source loop is now excluded`)
+      const rejectedSource = sourceLoopKey(layer.libraryRoot, layer.sourceLoopId)
+      const rejectedLayers = layers.filter((item) => sourceLoopKey(item.libraryRoot, item.sourceLoopId) === rejectedSource)
+      const remainingLayers = layers.filter((item) => sourceLoopKey(item.libraryRoot, item.sourceLoopId) !== rejectedSource)
+      for (const rejected of rejectedLayers) playback.setLayerMuted(rejected.id, true)
+      setLayers(remainingLayers)
+      onUpdateHistory(currentGenerationResult, remainingLayers)
+      setRecipeDirty(true)
+      setStatus(`Wrong key reported · ${rejectedLayers.length} card${rejectedLayers.length === 1 ? "" : "s"} removed and the complete source loop quarantined`)
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "The key issue could not be saved.")
+      const message = error instanceof Error ? error.message : "The key issue could not be saved."
+      setStatus(message)
+      throw error
     }
+  }
+
+  const correctLayerCategory = async (slotIndex: number, category: string) => {
+    const layer = layers[slotIndex]
+    if (!layer?.libraryRoot || !layer.sourceLoopId || !layer.identity || !layer.sourcePath) {
+      throw new Error("This card does not expose enough source metadata to correct its category.")
+    }
+    const request: SetLayerCategoryRequest = {
+      libraryRoot: layer.libraryRoot,
+      sourceLoopId: layer.sourceLoopId,
+      identity: layer.identity,
+      path: layer.sourcePath,
+      category,
+    }
+    const corrected = await window.stemSlicer?.setLayerCategory(request)
+    if (!corrected) throw new Error("The desktop category-feedback service is unavailable.")
+    const nextLayers = layers.map((item, index) => index === slotIndex
+      ? { ...item, category: corrected.category, role: corrected.category, locked: false }
+      : item)
+    setLayers(nextLayers)
+    if (currentGenerationResult) onUpdateHistory(currentGenerationResult, nextLayers)
+    setRecipeDirty(true)
+    setStatus(`Category validated · ${layer.sourceFile ?? layer.file} is now ${corrected.category}`)
+    await onLibraryRefresh()
   }
 
   const removeLayerCard = (slotIndex: number) => {
@@ -2095,6 +2288,7 @@ function GenerateView({
                 onChange={(next) => updateGeneratedLayer(index, next)}
                 onToggleAlternateKey={() => toggleAlternateKey(index)}
                 onToggleKeyIssue={() => toggleKeyIssue(index)}
+                onCorrectCategory={(category) => correctLayerCategory(index, category)}
                 onToggleLock={() => toggleLayerLock(index)}
                 onRemove={() => removeLayerCard(index)}
                 categoryOptions={selectedCategories.map((category) => category.name)}
@@ -2663,22 +2857,338 @@ function historyEntryToLayer(entry: HistoryEntry): GeneratedLayer {
   }
 }
 
+const EDITOR_BEATS = 32
+
+function trimmedEditorPeaks(peaks: number[] | undefined, layer: SourceLoopEditorLayer, bpm: number) {
+  if (!peaks || peaks.length === 0) return undefined
+  const sourceBeats = Math.max(0.25, layer.duration * bpm / 60)
+  const start = Math.min(peaks.length - 1, Math.floor(peaks.length * layer.trimStartBeats / sourceBeats))
+  const end = Math.max(start + 1, Math.ceil(peaks.length * (1 - layer.trimEndBeats / sourceBeats)))
+  return peaks.slice(start, Math.min(peaks.length, end))
+}
+
+function SourceLoopEditorDialog({
+  issue,
+  onSetKeyIssueActive,
+  onSaved,
+}: {
+  issue: KeyIssueReport
+  onSetKeyIssueActive: (issueId: string, active: boolean) => Promise<void>
+  onSaved: () => void | Promise<void>
+}) {
+  const [open, setOpen] = useState(false)
+  const [draft, setDraft] = useState<SourceLoopEditorData | null>(null)
+  const [peaks, setPeaks] = useState<Map<string, number[]>>(() => new Map())
+  const [loading, setLoading] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState("")
+  const [playing, setPlaying] = useState(false)
+  const [soloIdentity, setSoloIdentity] = useState<string | undefined>()
+  const [progress, setProgress] = useState(0)
+  const engineRef = useRef<SourceLoopPreviewEngine | null>(null)
+  const animationRef = useRef<number | null>(null)
+
+  const stopPreview = useCallback(() => {
+    engineRef.current?.stop()
+    if (animationRef.current !== null) cancelAnimationFrame(animationRef.current)
+    animationRef.current = null
+    setPlaying(false)
+    setSoloIdentity(undefined)
+    setProgress(0)
+  }, [])
+
+  useEffect(() => {
+    if (!open) return
+    const api = window.stemSlicer
+    if (!api) {
+      setError("The desktop source-loop editor is unavailable.")
+      return
+    }
+    let cancelled = false
+    const engine = new SourceLoopPreviewEngine()
+    engineRef.current = engine
+    setLoading(true)
+    setError("")
+    setDraft(null)
+    setPeaks(new Map())
+    void api.getSourceLoopEditor(issue.libraryRoot, issue.sourceLoopId)
+      .then(async (editor) => {
+        if (cancelled) return
+        setDraft(editor)
+        try {
+          const nextPeaks = await engine.prepare(editor.layers)
+          if (!cancelled) setPeaks(nextPeaks)
+        } catch (reason) {
+          if (!cancelled) setError(reason instanceof Error ? reason.message : "Waveform previews are unavailable.")
+        }
+      })
+      .catch((reason) => {
+        if (!cancelled) setError(reason instanceof Error ? reason.message : "Unable to open the source loop editor.")
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+      if (animationRef.current !== null) cancelAnimationFrame(animationRef.current)
+      animationRef.current = null
+      void engine.close()
+      if (engineRef.current === engine) engineRef.current = null
+    }
+  }, [issue.libraryRoot, issue.sourceLoopId, open])
+
+  const startPreview = async (nextSoloIdentity?: string) => {
+    if (!draft || !engineRef.current) return
+    stopPreview()
+    setError("")
+    try {
+      const start = await engineRef.current.play(draft.layers, draft.bpm, nextSoloIdentity)
+      setPlaying(true)
+      setSoloIdentity(nextSoloIdentity)
+      const tick = () => {
+        const engine = engineRef.current
+        if (!engine) return
+        setProgress(Math.max(0, ((engine.currentTime - start.startedAt) % start.duration) / start.duration))
+        animationRef.current = requestAnimationFrame(tick)
+      }
+      animationRef.current = requestAnimationFrame(tick)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to preview this source loop.")
+      stopPreview()
+    }
+  }
+
+  const updateLayer = (identity: string, update: Partial<SourceLoopEditorLayer>) => {
+    stopPreview()
+    setDraft((current) => current ? {
+      ...current,
+      layers: current.layers.map((layer) => layer.identity === identity ? { ...layer, ...update } : layer),
+    } : current)
+  }
+
+  const save = async () => {
+    if (!draft) return
+    stopPreview()
+    setSaving(true)
+    setError("")
+    try {
+      const api = window.stemSlicer
+      if (!api) throw new Error("The desktop source-loop editor is unavailable.")
+      const saved = await api.saveSourceLoopEdit({
+        libraryRoot: draft.libraryRoot,
+        sourceLoopId: draft.sourceLoopId,
+        bpm: draft.bpm,
+        keyName: draft.keyName,
+        layers: draft.layers.map((layer) => ({
+          identity: layer.identity,
+          category: layer.category,
+          offsetBeats: layer.offsetBeats,
+          trimStartBeats: layer.trimStartBeats,
+          trimEndBeats: layer.trimEndBeats,
+        })),
+      })
+      setDraft(saved)
+      if (issue.active) await onSetKeyIssueActive(issue.id, false)
+      await onSaved()
+      setOpen(false)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to save the source loop edits.")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Dialog.Root open={open} onOpenChange={(nextOpen) => { setOpen(nextOpen); if (!nextOpen) stopPreview() }}>
+      <Dialog.Trigger className="source-loop-edit-trigger"><Pencil aria-hidden="true" /> Edit</Dialog.Trigger>
+      <Dialog.Portal>
+        <Dialog.Backdrop className="dialog-backdrop" />
+        <Dialog.Viewport className="dialog-viewport source-loop-editor-viewport">
+          <Dialog.Popup className="source-loop-editor-dialog">
+            <header className="source-loop-editor-header">
+              <div>
+                <p className="eyebrow">Source loop editor · 8 bars</p>
+                <Dialog.Title>{issue.sourceLoopId}</Dialog.Title>
+                <Dialog.Description>Correct musical metadata, categories, trims and timing without changing the source files.</Dialog.Description>
+              </div>
+              <Dialog.Close className="dialog-close" aria-label="Close source loop editor"><X aria-hidden="true" /></Dialog.Close>
+            </header>
+
+            {loading ? <div className="source-loop-editor-loading" role="status"><span className="spinner" /> Loading indexed layers…</div> : null}
+            {draft ? (
+              <>
+                <section className="source-loop-editor-toolbar" aria-label="Loop settings and preview transport">
+                  <label className="mini-daw-number-field">
+                    <span>Source BPM</span>
+                    <Input type="number" min="40" max="300" value={draft.bpm} onChange={(event) => { stopPreview(); setDraft({ ...draft, bpm: Number(event.target.value) }) }} />
+                  </label>
+                  <Select id={`source-loop-key-${issue.id}`} label="Validated key" value={draft.keyName} onChange={(keyName) => { stopPreview(); setDraft({ ...draft, keyName }) }} options={EXACT_KEY_OPTIONS} forceBelow />
+                  <div className="mini-daw-transport">
+                    <Button variant={playing && !soloIdentity ? "success" : "outline"} onClick={() => playing ? stopPreview() : void startPreview()}>
+                      {playing && !soloIdentity ? <Pause aria-hidden="true" /> : <Play className="play-glyph" aria-hidden="true" />}
+                      {playing && !soloIdentity ? "Stop preview" : "Preview loop"}
+                    </Button>
+                    <Badge variant="secondary"><Repeat2 aria-hidden="true" /> Looped</Badge>
+                  </div>
+                  <p>Drag clips to move them. Trim values and positions snap to ¼ beat.</p>
+                </section>
+
+                <section className="mini-daw" aria-label="Eight-bar source loop timeline">
+                  <div className="mini-daw-ruler" aria-hidden="true">
+                    <span />
+                    <div>{Array.from({ length: 9 }, (_, index) => <i key={index} style={{ insetInlineStart: `${index * 12.5}%` }}>{index < 8 ? index + 1 : "End"}</i>)}</div>
+                  </div>
+                  <div className="mini-daw-tracks">
+                    {draft.layers.map((layer) => {
+                      const sourceBeats = Math.max(0.25, layer.duration * draft.bpm / 60)
+                      const usableBeats = Math.max(0.25, sourceBeats - layer.trimStartBeats - layer.trimEndBeats)
+                      const visibleBeats = Math.max(0.25, Math.min(usableBeats, EDITOR_BEATS - layer.offsetBeats))
+                      const left = Math.min(100, layer.offsetBeats / EDITOR_BEATS * 100)
+                      const width = Math.max(1, visibleBeats / EDITOR_BEATS * 100)
+                      const layerPeaks = trimmedEditorPeaks(peaks.get(layer.identity), layer, draft.bpm)
+                      const isSolo = playing && soloIdentity === layer.identity
+                      return (
+                        <article className={cn("mini-daw-track", isSolo && "is-solo")} key={layer.identity}>
+                          <div className="mini-daw-track-meta">
+                            <button type="button" className={cn("mini-daw-track-play", isSolo && "is-active")} aria-label={isSolo ? `Stop ${layer.file} preview` : `Preview ${layer.file} alone`} onClick={() => isSolo ? stopPreview() : void startPreview(layer.identity)}>
+                              {isSolo ? <Pause aria-hidden="true" /> : <Play className="play-glyph" aria-hidden="true" />}
+                            </button>
+                            <span><strong title={layer.file}>{layer.file}</strong><small>{layer.layerIndex ? `Layer ${layer.layerIndex}` : "Indexed layer"} · {layer.duration.toFixed(1)} s</small></span>
+                          </div>
+                          <div className="mini-daw-lane">
+                            <span className="mini-daw-playhead" style={{ insetInlineStart: `${progress * 100}%` }} aria-hidden="true" />
+                            <div
+                              className="mini-daw-clip"
+                              style={{ insetInlineStart: `${left}%`, width: `${width}%` }}
+                              role="slider"
+                              tabIndex={0}
+                              aria-label={`Position de ${layer.file}`}
+                              aria-valuemin={0}
+                              aria-valuemax={31.75}
+                              aria-valuenow={layer.offsetBeats}
+                              aria-valuetext={`${layer.offsetBeats} beats from the loop start`}
+                              onKeyDown={(event) => {
+                                if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return
+                                event.preventDefault()
+                                const step = event.shiftKey ? 1 : 0.25
+                                const nextOffset = event.key === "Home"
+                                  ? 0
+                                  : event.key === "End"
+                                    ? 31.75
+                                    : Math.max(0, Math.min(31.75, layer.offsetBeats + (event.key === "ArrowRight" ? step : -step)))
+                                updateLayer(layer.identity, { offsetBeats: Math.round(nextOffset * 4) / 4 })
+                              }}
+                              onPointerDown={(event) => {
+                                if (event.button !== 0) return
+                                event.preventDefault()
+                                stopPreview()
+                                const clip = event.currentTarget
+                                const lane = clip.parentElement?.getBoundingClientRect()
+                                if (!lane || lane.width <= 0) return
+                                const initialX = event.clientX
+                                const initialOffset = layer.offsetBeats
+                                clip.setPointerCapture(event.pointerId)
+                                const move = (moveEvent: PointerEvent) => {
+                                  const deltaBeats = (moveEvent.clientX - initialX) / lane.width * EDITOR_BEATS
+                                  const nextOffset = Math.max(0, Math.min(EDITOR_BEATS - 0.25, Math.round((initialOffset + deltaBeats) * 4) / 4))
+                                  updateLayer(layer.identity, { offsetBeats: nextOffset })
+                                }
+                                const end = () => {
+                                  clip.removeEventListener("pointermove", move)
+                                  clip.removeEventListener("pointerup", end)
+                                  clip.removeEventListener("pointercancel", end)
+                                }
+                                clip.addEventListener("pointermove", move)
+                                clip.addEventListener("pointerup", end)
+                                clip.addEventListener("pointercancel", end)
+                              }}
+                            >
+                              <Waveform progress={isSolo ? progress : 0} compact label={`${layer.file} editor waveform`} bars={layerPeaks} />
+                              <span className="mini-daw-clip-label">{layer.category}</span>
+                            </div>
+                          </div>
+                          <div className="mini-daw-track-controls">
+                            <LayerCategorySelect id={`editor-category-${layer.identity}`} value={layer.category} options={LAYER_CATEGORY_OPTIONS} disabled={saving} onChange={(category) => updateLayer(layer.identity, { category })} />
+                            <label><span>Start</span><Input aria-label={`${layer.file} start in beats`} type="number" min="0" max="31.75" step="0.25" value={layer.offsetBeats} onChange={(event) => updateLayer(layer.identity, { offsetBeats: Number(event.target.value) })} /></label>
+                            <label><span>Trim in</span><Input aria-label={`${layer.file} trim in beats`} type="number" min="0" max={Math.max(0, sourceBeats - layer.trimEndBeats - 0.25)} step="0.25" value={layer.trimStartBeats} onChange={(event) => updateLayer(layer.identity, { trimStartBeats: Number(event.target.value) })} /></label>
+                            <label><span>Trim out</span><Input aria-label={`${layer.file} trim out beats`} type="number" min="0" max={Math.max(0, sourceBeats - layer.trimStartBeats - 0.25)} step="0.25" value={layer.trimEndBeats} onChange={(event) => updateLayer(layer.identity, { trimEndBeats: Number(event.target.value) })} /></label>
+                          </div>
+                        </article>
+                      )
+                    })}
+                  </div>
+                </section>
+              </>
+            ) : null}
+
+            {error ? <p className="dialog-inline-error source-loop-editor-error" role="alert">{error}</p> : null}
+            <footer className="source-loop-editor-footer">
+              <span><Check aria-hidden="true" /> Saving validates category corrections locally and restores the source loop.</span>
+              <div>
+                <Dialog.Close className="dialog-cancel" disabled={saving}>Cancel</Dialog.Close>
+                <Button disabled={!draft || saving || loading} onClick={() => void save()}><Check aria-hidden="true" /> {saving ? "Saving edits…" : "Save and restore loop"}</Button>
+              </div>
+            </footer>
+          </Dialog.Popup>
+        </Dialog.Viewport>
+      </Dialog.Portal>
+    </Dialog.Root>
+  )
+}
+
 function HistoryView({
   history,
   keyIssues,
   playback,
   onReopen,
-  onTrash,
+  onTrashSelected,
   onSetKeyIssueActive,
+  onLibraryRefresh,
 }: {
   history: HistoryEntry[]
   keyIssues: KeyIssueReport[]
   playback: PlaybackClock
   onReopen: (entry: HistoryEntry) => void
-  onTrash: (entry: HistoryEntry) => Promise<void>
+  onTrashSelected: (entries: HistoryEntry[]) => Promise<void>
   onSetKeyIssueActive: (issueId: string, active: boolean) => Promise<void>
+  onLibraryRefresh: () => void | Promise<void>
 }) {
   const activeIssueCount = keyIssues.filter((issue) => issue.active).length
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState("")
+  const selectedEntries = history.filter((entry) => selectedIds.has(entry.id))
+  const allSelected = history.length > 0 && selectedEntries.length === history.length
+
+  useEffect(() => {
+    const availableIds = new Set(history.map((entry) => entry.id))
+    setSelectedIds((current) => new Set([...current].filter((id) => availableIds.has(id))))
+  }, [history])
+
+  const toggleSelected = (entryId: string, selected: boolean) => {
+    setSelectedIds((current) => {
+      const next = new Set(current)
+      if (selected) next.add(entryId)
+      else next.delete(entryId)
+      return next
+    })
+  }
+
+  const deleteSelection = async () => {
+    if (selectedEntries.length === 0) return
+    setDeleting(true)
+    setDeleteError("")
+    try {
+      await onTrashSelected(selectedEntries)
+      setSelectedIds(new Set())
+      setDeleteOpen(false)
+    } catch (reason) {
+      setDeleteError(reason instanceof Error ? reason.message : "Unable to move the selected generations to Trash.")
+    } finally {
+      setDeleting(false)
+    }
+  }
 
   return (
     <div className="page-stack">
@@ -2719,6 +3229,7 @@ function HistoryView({
                   </div>
                   <div className="key-issue-actions">
                     <Button variant="outline" size="sm" onClick={() => void window.stemSlicer?.revealPath(issue.reportedPath)}><FolderOpen /> Reveal</Button>
+                    <SourceLoopEditorDialog issue={issue} onSetKeyIssueActive={onSetKeyIssueActive} onSaved={onLibraryRefresh} />
                     <Button
                       variant={issue.active ? "outline" : "ghost"}
                       size="sm"
@@ -2737,13 +3248,36 @@ function HistoryView({
 
       <div className="history-section-heading history-generations-heading">
         <div><h2>Generations</h2><p>Previously rendered stacks remain available here.</p></div>
-        <Badge variant="secondary">{history.length}</Badge>
+        <div className="history-selection-actions" aria-live="polite">
+          <span>{selectedEntries.length > 0 ? `${selectedEntries.length} selected` : `${history.length} generations`}</span>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={history.length === 0}
+            aria-pressed={allSelected}
+            onClick={() => setSelectedIds(allSelected ? new Set() : new Set(history.map((entry) => entry.id)))}
+          >
+            {allSelected ? <Square aria-hidden="true" /> : <CheckSquare2 aria-hidden="true" />}
+            {allSelected ? "Clear selection" : "Select all"}
+          </Button>
+          <Button variant="destructive" size="sm" disabled={selectedEntries.length === 0} onClick={() => setDeleteOpen(true)}>
+            <Trash2 aria-hidden="true" /> Move selected to Trash
+          </Button>
+        </div>
       </div>
       {history.length ? (
         <div className="history-list">
           {history.map((entry) => (
-            <Card key={entry.id} className="history-item">
+            <Card key={entry.id} className={cn("history-item", selectedIds.has(entry.id) && "is-selected")}>
               <CardContent>
+                <label className="history-select-control">
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.has(entry.id)}
+                    onChange={(event) => toggleSelected(entry.id, event.target.checked)}
+                  />
+                  <span className="sr-only">Select {entry.recipe} generation from {entry.createdAt}</span>
+                </label>
                 <span className="history-icon"><History /></span>
                 <div><strong>{entry.recipe} combination</strong><small>{entry.createdAt} · {entry.layerCount} layers</small></div>
                 <div className="history-spec"><Badge variant="secondary">{entry.recipe}</Badge><span>{entry.bpm} BPM</span><span>{entry.keyName}</span></div>
@@ -2752,7 +3286,6 @@ function HistoryView({
                   <Button variant="outline" size="sm" onClick={() => void window.stemSlicer?.revealPath(entry.generation.outputDirectory)}><FolderOpen /> Open</Button>
                   <Button variant="outline" className="history-reload" size="sm" onClick={() => onReopen(entry)}><RefreshCw /> Reload</Button>
                   <Button variant="outline" size="sm" draggable onClick={() => void window.stemSlicer?.revealPath(entry.generation.masterPath)} onDragStart={(event) => { event.preventDefault(); window.stemSlicer?.startFileDrag(entry.generation.masterPath) }}><Layers3 /> Drag</Button>
-                  <Button variant="ghost" size="icon" className="history-trash" aria-label={`Move ${entry.recipe} generation to Trash`} title="Move generated folder to Trash" onClick={() => void onTrash(entry)}><Trash2 /></Button>
                 </div>
               </CardContent>
             </Card>
@@ -2761,6 +3294,27 @@ function HistoryView({
       ) : (
         <EmptyState icon={History} title="No generation yet" description="Generate a combination and it will appear here with its musical constraints." action={<span className="empty-hint">Open Generate to create the first entry.</span>} />
       )}
+      <Dialog.Root open={deleteOpen} onOpenChange={(open) => { setDeleteOpen(open); if (!open) setDeleteError("") }}>
+        <Dialog.Portal>
+          <Dialog.Backdrop className="dialog-backdrop" />
+          <Dialog.Viewport className="dialog-viewport">
+            <Dialog.Popup className="confirmation-dialog destructive-confirmation-dialog">
+              <span className="confirmation-dialog-icon"><Trash2 aria-hidden="true" /></span>
+              <Dialog.Title>Move {selectedEntries.length} generation{selectedEntries.length === 1 ? "" : "s"} to Trash?</Dialog.Title>
+              <Dialog.Description>
+                Their generated folders and audio files will move to the macOS Trash. Your indexed source library remains untouched.
+              </Dialog.Description>
+              {deleteError ? <p className="dialog-inline-error" role="alert">{deleteError}</p> : null}
+              <footer>
+                <Dialog.Close className="dialog-cancel" disabled={deleting}>Cancel</Dialog.Close>
+                <Button variant="destructive" disabled={deleting} onClick={() => void deleteSelection()}>
+                  <Trash2 aria-hidden="true" /> {deleting ? "Moving…" : "Move generations to Trash"}
+                </Button>
+              </footer>
+            </Dialog.Popup>
+          </Dialog.Viewport>
+        </Dialog.Portal>
+      </Dialog.Root>
     </div>
   )
 }
@@ -2970,13 +3524,27 @@ export function App() {
     setActiveView("generate")
   }
 
-  const trashHistory = async (entry: HistoryEntry) => {
-    await window.stemSlicer?.trashPath(entry.generation.outputDirectory)
-    setHistory((items) => items.filter((item) => item.id !== entry.id))
-    if (currentGenerationResult?.outputDirectory === entry.generation.outputDirectory) {
-      playback.reset()
+  const trashHistoryEntries = async (entries: HistoryEntry[]) => {
+    playback.reset()
+    const api = window.stemSlicer
+    if (!api) throw new Error("The desktop Trash service is unavailable.")
+    const movedIds = new Set<string>()
+    const failures: string[] = []
+    for (const entry of entries) {
+      try {
+        await api.trashPath(entry.generation.outputDirectory)
+        movedIds.add(entry.id)
+      } catch {
+        failures.push(entry.recipe)
+      }
+    }
+    setHistory((items) => items.filter((item) => !movedIds.has(item.id)))
+    if (entries.some((entry) => currentGenerationResult?.outputDirectory === entry.generation.outputDirectory)) {
       setCurrentGenerationResult(null)
       setLayers(INITIAL_LAYERS)
+    }
+    if (failures.length > 0) {
+      throw new Error(`${failures.length} generation${failures.length === 1 ? "" : "s"} could not be moved to Trash.`)
     }
   }
 
@@ -2992,7 +3560,7 @@ export function App() {
           <div hidden={activeView !== "stem-slicer"}><StemSlicerView /></div>
           <div hidden={activeView !== "generate"}><GenerateView library={library} layers={layers} setLayers={setLayers} currentGenerationResult={currentGenerationResult} setCurrentGenerationResult={setCurrentGenerationResult} onAddHistory={addHistory} onUpdateHistory={updateHistory} keyIssues={keyIssues} onReportKeyIssue={reportKeyIssue} onSetKeyIssueActive={updateKeyIssueState} onLibraryRefresh={refreshLibrary} playback={playback} /></div>
           <div hidden={activeView !== "quick-tools"}><QuickToolsView previewLayers={quickPreviewLayers} setPreviewLayers={setQuickPreviewLayers} playback={playback} onActiveToolChange={setActiveQuickTool} /></div>
-          <div hidden={activeView !== "history"}><HistoryView history={history} keyIssues={keyIssues} playback={playback} onReopen={reopenHistory} onTrash={trashHistory} onSetKeyIssueActive={updateKeyIssueState} /></div>
+          <div hidden={activeView !== "history"}><HistoryView history={history} keyIssues={keyIssues} playback={playback} onReopen={reopenHistory} onTrashSelected={trashHistoryEntries} onSetKeyIssueActive={updateKeyIssueState} onLibraryRefresh={refreshLibrary} /></div>
           <div hidden={activeView !== "cloud"}><CloudView /></div>
         </main>
         <GlobalPlayer layers={playerLayers} playback={playback} contextLabel={activeView === "history" ? "History generation" : quickPreviewActive ? "Extracted stack" : "Generated stack"} />

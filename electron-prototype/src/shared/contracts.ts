@@ -194,6 +194,50 @@ export interface ReportKeyIssueRequest {
   generationOutputDirectory: string
 }
 
+export interface SourceLoopEditorLayer {
+  identity: string
+  path: string
+  file: string
+  layerIndex?: number
+  category: string
+  duration: number
+  offsetBeats: number
+  trimStartBeats: number
+  trimEndBeats: number
+}
+
+export interface SourceLoopEditorData {
+  libraryRoot: string
+  sourceLoopId: string
+  bpm: number
+  keyName: string
+  layers: SourceLoopEditorLayer[]
+}
+
+export interface SourceLoopLayerEdit {
+  identity: string
+  category: string
+  offsetBeats: number
+  trimStartBeats: number
+  trimEndBeats: number
+}
+
+export interface SaveSourceLoopEditRequest {
+  libraryRoot: string
+  sourceLoopId: string
+  bpm: number
+  keyName: string
+  layers: SourceLoopLayerEdit[]
+}
+
+export interface SetLayerCategoryRequest {
+  libraryRoot: string
+  sourceLoopId: string
+  identity: string
+  path: string
+  category: string
+}
+
 export interface QuickScanResult {
   source: string
   bpm: number
@@ -298,6 +342,9 @@ export interface StemSlicerDesktopApi {
   getKeyIssueReports: () => Promise<KeyIssueReport[]>
   reportKeyIssue: (request: ReportKeyIssueRequest) => Promise<KeyIssueReport[]>
   setKeyIssueActive: (issueId: string, active: boolean) => Promise<KeyIssueReport[]>
+  getSourceLoopEditor: (libraryRoot: string, sourceLoopId: string) => Promise<SourceLoopEditorData>
+  saveSourceLoopEdit: (request: SaveSourceLoopEditRequest) => Promise<SourceLoopEditorData>
+  setLayerCategory: (request: SetLayerCategoryRequest) => Promise<SourceLoopEditorLayer>
   getMigrationModules: () => Promise<MigrationModule[]>
   getEngineStatus: () => Promise<EngineStatus>
   pickLibraryFolder: () => Promise<AudioSelection>

@@ -6,11 +6,19 @@ import { existsSync, statSync } from "node:fs"
 import { pathToFileURL } from "node:url"
 
 import { AudioEngineService } from "./main/audio-engine"
+import { getSourceLoopEditor, saveSourceLoopEdit, setLayerCategory } from "./main/catalog-edits"
 import { listKeyIssueReports, reportKeyIssue, setKeyIssueActive } from "./main/key-feedback"
 import { readLibraryOverview, removeLibraryRoot } from "./main/library-cache"
 import { mediaMimeType, parseByteRange } from "./main/media-range"
 import { migrationModules } from "./main/migration-modules"
-import type { AudioJobKind, AudioJobRequest, AudioSelection, ReportKeyIssueRequest } from "./shared/contracts"
+import type {
+  AudioJobKind,
+  AudioJobRequest,
+  AudioSelection,
+  ReportKeyIssueRequest,
+  SaveSourceLoopEditRequest,
+  SetLayerCategoryRequest,
+} from "./shared/contracts"
 
 const acceptedCachePath = path.join(
   homedir(),
@@ -166,6 +174,15 @@ function registerIpc(): void {
     }
     return setKeyIssueActive(acceptedCachePath, issueId, active)
   })
+  ipcMain.handle("source-loop:get-editor", (_event: IpcMainInvokeEvent, libraryRoot: unknown, sourceLoopId: unknown) =>
+    getSourceLoopEditor(acceptedCachePath, libraryRoot, sourceLoopId),
+  )
+  ipcMain.handle("source-loop:save-editor", (_event: IpcMainInvokeEvent, request: SaveSourceLoopEditRequest) =>
+    saveSourceLoopEdit(acceptedCachePath, request),
+  )
+  ipcMain.handle("source-loop:set-layer-category", (_event: IpcMainInvokeEvent, request: SetLayerCategoryRequest) =>
+    setLayerCategory(acceptedCachePath, request),
+  )
   ipcMain.handle("migration:get-modules", () => migrationModules)
   ipcMain.handle("engine:get-status", () => audioEngine.status())
   ipcMain.handle(
