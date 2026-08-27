@@ -84,12 +84,20 @@ function detectedKey(row: LayerRow): string {
   return [key, mode].filter(Boolean).join(" ")
 }
 
+function excludesHiddenLayers(database: DatabaseSync): string {
+  const columns = database.prepare("PRAGMA table_info(layer_cache)").all() as unknown as Array<{ name: string }>
+  return columns.some((column) => column.name === "manual_excluded")
+    ? " AND COALESCE(manual_excluded, 0) = 0"
+    : ""
+}
+
 function affectedLayers(
   libraryDatabase: DatabaseSync | undefined,
   libraryRoot: string,
   sourceLoopId: string,
 ): KeyIssueAffectedLayer[] {
   if (!libraryDatabase) return []
+  const activeLayerCondition = excludesHiddenLayers(libraryDatabase)
   const rows = libraryDatabase.prepare(`
     SELECT
       sha256 AS identity,
@@ -101,6 +109,7 @@ function affectedLayers(
       mode AS filename_mode
     FROM layer_cache
     WHERE library_root = ? AND source_loop_id = ?
+      ${activeLayerCondition}
     ORDER BY COALESCE(layer_index, 2147483647), relative_path
   `).all(libraryRoot, sourceLoopId) as unknown as LayerRow[]
   return rows.map((row) => ({

@@ -234,6 +234,7 @@ export interface SaveSourceLoopEditRequest {
   bpm: number
   keyName: string
   layers: SourceLoopLayerEdit[]
+  excludedIdentities?: string[]
 }
 
 export interface SetLayerCategoryRequest {

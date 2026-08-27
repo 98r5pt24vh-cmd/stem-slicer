@@ -114,6 +114,7 @@ function ensureEditorColumns(database: DatabaseSync): void {
     ["manual_bpm", "INTEGER"],
     ["manual_key", "TEXT"],
     ["manual_mode", "TEXT"],
+    ["manual_excluded", "INTEGER NOT NULL DEFAULT 0"],
     ["timeline_offset_beats", "REAL NOT NULL DEFAULT 0"],
     ["trim_start_beats", "REAL NOT NULL DEFAULT 0"],
     ["trim_end_beats", "REAL NOT NULL DEFAULT 0"],
@@ -160,6 +161,7 @@ function editorRows(database: DatabaseSync, libraryRoot: string, sourceLoopId: s
       COALESCE(trim_end_beats, 0) AS trim_end_beats
     FROM layer_cache
     WHERE library_root = ? AND source_loop_id = ?
+      AND COALESCE(manual_excluded, 0) = 0
     ORDER BY COALESCE(layer_index, 2147483647), relative_path
   `).all(libraryRoot, sourceLoopId) as unknown as LayerRow[]
 }
@@ -263,8 +265,14 @@ export function saveSourceLoopEdit(
   const sourceLoopId = normalizedText(request.sourceLoopId, "Source loop id")
   const bpm = normalizedBpm(request.bpm)
   const key = parseKeyName(request.keyName)
+  if (request.excludedIdentities !== undefined && !Array.isArray(request.excludedIdentities)) {
+    throw new Error("Excluded layers must be a list.")
+  }
+  const excludedIdentities = new Set(
+    (request.excludedIdentities ?? []).map((identity) => normalizedText(identity, "Excluded layer identity")),
+  )
   if (!Array.isArray(request.layers) || request.layers.length === 0) {
-    throw new Error("The source loop editor requires at least one layer.")
+    throw new Error("Keep at least one layer in the source loop.")
   }
 
   const database = openLibraryDatabase(acceptedCachePath)
@@ -272,7 +280,12 @@ export function saveSourceLoopEdit(
   try {
     const rows = editorRows(database, libraryRoot, sourceLoopId)
     const rowsByIdentity = new Map(rows.map((row) => [row.identity, row]))
-    if (rows.length !== request.layers.length) {
+    const editedIdentities = new Set(request.layers.map((edit) => normalizedText(edit.identity, "Layer identity")))
+    if (
+      rows.length !== editedIdentities.size + excludedIdentities.size
+      || [...editedIdentities].some((identity) => excludedIdentities.has(identity))
+      || [...rowsByIdentity.keys()].some((identity) => !editedIdentities.has(identity) && !excludedIdentities.has(identity))
+    ) {
       throw new Error("The source loop changed while it was being edited. Reopen the editor and try again.")
     }
 
@@ -318,6 +331,19 @@ export function saveSourceLoopEdit(
         )
         if (Number(result.changes) !== 1) throw new Error(`Unable to update ${row.filename}.`)
         if (category !== row.category) truthUpdates.push({ row, category })
+      }
+
+      const excludeLayer = database.prepare(`
+        UPDATE layer_cache
+        SET manual_excluded = 1, updated_at_ns = ?
+        WHERE library_root = ? AND source_loop_id = ? AND sha256 = ?
+          AND COALESCE(manual_excluded, 0) = 0
+      `)
+      for (const identity of excludedIdentities) {
+        const row = rowsByIdentity.get(identity)
+        if (!row) throw new Error("One excluded layer no longer belongs to this source loop.")
+        const result = excludeLayer.run(updatedAt, libraryRoot, sourceLoopId, identity)
+        if (Number(result.changes) !== 1) throw new Error(`Unable to exclude ${row.filename}.`)
       }
       database.exec("COMMIT")
     } catch (error) {

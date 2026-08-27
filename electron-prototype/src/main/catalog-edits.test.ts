@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite"
 import { describe, expect, it } from "vitest"
 
 import { getSourceLoopEditor, saveSourceLoopEdit, setLayerCategory } from "./catalog-edits"
+import { readLibraryOverview } from "./library-cache"
 
 function recoverableTestRoot(): string {
   const trash = path.join(homedir(), ".Trash")
@@ -39,6 +40,7 @@ function createCatalogue(): { acceptedCache: string; libraryRoot: string; paths:
       manual_origin TEXT,
       scanned_key TEXT,
       scanned_mode TEXT,
+      key_confidence_status TEXT,
       updated_at_ns INTEGER NOT NULL
     )
   `)
@@ -46,8 +48,8 @@ function createCatalogue(): { acceptedCache: string; libraryRoot: string; paths:
     INSERT INTO layer_cache (
       path, library_root, relative_path, filename, source_loop_id, layer_index,
       bpm, key, mode, duration_seconds, sha256, predicted_label,
-      manual_label, manual_origin, scanned_key, scanned_mode, updated_at_ns
-    ) VALUES (?, ?, ?, ?, 'loop-source', ?, 140, 'A', 'minor', 13.714, ?, ?, NULL, NULL, 'A', 'minor', 1)
+      manual_label, manual_origin, scanned_key, scanned_mode, key_confidence_status, updated_at_ns
+    ) VALUES (?, ?, ?, ?, 'loop-source', ?, 140, 'A', 'minor', 13.714, ?, ?, NULL, NULL, 'A', 'minor', 'analyzed', 1)
   `)
   insert.run(paths[0], libraryRoot, "Loop_L1.mp3", "Loop_L1.mp3", 1, "identity-1", "Lead")
   insert.run(paths[1], libraryRoot, "Loop_L2.mp3", "Loop_L2.mp3", 2, "identity-2", "Pad")
@@ -112,5 +114,38 @@ describe("catalogue edits", () => {
     })
     expect(corrected.category).toBe("Texture")
     expect(getSourceLoopEditor(fixture.acceptedCache, fixture.libraryRoot, "loop-source").layers[1].category).toBe("Texture")
+  })
+
+  it("excludes only the selected layer while preserving its catalogue record", () => {
+    const fixture = createCatalogue()
+    getSourceLoopEditor(fixture.acceptedCache, fixture.libraryRoot, "loop-source")
+
+    const saved = saveSourceLoopEdit(fixture.acceptedCache, {
+      libraryRoot: fixture.libraryRoot,
+      sourceLoopId: "loop-source",
+      bpm: 140,
+      keyName: "A minor",
+      layers: [
+        { identity: "identity-2", category: "Pad", offsetBeats: 0, trimStartBeats: 0, trimEndBeats: 0 },
+      ],
+      excludedIdentities: ["identity-1"],
+    })
+
+    expect(saved.layers.map((layer) => layer.identity)).toEqual(["identity-2"])
+    const database = new DatabaseSync(path.join(fixture.acceptedCache, "generate", "library.sqlite3"), { readOnly: true })
+    const rows = database.prepare(`
+      SELECT sha256, manual_excluded
+      FROM layer_cache
+      ORDER BY sha256
+    `).all() as unknown as Array<{ sha256: string; manual_excluded: number }>
+    database.close()
+    expect(rows).toEqual([
+      { sha256: "identity-1", manual_excluded: 1 },
+      { sha256: "identity-2", manual_excluded: 0 },
+    ])
+    const overview = readLibraryOverview(fixture.acceptedCache)
+    expect(overview.error).toBeUndefined()
+    expect(overview.totalLayers).toBe(1)
+    expect(overview.roots[0]?.layerCount).toBe(1)
   })
 })

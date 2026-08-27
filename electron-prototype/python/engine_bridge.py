@@ -874,13 +874,22 @@ def generation(job_id: str, payload: dict) -> dict:
     if not database.is_file():
         raise ValueError("The Generate library cache is unavailable.")
     roots = [str(Path(item).expanduser().resolve()) for item in payload.get("libraryRoots") or []]
-    query = "SELECT * FROM layer_cache"
-    parameters: list[str] = []
-    if roots:
-        query += f" WHERE library_root IN ({','.join('?' for _ in roots)})"
-        parameters.extend(roots)
     with sqlite3.connect(f"file:{database}?mode=ro", uri=True) as connection:
         connection.row_factory = sqlite3.Row
+        columns = {
+            str(row["name"])
+            for row in connection.execute("PRAGMA table_info(layer_cache)")
+        }
+        conditions: list[str] = []
+        parameters: list[str] = []
+        if "manual_excluded" in columns:
+            conditions.append("COALESCE(manual_excluded, 0) = 0")
+        if roots:
+            conditions.append(f"library_root IN ({','.join('?' for _ in roots)})")
+            parameters.extend(roots)
+        query = "SELECT * FROM layer_cache"
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
         records = [dict(row) for row in connection.execute(query, parameters)]
     excluded_source_loops = {
         (

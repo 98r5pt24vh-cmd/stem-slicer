@@ -2820,14 +2820,6 @@ function historyEntryToLayer(entry: HistoryEntry): GeneratedLayer {
 
 const EDITOR_BEATS = 32
 
-function trimmedEditorPeaks(peaks: number[] | undefined, layer: SourceLoopEditorLayer, bpm: number) {
-  if (!peaks || peaks.length === 0) return undefined
-  const sourceBeats = Math.max(0.25, layer.duration * bpm / 60)
-  const start = Math.min(peaks.length - 1, Math.floor(peaks.length * layer.trimStartBeats / sourceBeats))
-  const end = Math.max(start + 1, Math.ceil(peaks.length * (1 - layer.trimEndBeats / sourceBeats)))
-  return peaks.slice(start, Math.min(peaks.length, end))
-}
-
 function snapEditorBeat(value: number, minimum: number, maximum: number) {
   const lower = Math.ceil(minimum * 4) / 4
   const upper = Math.max(lower, Math.floor(maximum * 4) / 4)
@@ -2876,6 +2868,7 @@ function SourceLoopStudio({
   const [loopEnabled, setLoopEnabled] = useState(true)
   const [soloIdentity, setSoloIdentity] = useState<string | undefined>()
   const [mutedIdentities, setMutedIdentities] = useState<Set<string>>(() => new Set())
+  const [excludedIdentities, setExcludedIdentities] = useState<Set<string>>(() => new Set())
   const [trackVolumes, setTrackVolumes] = useState<Map<string, number>>(() => new Map())
   const [selectedIdentity, setSelectedIdentity] = useState<string | undefined>()
   const [progress, setProgress] = useState(0)
@@ -2887,6 +2880,11 @@ function SourceLoopStudio({
   useEffect(() => {
     progressRef.current = progress
   }, [progress])
+
+  const activeLayers = useMemo(
+    () => draft?.layers.filter((layer) => !excludedIdentities.has(layer.identity)) ?? [],
+    [draft, excludedIdentities],
+  )
 
   const pausePreview = useCallback(() => {
     engineRef.current?.stop()
@@ -2910,6 +2908,7 @@ function SourceLoopStudio({
     setDraft(null)
     setPeaks(new Map())
     setMutedIdentities(new Set())
+    setExcludedIdentities(new Set())
     setTrackVolumes(new Map())
     setSoloIdentity(undefined)
     setLoopEnabled(true)
@@ -2950,7 +2949,7 @@ function SourceLoopStudio({
       const duration = editorTimelineSeconds(draft.bpm)
       const startProgress = requestedStartProgress ?? progressRef.current
       const effectiveProgress = startProgress >= 0.9999 ? 0 : Math.max(0, startProgress)
-      const start = await engineRef.current.play(draft.layers, draft.bpm, {
+      const start = await engineRef.current.play(activeLayers, draft.bpm, {
         mutedIdentities,
         soloIdentity,
         startOffset: effectiveProgress * duration,
@@ -2980,7 +2979,7 @@ function SourceLoopStudio({
       setError(reason instanceof Error ? reason.message : "Unable to preview this source loop.")
       pausePreview()
     }
-  }, [draft, loopEnabled, mutedIdentities, pausePreview, soloIdentity, trackVolumes])
+  }, [activeLayers, draft, loopEnabled, mutedIdentities, pausePreview, soloIdentity, trackVolumes])
 
   useEffect(() => {
     const handleStudioSpace = (event: KeyboardEvent) => {
@@ -3062,6 +3061,31 @@ function SourceLoopStudio({
     })
   }
 
+  const excludeLayer = (identity: string) => {
+    if (activeLayers.length <= 1) {
+      setError("Keep at least one layer in the source loop.")
+      return
+    }
+    pausePreview()
+    setError("")
+    setExcludedIdentities((current) => new Set(current).add(identity))
+    setMutedIdentities((current) => {
+      const next = new Set(current)
+      next.delete(identity)
+      return next
+    })
+    if (soloIdentity === identity) setSoloIdentity(undefined)
+    if (selectedIdentity === identity) {
+      setSelectedIdentity(activeLayers.find((layer) => layer.identity !== identity)?.identity)
+    }
+  }
+
+  const undoLayerExclusions = () => {
+    pausePreview()
+    setExcludedIdentities(new Set())
+    setError("")
+  }
+
   const toggleLoop = () => {
     const nextLoopEnabled = !loopEnabled
     const shouldResume = playing
@@ -3084,15 +3108,17 @@ function SourceLoopStudio({
         sourceLoopId: draft.sourceLoopId,
         bpm: draft.bpm,
         keyName: draft.keyName,
-        layers: draft.layers.map((layer) => ({
+        layers: activeLayers.map((layer) => ({
           identity: layer.identity,
           category: layer.category,
           offsetBeats: layer.offsetBeats,
           trimStartBeats: layer.trimStartBeats,
           trimEndBeats: layer.trimEndBeats,
         })),
+        excludedIdentities: [...excludedIdentities],
       })
       setDraft(saved)
+      setExcludedIdentities(new Set())
       if (issueActive && issueId && onSetKeyIssueActive) await onSetKeyIssueActive(issueId, false)
       await onSaved(saved)
       onClose()
@@ -3141,7 +3167,7 @@ function SourceLoopStudio({
 
                 <section className="mini-daw" aria-label="Eight-bar source loop timeline">
                   <div className="mini-daw-ruler">
-                    <div className="mini-daw-track-list-header"><SlidersHorizontal aria-hidden="true" /><span>Tracks</span><small>{draft.layers.length}</small></div>
+                    <div className="mini-daw-track-list-header"><SlidersHorizontal aria-hidden="true" /><span>Tracks</span><small>{activeLayers.length}</small></div>
                     <div
                       className="mini-daw-timeline-ruler"
                       role="slider"
@@ -3167,28 +3193,41 @@ function SourceLoopStudio({
                     </div>
                   </div>
                   <div className="mini-daw-tracks">
-                    {draft.layers.map((layer, index) => {
+                    {activeLayers.map((layer, index) => {
                       const sourceBeats = Math.max(0.25, layer.duration * draft.bpm / 60)
                       const usableBeats = Math.max(0.25, sourceBeats - layer.trimStartBeats - layer.trimEndBeats)
                       const visibleBeats = Math.max(0.25, Math.min(usableBeats, EDITOR_BEATS - layer.offsetBeats))
                       const left = Math.min(100, layer.offsetBeats / EDITOR_BEATS * 100)
                       const width = Math.max(1, visibleBeats / EDITOR_BEATS * 100)
-                      const layerPeaks = trimmedEditorPeaks(peaks.get(layer.identity), layer, draft.bpm)
+                      const layerPeaks = peaks.get(layer.identity)
                       const isSolo = soloIdentity === layer.identity
                       const isMuted = mutedIdentities.has(layer.identity)
                       const isSelected = selectedIdentity === layer.identity
                       const trackVolume = trackVolumes.get(layer.identity) ?? 100
-                      const clipProgress = Math.max(0, Math.min(1, (progress * EDITOR_BEATS - layer.offsetBeats) / visibleBeats))
+                      const sourceProgress = Math.max(0, Math.min(1, (progress * EDITOR_BEATS - layer.offsetBeats + layer.trimStartBeats) / sourceBeats))
+                      const sourceWaveWidth = sourceBeats / visibleBeats * 100
+                      const sourceWaveOffset = -layer.trimStartBeats / visibleBeats * 100
                       const maximumOffset = Math.max(0, EDITOR_BEATS - usableBeats)
                       return (
                         <article className={cn("mini-daw-track", isSolo && "is-solo", isMuted && "is-muted", isSelected && "is-selected")} key={layer.identity} aria-label={`Track ${index + 1}: ${layer.file}`}>
                           <div className="mini-daw-track-meta">
                             <span className="mini-daw-track-number">{String(index + 1).padStart(2, "0")}</span>
-                            <span className="mini-daw-track-copy"><strong title={layer.file}>{layer.file}</strong><small>{layer.layerIndex ? `Layer ${layer.layerIndex}` : "Indexed layer"} · {layer.duration.toFixed(1)} s</small></span>
+                            <span className="mini-daw-track-copy"><strong title={layer.file}>{layer.file}</strong></span>
+                            <span className="mini-daw-track-duration">{layer.duration.toFixed(1)} s</span>
                             <div className="mini-daw-track-category"><LayerCategorySelect id={`editor-category-${layer.identity}`} value={layer.category} options={LAYER_CATEGORY_OPTIONS} disabled={saving} onChange={(category) => updateLayer(layer.identity, { category })} /></div>
+                            <button
+                              type="button"
+                              className="mini-daw-track-remove"
+                              disabled={saving || activeLayers.length <= 1}
+                              aria-label={`Exclude ${layer.file} from the library when changes are saved`}
+                              title={activeLayers.length <= 1 ? "A source loop must keep at least one layer" : "Exclude this layer on save"}
+                              onClick={() => excludeLayer(layer.identity)}
+                            >
+                              <X aria-hidden="true" />
+                            </button>
                             <div className="mini-daw-track-mix">
-                              <button type="button" className={cn(isSolo && "is-active")} aria-pressed={isSolo} aria-label={`${isSolo ? "Disable solo for" : "Solo"} ${layer.file}`} onClick={() => toggleSolo(layer.identity)}>S</button>
                               <button type="button" className={cn(isMuted && "is-active")} aria-pressed={isMuted} aria-label={`${isMuted ? "Unmute" : "Mute"} ${layer.file}`} onClick={() => toggleMute(layer.identity)}>M</button>
+                              <button type="button" className={cn(isSolo && "is-active")} aria-pressed={isSolo} aria-label={`${isSolo ? "Disable solo for" : "Solo"} ${layer.file}`} onClick={() => toggleSolo(layer.identity)}>S</button>
                             </div>
                             <label className="mini-daw-track-volume" title={`${trackVolume}%`}>
                               <Volume2 aria-hidden="true" />
@@ -3291,7 +3330,14 @@ function SourceLoopStudio({
                                   handle.addEventListener("pointercancel", end)
                                 }}
                               />
-                              <Waveform progress={clipProgress} compact label={`${layer.file} editor waveform`} bars={layerPeaks} />
+                              <div className="mini-daw-wave-viewport" aria-hidden="true">
+                                <div
+                                  className="mini-daw-wave-content"
+                                  style={{ insetInlineStart: `${sourceWaveOffset}%`, width: `${sourceWaveWidth}%` }}
+                                >
+                                  <Waveform progress={sourceProgress} compact label={`${layer.file} editor waveform`} bars={layerPeaks} />
+                                </div>
+                              </div>
                               <span className="mini-daw-clip-label">{layer.category}</span>
                               <button
                                 type="button"
@@ -3348,8 +3394,18 @@ function SourceLoopStudio({
 
       {error ? <p className="dialog-inline-error source-loop-editor-error" role="alert">{error}</p> : null}
       <footer className="source-loop-editor-footer">
-        <span><Check aria-hidden="true" /> Clips snap to ¼ beat. Drag either edge to trim; drag the body to move.</span>
-        <div>
+        <div className="source-loop-editor-footer-status">
+          {excludedIdentities.size > 0 ? (
+            <span role="status">
+              <CircleAlert aria-hidden="true" />
+              {excludedIdentities.size} layer{excludedIdentities.size === 1 ? "" : "s"} will be excluded from the library. Source files stay untouched.
+              <button type="button" disabled={saving} onClick={undoLayerExclusions}><RotateCcw aria-hidden="true" /> Undo</button>
+            </span>
+          ) : (
+            <span><Check aria-hidden="true" /> Clips snap to ¼ beat. Mute only affects preview; × excludes a layer on save.</span>
+          )}
+        </div>
+        <div className="source-loop-editor-footer-actions">
           <button type="button" className="dialog-cancel" disabled={saving} onClick={onClose}>Cancel</button>
           <Button disabled={!draft || saving || loading} onClick={() => void save()}><Check aria-hidden="true" /> {saving ? "Saving edits…" : issueActive ? "Save and restore loop" : "Save changes"}</Button>
         </div>

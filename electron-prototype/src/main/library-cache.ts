@@ -27,6 +27,13 @@ interface RootCategoryRow extends CategoryRow {
   library_root: string
 }
 
+function activeLayerWhere(database: DatabaseSync): string {
+  const columns = database.prepare("PRAGMA table_info(layer_cache)").all() as unknown as Array<{ name: string }>
+  return columns.some((column) => column.name === "manual_excluded")
+    ? " WHERE COALESCE(manual_excluded, 0) = 0"
+    : ""
+}
+
 function basename(libraryPath: string): string {
   return path.basename(libraryPath) || libraryPath
 }
@@ -48,8 +55,9 @@ export function readLibraryOverview(acceptedCachePath: string): LibraryOverview 
   let database: DatabaseSync | undefined
   try {
     database = new DatabaseSync(databasePath, { readOnly: true })
+    const activeWhere = activeLayerWhere(database)
     const total = database
-      .prepare("SELECT COUNT(*) AS count FROM layer_cache")
+      .prepare(`SELECT COUNT(*) AS count FROM layer_cache${activeWhere}`)
       .get() as unknown as CountRow
     const rootRows = database
       .prepare(`
@@ -59,6 +67,7 @@ export function readLibraryOverview(acceptedCachePath: string): LibraryOverview 
           SUM(CASE WHEN key_confidence_status <> 'unavailable' THEN 1 ELSE 0 END)
             AS analyzed_key_count
         FROM layer_cache
+        ${activeWhere}
         GROUP BY library_root
         ORDER BY layer_count DESC
       `)
@@ -70,6 +79,7 @@ export function readLibraryOverview(acceptedCachePath: string): LibraryOverview 
             AS category,
           COUNT(*) AS layer_count
         FROM layer_cache
+        ${activeWhere}
         GROUP BY category
         ORDER BY layer_count DESC
         LIMIT 24
@@ -83,6 +93,7 @@ export function readLibraryOverview(acceptedCachePath: string): LibraryOverview 
             AS category,
           COUNT(*) AS layer_count
         FROM layer_cache
+        ${activeWhere}
         GROUP BY library_root, category
         ORDER BY library_root, layer_count DESC
       `)
