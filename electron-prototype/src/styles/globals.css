@@ -10010,6 +10010,36 @@ main.quick-tools-main {
 .player-current strong { font-size: 12px; }
 .player-current small { margin-block-start: 2px; color: var(--muted-foreground); font-size: 10px; }
 
+.player-title > span {
+  display: inline-block;
+  min-width: max-content;
+}
+
+.player-title.is-overflowing {
+  text-overflow: clip;
+}
+
+.player-title.is-overflowing > span {
+  animation: player-title-scroll var(--player-title-duration) ease-in-out infinite alternate;
+}
+
+@keyframes player-title-scroll {
+  0%,
+  14% { transform: translateX(0); }
+  86%,
+  100% { transform: translateX(var(--player-title-shift)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .player-title.is-overflowing {
+    text-overflow: ellipsis;
+  }
+
+  .player-title.is-overflowing > span {
+    animation: none;
+  }
+}
+
 .player-core { gap: 14px; }
 .player-controls { gap: 7px; }
 

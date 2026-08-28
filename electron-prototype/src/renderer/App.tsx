@@ -50,7 +50,7 @@ import {
   Zap,
   type LucideIcon,
 } from "lucide-react"
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 
 import { Waveform } from "@/components/waveform"
 import { StudioWaveform } from "@/components/studio-waveform"
@@ -5090,6 +5090,43 @@ function CloudView({ library }: { library: LibraryOverview }) {
   )
 }
 
+function ScrollingPlayerTitle({ title }: { title: string }) {
+  const viewportRef = useRef<HTMLElement>(null)
+  const textRef = useRef<HTMLSpanElement>(null)
+  const [overflowDistance, setOverflowDistance] = useState(0)
+
+  useEffect(() => {
+    const viewport = viewportRef.current
+    const text = textRef.current
+    if (!viewport || !text) return
+
+    const measure = () => {
+      const nextDistance = Math.max(0, Math.ceil(text.scrollWidth - viewport.clientWidth))
+      setOverflowDistance((currentDistance) => currentDistance === nextDistance ? currentDistance : nextDistance)
+    }
+    measure()
+
+    const resizeObserver = new ResizeObserver(measure)
+    resizeObserver.observe(viewport)
+    resizeObserver.observe(text)
+    return () => resizeObserver.disconnect()
+  }, [title])
+
+  const scrolling = overflowDistance > 1
+  const style = scrolling
+    ? {
+        "--player-title-shift": `-${overflowDistance}px`,
+        "--player-title-duration": `${Math.max(5, overflowDistance / 24 + 3)}s`,
+      } as CSSProperties
+    : undefined
+
+  return (
+    <strong ref={viewportRef} className={cn("player-title", scrolling && "is-overflowing")} style={style}>
+      <span ref={textRef}>{title}</span>
+    </strong>
+  )
+}
+
 function GlobalPlayer({ layers, playback, contextLabel, displayName }: { layers: GeneratedLayer[]; playback: PlaybackClock; contextLabel: string; displayName?: string }) {
   const timelineScrubberRef = useRef<HTMLInputElement>(null)
   const soloLayer = layers.find((layer) => layer.id === playback.soloId)
@@ -5107,7 +5144,6 @@ function GlobalPlayer({ layers, playback, contextLabel, displayName }: { layers:
   const primaryPlaying = playback.playing && (syncEnabled ? playback.mode === "mix" : playback.mode === "solo")
   const timelineLayer = syncEnabled ? layers.find((layer) => layer.path) : soloLayer
   const duration = timelineLayer?.duration ?? currentLayer?.duration ?? 0
-  const activeFileNames = activeLayers.map((layer) => stripAudioExtension(layer.file)).join(" · ")
   const generatedName = displayName?.trim()
   const playerTitle = generatedName
     || (activeLayers.length === 1 ? stripAudioExtension(activeLayers[0].file) : "No generation loaded")
@@ -5127,11 +5163,11 @@ function GlobalPlayer({ layers, playback, contextLabel, displayName }: { layers:
 
   return (
     <footer className="global-player app-drag-region" aria-label="Global audio preview">
-      <div className="player-current app-no-drag">
+      <div className="player-current app-no-drag" title={playerTitle}>
         <span className="player-art"><AudioLines aria-hidden="true" /></span>
         <div>
-          <strong title={activeFileNames || undefined}>{playerTitle}</strong>
-          <small title={activeLayers.length > 1 ? activeFileNames : undefined}>{playerDetails}</small>
+          <ScrollingPlayerTitle title={playerTitle} />
+          <small>{playerDetails}</small>
         </div>
         {playback.error ? <Badge variant="warning" title={playback.error}>Audio unavailable</Badge> : null}
       </div>
