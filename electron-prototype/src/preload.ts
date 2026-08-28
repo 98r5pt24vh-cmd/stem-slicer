@@ -11,6 +11,7 @@ const api: StemSlicerDesktopApi = {
   trashHistoryPath: (request) => ipcRenderer.invoke("history:trash-output", request),
   getLibraryOverview: () => ipcRenderer.invoke("library:get-overview"),
   getLibraryProducers: () => ipcRenderer.invoke("library:get-producers"),
+  getLibrarySelectionSummary: (request) => ipcRenderer.invoke("library:get-selection-summary", request),
   removeLibraryRoot: (libraryRoot) => ipcRenderer.invoke("library:remove-root", libraryRoot),
   getKeyIssueReports: () => ipcRenderer.invoke("key-issues:list"),
   getCategoryCorrections: () => ipcRenderer.invoke("category-corrections:list"),

@@ -343,6 +343,7 @@ export class CloudService {
   private readonly authStorage: EncryptedAuthStorage
   private settings: CloudLocalSettings
   private client: SupabaseClient | null = null
+  private readonly libraryCategoryCache = new Map<string, { signature: string; categories: Array<{ name: string; count: number }> }>()
 
   constructor(
     private readonly acceptedCachePath: string,
@@ -895,6 +896,9 @@ export class CloudService {
       }
     })
     const enabled = new Set(this.settings.enabledLibraryIds ?? [])
+    const libraryCategories = await this.remoteLibraryCategories(libraryRows.filter((row) => (
+      row.owner_id !== profile.id && row.status === "ready" && enabled.has(row.id)
+    )))
     const libraries: CloudLibrarySummary[] = libraryRows.map((row) => ({
       id: row.id,
       name: row.name,
@@ -906,6 +910,7 @@ export class CloudService {
       own: row.owner_id === profile.id,
       enabledForGenerate: row.owner_id !== profile.id && row.status === "ready" && enabled.has(row.id),
       updatedAt: row.updated_at,
+      categories: libraryCategories.get(row.id) ?? [],
     }))
     return {
       configured: true,
@@ -1103,6 +1108,49 @@ export class CloudService {
     return rows
   }
 
+  private async remoteLibraryCategories(libraries: LibraryRow[]): Promise<Map<string, Array<{ name: string; count: number }>>> {
+    const result = new Map<string, Array<{ name: string; count: number }>>()
+    const missing: LibraryRow[] = []
+    for (const library of libraries) {
+      const signature = `${library.updated_at}:${library.layer_count}`
+      const cached = this.libraryCategoryCache.get(library.id)
+      if (cached?.signature === signature) result.set(library.id, cached.categories)
+      else missing.push(library)
+    }
+    if (missing.length === 0) return result
+
+    const counts = new Map<string, Map<string, number>>()
+    const missingIds = missing.map((library) => library.id)
+    for (let start = 0; ; start += CATALOG_PAGE_SIZE) {
+      const response = await this.supabase()
+        .from("cloud_layers")
+        .select("library_id,metadata")
+        .in("library_id", missingIds)
+        .range(start, start + CATALOG_PAGE_SIZE - 1)
+      if (response.error) throw response.error
+      const page = response.data as Array<{ library_id: string; metadata: Record<string, unknown> }>
+      for (const row of page) {
+        const category = typeof row.metadata?.category === "string" && row.metadata.category.trim()
+          ? row.metadata.category.trim()
+          : "Unknown"
+        const libraryCounts = counts.get(row.library_id) ?? new Map<string, number>()
+        libraryCounts.set(category, (libraryCounts.get(category) ?? 0) + 1)
+        counts.set(row.library_id, libraryCounts)
+      }
+      if (page.length < CATALOG_PAGE_SIZE) break
+    }
+
+    for (const library of missing) {
+      const categories = [...(counts.get(library.id) ?? new Map<string, number>())]
+        .map(([name, count]) => ({ name, count }))
+        .sort((left, right) => right.count - left.count || left.name.localeCompare(right.name))
+      const signature = `${library.updated_at}:${library.layer_count}`
+      this.libraryCategoryCache.set(library.id, { signature, categories })
+      result.set(library.id, categories)
+    }
+    return result
+  }
+
   async enrichGenerateRequest(request: GenerateJobRequest): Promise<CloudGenerateJobRequest> {
     // A local-only generation must never depend on Cloud configuration or auth.
     // Keep this guard before every access to persisted Cloud state so a stale or
@@ -1155,10 +1203,8 @@ export class CloudService {
         cloud_owner_id: row.owner_id,
       }
     })
-    const cloudProducerNames = [...new Set(cloudLayers.flatMap((layer) => layer.producers))]
     return {
       ...request,
-      allowedProducers: [...new Set([...(request.allowedProducers ?? []), ...cloudProducerNames])],
       cloudLayers,
       cloudAuth: {
         projectUrl: this.settings.projectUrl,

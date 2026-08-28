@@ -74,6 +74,23 @@ describe("key issue feedback", () => {
     expect(quarantinedAgain[0].resolvedAt).toBeUndefined()
 
     expect(dismissKeyIssueReport(acceptedCache, reported[0].id)).toEqual([])
+    const retained = new DatabaseSync(path.join(generateCache, "key-feedback.sqlite3"), { readOnly: true })
+    const archived = retained.prepare("SELECT hidden_at FROM key_issue_reports WHERE id = ?").get(reported[0].id) as { hidden_at: string }
+    retained.close()
+    expect(archived.hidden_at).toBeTruthy()
+
+    const visibleAgain = reportKeyIssue(acceptedCache, {
+      issueType: "wrong-key",
+      libraryRoot,
+      sourceLoopId: "loop 140 am",
+      reportedIdentity: "hash-1",
+      reportedPath: firstPath,
+      reportedFile: path.basename(firstPath),
+      detectedKey: "A minor",
+      targetKey: "F minor",
+      generationOutputDirectory: path.join(acceptedCache, "generation"),
+    })
+    expect(visibleAgain).toHaveLength(1)
   })
 
   it("stores a wrong-slice quarantine separately from a wrong-key report", () => {
@@ -151,5 +168,9 @@ describe("key issue feedback", () => {
     expect(reports[0].id).toBe("legacy")
     expect(reports[0].issueType).toBe("wrong-key")
     expect(reports[0].active).toBe(true)
+    const migrated = new DatabaseSync(path.join(generateCache, "key-feedback.sqlite3"), { readOnly: true })
+    const migratedColumns = migrated.prepare("PRAGMA table_info(key_issue_reports)").all() as Array<{ name: string }>
+    migrated.close()
+    expect(migratedColumns.some((column) => column.name === "hidden_at")).toBe(true)
   })
 })

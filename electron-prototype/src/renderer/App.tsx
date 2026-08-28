@@ -2,6 +2,7 @@ import { Dialog } from "@base-ui/react/dialog"
 import { Select as BaseSelect } from "@base-ui/react/select"
 import {
   AudioLines,
+  Archive,
   AlertTriangle,
   ArrowDownWideNarrow,
   ArrowUpNarrowWide,
@@ -21,6 +22,7 @@ import {
   Instagram,
   Library as LibraryIcon,
   Layers3,
+  ListFilter,
   Lock,
   LogIn,
   LogOut,
@@ -94,6 +96,7 @@ import type {
   LibraryIssueType,
   LibraryOverview,
   LibraryProducerSummary,
+  LibrarySelectionSummary,
   QuickConvertResult,
   QuickExtractResult,
   QuickScanResult,
@@ -197,7 +200,7 @@ const NAVIGATION: NavItem[] = [
   { id: "quick-tools", label: "Quick Tools", icon: Zap },
   { id: "generate", label: "Generate", icon: Sparkles },
   { id: "history", label: "History", icon: History },
-  { id: "library", label: "Library", icon: LibraryIcon },
+  { id: "library", label: "Review", icon: LibraryIcon },
   { id: "cloud", label: "Cloud", icon: Cloud, badge: "ALPHA" },
 ]
 
@@ -2267,15 +2270,20 @@ function LayerCard({
   )
 }
 
-function aggregateCategories(roots: LibraryOverview["roots"]) {
+function mergeGenerateCategories(...groups: Array<Array<{ name: string; count: number }>>) {
+  const supported = new Set(LAYER_CATEGORY_OPTIONS.map((category) => category.toLowerCase()))
+  const canonicalNames = new Map(LAYER_CATEGORY_OPTIONS.map((category) => [category.toLowerCase(), category]))
   const counts = new Map<string, number>()
-  for (const root of roots) {
-    for (const category of root.categories ?? []) {
-      counts.set(category.name, (counts.get(category.name) ?? 0) + category.count)
+  for (const group of groups) {
+    for (const category of group) {
+      const key = category.name.trim().toLowerCase()
+      if (!supported.has(key) || category.count <= 0) continue
+      const name = canonicalNames.get(key) ?? category.name.trim()
+      counts.set(name, (counts.get(name) ?? 0) + category.count)
     }
   }
-  return Array.from(counts, ([name, count]) => ({ name, count }))
-    .sort((left, right) => right.count - left.count)
+  return [...counts].map(([name, count]) => ({ name, count }))
+    .sort((left, right) => right.count - left.count || left.name.localeCompare(right.name))
 }
 
 function sourceLoopKey(libraryRoot: string | undefined, sourceLoopId: string | undefined) {
@@ -2437,6 +2445,8 @@ function GenerateView({
   const [recipeDirty, setRecipeDirty] = useState(false)
   const [selectedLibraryPaths, setSelectedLibraryPaths] = useState<string[]>([])
   const [libraryProducers, setLibraryProducers] = useState<LibraryProducerSummary[]>([])
+  const [localSelectionSummary, setLocalSelectionSummary] = useState<LibrarySelectionSummary>({ layerCount: 0, loopCount: 0, categories: [] })
+  const [selectionSummaryLoading, setSelectionSummaryLoading] = useState(false)
   const [cloudState, setCloudState] = useState<CloudState>({ configured: false, projectUrl: "", authenticated: false, connections: [], libraries: [] })
   const [configuredAllowedProducers, setConfiguredAllowedProducers] = useState<string[] | null>(initialCollaboratorSettings.allowedProducers)
   const [allowedCreditCounts, setAllowedCreditCounts] = useState<CollaboratorCreditCount[]>(initialCollaboratorSettings.allowedCreditCounts)
@@ -2461,15 +2471,6 @@ function GenerateView({
   const activeKeyIssueBySource = new Map(
     activeKeyIssues.map((issue) => [sourceLoopKey(issue.libraryRoot, issue.sourceLoopId), issue]),
   )
-  const selectedLibrarySet = new Set(selectedLibraryPaths)
-  const selectedRoots = library.roots.filter((root) => selectedLibrarySet.has(root.path))
-  const selectedLayerCount = selectedRoots.reduce((sum, root) => sum + root.layerCount, 0)
-  const selectedRootCategories = aggregateCategories(selectedRoots)
-  const allLibrariesSelected = library.roots.length > 0 && selectedRoots.length === library.roots.length
-  const selectedCategories = selectedRootCategories.length > 0
-    ? selectedRootCategories
-    : allLibrariesSelected ? library.categories : []
-  const largestCategoryCount = selectedCategories[0]?.count || 1
   const enabledCloudLibraries = cloudState.libraries.filter((item) => !item.own && item.status === "ready" && item.enabledForGenerate)
   const hasEnabledCloudLibrary = enabledCloudLibraries.length > 0
   const cloudSourceCount = new Set(enabledCloudLibraries.map((item) => item.owner.displayName.toLowerCase())).size
@@ -2603,6 +2604,44 @@ function GenerateView({
     if (activeRequiredProducers.length < maximumExternalSlots) return configuredProducerPool
     return uniqueProducerCredits([PRIMARY_PRODUCER, ...activeRequiredProducers.slice(0, maximumExternalSlots)])
   }, [activeRequiredProducers, allowedCreditCounts, configuredProducerPool])
+  useEffect(() => {
+    let cancelled = false
+    if (selectedLibraryPaths.length === 0) {
+      setLocalSelectionSummary({ layerCount: 0, loopCount: 0, categories: [] })
+      setSelectionSummaryLoading(false)
+      return () => { cancelled = true }
+    }
+    setSelectionSummaryLoading(true)
+    void window.stemSlicer?.getLibrarySelectionSummary({
+      libraryRoots: selectedLibraryPaths,
+      allowedProducers,
+      allowedCreditCounts,
+    }).then((summary) => {
+      if (!cancelled && summary) setLocalSelectionSummary(summary)
+    }).catch(() => {
+      if (!cancelled) setLocalSelectionSummary({ layerCount: 0, loopCount: 0, categories: [] })
+    }).finally(() => {
+      if (!cancelled) setSelectionSummaryLoading(false)
+    })
+    return () => { cancelled = true }
+  }, [allowedCreditCounts, allowedProducers, library.categories, library.totalLayers, selectedLibraryPaths])
+  const allowedProducerKeys = new Set(allowedProducers.map((producer) => producer.toLowerCase()))
+  const cloudCreditLimitAllowsCollaborators = allowedCreditCounts.includes(0) || Math.max(1, ...allowedCreditCounts) >= 2
+  const selectedCloudLibraries = sourcePool === "local-only" || !cloudCreditLimitAllowsCollaborators
+    ? []
+    : enabledCloudLibraries.filter((item) => allowedProducerKeys.has(item.owner.displayName.toLowerCase()))
+  const localSelectionEnabled = sourcePool !== "cloud-only"
+  const localSelectedLayerCount = localSelectionEnabled ? localSelectionSummary.layerCount : 0
+  const localSelectedLoopCount = localSelectionEnabled ? localSelectionSummary.loopCount : 0
+  const cloudSelectedLayerCount = selectedCloudLibraries.reduce((sum, item) => sum + item.layerCount, 0)
+  const cloudSelectedLoopCount = selectedCloudLibraries.reduce((sum, item) => sum + item.loopCount, 0)
+  const selectedLayerCount = localSelectedLayerCount + cloudSelectedLayerCount
+  const selectedLoopCount = localSelectedLoopCount + cloudSelectedLoopCount
+  const selectedCategories = mergeGenerateCategories(
+    localSelectionEnabled ? localSelectionSummary.categories : [],
+    ...selectedCloudLibraries.map((item) => item.categories ?? []),
+  )
+  const largestCategoryCount = selectedCategories[0]?.count || 1
   const producerProfilesWithCloud = useMemo(() => {
     const merged = { ...producerProfiles }
     const profiles = [
@@ -3132,7 +3171,7 @@ function GenerateView({
               onProducerSortDirectionChange={setProducerSortDirection}
             />
             <Button variant="outline" className="previous-seed-button" size="sm" disabled={generateJob.busy || previousSeed == null} onClick={() => previousSeed != null && handleGenerate(previousSeed)} title={previousSeed == null ? "No previous seed yet" : `Generate seed ${previousSeed}`}><RotateCcw /> Previous</Button>
-          <Button className="hardware-button generate-hardware" size="lg" onClick={() => handleGenerate()} disabled={!generateJob.busy && (sourcePool === "cloud-only" ? !hasEnabledCloudLibrary : selectedLibraryPaths.length === 0)}>
+          <Button className="hardware-button generate-hardware" size="lg" onClick={() => handleGenerate()} disabled={!generateJob.busy && (selectionSummaryLoading || selectedLayerCount === 0 || (sourcePool === "cloud-only" ? !hasEnabledCloudLibrary : selectedLibraryPaths.length === 0))}>
               {generateJob.busy ? <X /> : <WandSparkles />}
               {generateJob.busy ? `${generateJob.percent}% · Cancel` : "Generate"}
             </Button>
@@ -3151,15 +3190,15 @@ function GenerateView({
             </div>
           </div>
           <div className="catalogue-actions">
-            <div className="catalogue-layer-count" aria-label={`${formatCount(selectedLayerCount)} layers selected for Generate`}>
+            <div className="catalogue-layer-count" aria-label={`${formatCount(selectedLoopCount)} loops and ${formatCount(selectedLayerCount)} layers selected for Generate`}>
               <strong className="tabular">{formatCount(selectedLayerCount)}</strong>
-              <span>layers selected</span>
+              <span>layers · {formatCount(selectedLoopCount)} loops</span>
             </div>
             <LibraryManager
               library={library}
               selectedPaths={selectedLibraryPaths}
-              selectedLayerCount={selectedLayerCount}
-              selectedCategoryCount={selectedCategories.length}
+              selectedLayerCount={localSelectionSummary.layerCount}
+              selectedCategoryCount={mergeGenerateCategories(localSelectionSummary.categories).length}
               selectionMessage={selectionMessage}
               onSelectedPathsChange={setSelectedLibraryPaths}
               onAddFolder={pickFolder}
@@ -4174,7 +4213,7 @@ function SourceLoopStudio({
           <ChevronLeft aria-hidden="true" /><span>Library</span>
         </button>
         <div className="source-loop-studio-title">
-          <p className="eyebrow">Workspace / Library / Studio</p>
+          <p className="eyebrow">Workspace / Review / Studio</p>
           <h1 id="source-loop-studio-title">{sourceLoopId || "Source loop"}</h1>
           <p>Edit the indexed layers directly on the timeline. Source audio remains untouched.</p>
         </div>
@@ -4496,9 +4535,11 @@ function HistoryView({
   onMarkExported: (entry: HistoryEntry) => void
   onTogglePlayback: (entry: HistoryEntry) => void
 }) {
-  type SectionId = "generate" | "extract" | "convert"
-  const [activeSection, setActiveSection] = useState<SectionId>("generate")
-  const [selectedBySection, setSelectedBySection] = useState<Record<SectionId, Set<string>>>(() => ({
+  type HistorySection = "generate" | "extract" | "convert"
+  type SectionId = "all" | HistorySection
+  const historySections: HistorySection[] = ["generate", "extract", "convert"]
+  const [activeSection, setActiveSection] = useState<SectionId>("all")
+  const [selectedBySection, setSelectedBySection] = useState<Record<HistorySection, Set<string>>>(() => ({
     generate: new Set(),
     extract: new Set(),
     convert: new Set(),
@@ -4506,21 +4547,22 @@ function HistoryView({
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState("")
-  const [storageUsage, setStorageUsage] = useState<Record<SectionId, GenerationStorageUsage | null>>({ generate: null, extract: null, convert: null })
-  const [storageError, setStorageError] = useState<Record<SectionId, string>>({ generate: "", extract: "", convert: "" })
-  const itemIds = useMemo<Record<SectionId, string[]>>(() => ({
+  const [storageUsage, setStorageUsage] = useState<Record<HistorySection, GenerationStorageUsage | null>>({ generate: null, extract: null, convert: null })
+  const [storageError, setStorageError] = useState<Record<HistorySection, string>>({ generate: "", extract: "", convert: "" })
+  const itemIds = useMemo<Record<HistorySection, string[]>>(() => ({
     generate: history.map((entry) => entry.id),
     extract: extractionHistory.map((entry) => entry.id),
     convert: convertHistory.map((entry) => entry.id),
   }), [convertHistory, extractionHistory, history])
-  const selectedIds = selectedBySection[activeSection]
-  const selectedCount = itemIds[activeSection].filter((id) => selectedIds.has(id)).length
-  const allSelected = itemIds[activeSection].length > 0 && selectedCount === itemIds[activeSection].length
+  const visibleSections: HistorySection[] = activeSection === "all" ? historySections : [activeSection]
+  const visibleItemCount = visibleSections.reduce((sum, section) => sum + itemIds[section].length, 0)
+  const selectedCount = visibleSections.reduce((sum, section) => sum + itemIds[section].filter((id) => selectedBySection[section].has(id)).length, 0)
+  const allSelected = visibleItemCount > 0 && selectedCount === visibleItemCount
 
   const refreshStorageUsage = useCallback(async () => {
     const api = window.stemSlicer
     if (!api) return
-    const requests: Array<[SectionId, Promise<GenerationStorageUsage>]> = [
+    const requests: Array<[HistorySection, Promise<GenerationStorageUsage>]> = [
       ["generate", api.getGenerationStorageUsage()],
       ["extract", api.getHistoryStorageUsage(extractionHistory.map((entry) => entry.outputFolder))],
       ["convert", api.getHistoryStorageUsage(convertHistory.map((entry) => entry.outputFolder))],
@@ -4545,20 +4587,20 @@ function HistoryView({
     void refreshStorageUsage()
   }, [itemIds, refreshStorageUsage])
 
-  const toggleSelected = (entryId: string, selected: boolean) => {
+  const toggleSelected = (section: HistorySection, entryId: string, selected: boolean) => {
     setSelectedBySection((current) => {
-      const next = new Set(current[activeSection])
+      const next = new Set(current[section])
       if (selected) next.add(entryId)
       else next.delete(entryId)
-      return { ...current, [activeSection]: next }
+      return { ...current, [section]: next }
     })
   }
 
   const toggleAll = () => {
-    setSelectedBySection((current) => ({
-      ...current,
-      [activeSection]: allSelected ? new Set() : new Set(itemIds[activeSection]),
-    }))
+    setSelectedBySection((current) => Object.fromEntries(historySections.map((section) => [
+      section,
+      visibleSections.includes(section) ? (allSelected ? new Set() : new Set(itemIds[section])) : current[section],
+    ])) as Record<HistorySection, Set<string>>)
   }
 
   const deleteSelection = async () => {
@@ -4566,10 +4608,13 @@ function HistoryView({
     setDeleting(true)
     setDeleteError("")
     try {
-      if (activeSection === "generate") await onTrashGenerated(history.filter((entry) => selectedIds.has(entry.id)))
-      else if (activeSection === "extract") await onTrashExtractions(extractionHistory.filter((entry) => selectedIds.has(entry.id)))
-      else await onTrashConversions(convertHistory.filter((entry) => selectedIds.has(entry.id)))
-      setSelectedBySection((current) => ({ ...current, [activeSection]: new Set() }))
+      const selectedGenerations = history.filter((entry) => selectedBySection.generate.has(entry.id))
+      const selectedExtractions = extractionHistory.filter((entry) => selectedBySection.extract.has(entry.id))
+      const selectedConversions = convertHistory.filter((entry) => selectedBySection.convert.has(entry.id))
+      if (selectedGenerations.length > 0) await onTrashGenerated(selectedGenerations)
+      if (selectedExtractions.length > 0) await onTrashExtractions(selectedExtractions)
+      if (selectedConversions.length > 0) await onTrashConversions(selectedConversions)
+      setSelectedBySection({ generate: new Set(), extract: new Set(), convert: new Set() })
       setDeleteOpen(false)
     } catch (reason) {
       setDeleteError(reason instanceof Error ? reason.message : "Unable to move the selected history outputs to Trash.")
@@ -4578,16 +4623,29 @@ function HistoryView({
     }
   }
 
-  const sectionMeta = {
+  const sectionMeta = ({
+    all: { title: "All activity", description: "Generated stacks, extraction jobs and conversions share one review surface.", countLabel: visibleItemCount === 1 ? "item" : "items" },
     generate: { title: "Generations", description: "Previously rendered stacks remain available here.", countLabel: history.length === 1 ? "generation" : "generations" },
     extract: { title: "Extractions", description: "Quick Extract jobs and full folder batches share one timeline with a distinct source type.", countLabel: extractionHistory.length === 1 ? "extraction" : "extractions" },
     convert: { title: "Quick Convert", description: "Completed one-file conversions remain easy to reveal or drag back into your workflow.", countLabel: convertHistory.length === 1 ? "conversion" : "conversions" },
-  }[activeSection]
-  const activeUsage = storageUsage[activeSection]
-  const activeStorageError = storageError[activeSection]
+  } satisfies Record<SectionId, { title: string; description: string; countLabel: string }>)[activeSection]
+  const activeUsage = activeSection === "all"
+    ? historySections.reduce<GenerationStorageUsage | null>((total, section) => {
+      const usage = storageUsage[section]
+      if (!usage) return total
+      return {
+        bytes: (total?.bytes ?? 0) + usage.bytes,
+        folders: (total?.folders ?? 0) + usage.folders,
+        files: (total?.files ?? 0) + usage.files,
+      }
+    }, null)
+    : storageUsage[activeSection]
+  const activeStorageError = activeSection === "all"
+    ? historySections.map((section) => storageError[section]).filter(Boolean).join(" ")
+    : storageError[activeSection]
 
   return (
-    <div className="page-stack history-page">
+    <div className={cn("page-stack history-page", activeSection === "all" && "is-all")}>
       <PageHeader
         eyebrow="Workspace / History"
         title="Activity history"
@@ -4595,24 +4653,24 @@ function HistoryView({
         actions={<Button variant="outline" size="sm" onClick={() => void window.stemSlicer?.openHistoryRoot()}><FolderOpen aria-hidden="true" /> Open Slicer folder</Button>}
       />
 
-      <div className="workspace-section-tabs" role="group" aria-label="History sections">
+      <div className="workspace-filter-bar" role="group" aria-label="Filter activity history">
         {([
-          { id: "generate" as const, label: "Generate history", description: "Rendered layer stacks", icon: Sparkles, count: history.length },
-          { id: "extract" as const, label: "Extraction history", description: "Single loops and folders", icon: Scissors, count: extractionHistory.length },
-          { id: "convert" as const, label: "Quick Convert history", description: "Retuned and stretched files", icon: Repeat2, count: convertHistory.length },
-        ]).map(({ id, label, description, icon: Icon, count }) => (
+          { id: "all" as const, label: "All", icon: ListFilter, count: history.length + extractionHistory.length + convertHistory.length },
+          { id: "generate" as const, label: "Generate", icon: Sparkles, count: history.length },
+          { id: "extract" as const, label: "Extract", icon: Scissors, count: extractionHistory.length },
+          { id: "convert" as const, label: "Convert", icon: Repeat2, count: convertHistory.length },
+        ]).map(({ id, label, icon: Icon, count }) => (
           <button
             key={id}
             type="button"
             aria-pressed={activeSection === id}
-            aria-controls={`history-panel-${id}`}
-            className="workspace-section-tab"
+            className="workspace-filter-chip"
             data-section={id}
             onClick={() => setActiveSection(id)}
           >
-            <span className="workspace-tab-icon"><Icon aria-hidden="true" /></span>
-            <span><strong>{label}</strong><small>{description}</small></span>
-            <Badge variant="secondary">{count}</Badge>
+            <Icon aria-hidden="true" />
+            <span>{label}</span>
+            <b className="tabular">{count}</b>
           </button>
         ))}
       </div>
@@ -4621,14 +4679,14 @@ function HistoryView({
         <div>
           <div className="history-title-line">
             <h2>{sectionMeta.title}</h2>
-            <span>{formatCount(itemIds[activeSection].length)} {sectionMeta.countLabel}</span>
+            <span>{formatCount(visibleItemCount)} {sectionMeta.countLabel}</span>
             <span title={activeStorageError || (activeUsage ? `${activeUsage.files} files` : "Calculating storage")}>{activeUsage ? formatDecimalBytes(activeUsage.bytes) : "…"}</span>
           </div>
           <p>{sectionMeta.description}</p>
         </div>
         <div className="history-selection-actions" aria-live="polite">
           <span>{selectedCount > 0 ? `${selectedCount} selected` : "Nothing selected"}</span>
-          <Button variant="outline" size="sm" disabled={itemIds[activeSection].length === 0} aria-pressed={allSelected} onClick={toggleAll}>
+          <Button variant="outline" size="sm" disabled={visibleItemCount === 0} aria-pressed={allSelected} onClick={toggleAll}>
             {allSelected ? <Square aria-hidden="true" /> : <CheckSquare2 aria-hidden="true" />}
             {allSelected ? "Clear selection" : "Select all"}
           </Button>
@@ -4638,19 +4696,20 @@ function HistoryView({
         </div>
       </div>
 
-      {activeSection === "generate" ? <section id="history-panel-generate" role="tabpanel" className="history-panel">
+      <div className="history-panels">
+      {activeSection === "all" || activeSection === "generate" ? <section id="history-panel-generate" className="history-panel">
       {history.length ? (
         <div className="history-list">
           {history.map((entry) => {
             const credits = uniqueProducerCredits(entry.producers)
             return (
-              <Card key={entry.id} className={cn("history-item", selectedIds.has(entry.id) && "is-selected")}>
+              <Card key={entry.id} className={cn("history-item", selectedBySection.generate.has(entry.id) && "is-selected")}>
                 <CardContent>
                   <label className="history-select-control">
                     <input
                       type="checkbox"
-                      checked={selectedIds.has(entry.id)}
-                      onChange={(event) => toggleSelected(entry.id, event.target.checked)}
+                      checked={selectedBySection.generate.has(entry.id)}
+                      onChange={(event) => toggleSelected("generate", entry.id, event.target.checked)}
                     />
                     <span className="sr-only">Select {entry.displayName} from {entry.createdAt}</span>
                   </label>
@@ -4705,13 +4764,13 @@ function HistoryView({
       )}
       </section> : null}
 
-      {activeSection === "extract" ? <section id="history-panel-extract" role="tabpanel" className="history-panel">
+      {activeSection === "all" || activeSection === "extract" ? <section id="history-panel-extract" className="history-panel">
         {extractionHistory.length > 0 ? <div className="activity-history-list">
           {extractionHistory.map((entry) => (
-            <Card key={entry.id} className={cn("activity-history-item", selectedIds.has(entry.id) && "is-selected")}>
+            <Card key={entry.id} className={cn("activity-history-item", selectedBySection.extract.has(entry.id) && "is-selected")}>
               <CardContent>
                 <label className="history-select-control activity-select-control">
-                  <input type="checkbox" checked={selectedIds.has(entry.id)} onChange={(event) => toggleSelected(entry.id, event.target.checked)} />
+                  <input type="checkbox" checked={selectedBySection.extract.has(entry.id)} onChange={(event) => toggleSelected("extract", entry.id, event.target.checked)} />
                   <span className="sr-only">Select extraction {basename(entry.sourcePath)}</span>
                 </label>
                 <span className={cn("activity-history-icon", entry.mode === "folder" && "is-folder")}>
@@ -4736,13 +4795,13 @@ function HistoryView({
         </div> : <EmptyState icon={Scissors} title="No extraction history yet" description="Quick Extract results and completed folder extractions will appear here automatically." action={<span className="empty-hint">Run an extraction to create the first entry.</span>} />}
       </section> : null}
 
-      {activeSection === "convert" ? <section id="history-panel-convert" role="tabpanel" className="history-panel">
+      {activeSection === "all" || activeSection === "convert" ? <section id="history-panel-convert" className="history-panel">
         {convertHistory.length > 0 ? <div className="activity-history-list">
           {convertHistory.map((entry) => (
-            <Card key={entry.id} className={cn("activity-history-item", selectedIds.has(entry.id) && "is-selected")}>
+            <Card key={entry.id} className={cn("activity-history-item", selectedBySection.convert.has(entry.id) && "is-selected")}>
               <CardContent>
                 <label className="history-select-control activity-select-control">
-                  <input type="checkbox" checked={selectedIds.has(entry.id)} onChange={(event) => toggleSelected(entry.id, event.target.checked)} />
+                  <input type="checkbox" checked={selectedBySection.convert.has(entry.id)} onChange={(event) => toggleSelected("convert", entry.id, event.target.checked)} />
                   <span className="sr-only">Select conversion {basename(entry.sourcePath)}</span>
                 </label>
                 <span className="activity-history-icon is-convert"><Repeat2 aria-hidden="true" /></span>
@@ -4765,6 +4824,8 @@ function HistoryView({
           ))}
         </div> : <EmptyState icon={Repeat2} title="No conversion history yet" description="Completed Quick Convert files will appear here automatically." action={<span className="empty-hint">Open Quick Tools to convert the first loop.</span>} />}
       </section> : null}
+      {activeSection === "all" && visibleItemCount === 0 ? <EmptyState icon={History} title="No activity yet" description="Generated loops, extraction jobs and conversions will appear in this timeline." action={<span className="empty-hint">Create an output to add the first item.</span>} /> : null}
+      </div>
 
       <Dialog.Root open={deleteOpen} onOpenChange={(open) => { setDeleteOpen(open); if (!open) setDeleteError("") }}>
         <Dialog.Portal>
@@ -4796,13 +4857,11 @@ function LibraryIssueList({
   selectedIds,
   onToggleSelected,
   onSetKeyIssueActive,
-  onEditSourceLoop,
 }: {
   issues: KeyIssueReport[]
   selectedIds: Set<string>
   onToggleSelected: (issueId: string, selected: boolean) => void
   onSetKeyIssueActive: (issueId: string, active: boolean) => Promise<void>
-  onEditSourceLoop: (request: SourceLoopStudioRequest) => void
 }) {
   if (issues.length === 0) return <p className="key-issues-empty">No correction has been reported in this section yet.</p>
 
@@ -4833,7 +4892,6 @@ function LibraryIssueList({
             </div>
             <div className="key-issue-actions">
               <Button variant="outline" size="sm" onClick={() => void window.stemSlicer?.revealPath(issue.reportedPath)}><FolderOpen aria-hidden="true" /> Reveal</Button>
-              <Button variant="outline" size="sm" onClick={() => onEditSourceLoop({ libraryRoot: issue.libraryRoot, sourceLoopId: issue.sourceLoopId, issueId: issue.id, issueActive: issue.active })}><Pencil aria-hidden="true" /> Studio</Button>
               <Button variant={issue.active ? "outline" : "ghost"} size="sm" onClick={() => void onSetKeyIssueActive(issue.id, !issue.active)}>
                 {issue.active ? <Check aria-hidden="true" /> : <CircleX aria-hidden="true" />}
                 {issue.active ? "Restore" : "Exclude again"}
@@ -4851,8 +4909,6 @@ function LibraryIssueList({
 }
 
 function LibraryView({
-  active,
-  library,
   keyIssues,
   categoryCorrections,
   onSetKeyIssueActive,
@@ -4860,8 +4916,6 @@ function LibraryView({
   onDismissCategoryCorrections,
   onEditSourceLoop,
 }: {
-  active: boolean
-  library: LibraryOverview
   keyIssues: KeyIssueReport[]
   categoryCorrections: CategoryCorrection[]
   onSetKeyIssueActive: (issueId: string, active: boolean) => Promise<void>
@@ -4870,7 +4924,9 @@ function LibraryView({
   onEditSourceLoop: (request: SourceLoopStudioRequest) => void
 }) {
   type CorrectionSection = "wrong-key" | "wrong-category" | "wrong-cut"
-  const [activeSection, setActiveSection] = useState<CorrectionSection | "cloud">("wrong-key")
+  type ReviewFilter = "all" | CorrectionSection
+  const correctionSections: CorrectionSection[] = ["wrong-key", "wrong-category", "wrong-cut"]
+  const [activeSection, setActiveSection] = useState<ReviewFilter>("all")
   const [selectedBySection, setSelectedBySection] = useState<Record<CorrectionSection, Set<string>>>(() => ({
     "wrong-key": new Set(),
     "wrong-category": new Set(),
@@ -4886,11 +4942,10 @@ function LibraryView({
     "wrong-category": categoryCorrections.map((correction) => correction.identity),
     "wrong-cut": wrongCutIssues.map((issue) => issue.id),
   }), [categoryCorrections, wrongCutIssues, wrongKeyIssues])
-  const correctionSection = activeSection === "cloud" ? null : activeSection
-  const selectedCorrectionIds = correctionSection ? selectedBySection[correctionSection] : new Set<string>()
-  const availableCorrectionIds = correctionSection ? correctionIds[correctionSection] : []
-  const selectedCorrectionCount = availableCorrectionIds.filter((id) => selectedCorrectionIds.has(id)).length
-  const allCorrectionsSelected = availableCorrectionIds.length > 0 && selectedCorrectionCount === availableCorrectionIds.length
+  const visibleCorrectionSections: CorrectionSection[] = activeSection === "all" ? correctionSections : [activeSection]
+  const availableCorrectionCount = visibleCorrectionSections.reduce((sum, section) => sum + correctionIds[section].length, 0)
+  const selectedCorrectionCount = visibleCorrectionSections.reduce((sum, section) => sum + correctionIds[section].filter((id) => selectedBySection[section].has(id)).length, 0)
+  const allCorrectionsSelected = availableCorrectionCount > 0 && selectedCorrectionCount === availableCorrectionCount
 
   useEffect(() => {
     setSelectedBySection((current) => ({
@@ -4900,42 +4955,40 @@ function LibraryView({
     }))
   }, [correctionIds])
 
-  const toggleCorrectionSelected = (id: string, selected: boolean) => {
-    if (!correctionSection) return
+  const toggleCorrectionSelected = (section: CorrectionSection, id: string, selected: boolean) => {
     setSelectedBySection((current) => {
-      const next = new Set(current[correctionSection])
+      const next = new Set(current[section])
       if (selected) next.add(id)
       else next.delete(id)
-      return { ...current, [correctionSection]: next }
+      return { ...current, [section]: next }
     })
   }
 
   const dismissSelectedCorrections = async () => {
-    if (!correctionSection || selectedCorrectionCount === 0) return
+    if (selectedCorrectionCount === 0) return
     setDeleting(true)
     setIssueError("")
     try {
-      if (correctionSection === "wrong-category") {
-        await onDismissCategoryCorrections([...selectedCorrectionIds])
-      } else {
-        for (const issueId of selectedCorrectionIds) await onDismissKeyIssue(issueId)
+      const categoryIds = [...selectedBySection["wrong-category"]]
+      if (categoryIds.length > 0) await onDismissCategoryCorrections(categoryIds)
+      for (const section of ["wrong-key", "wrong-cut"] as const) {
+        for (const issueId of selectedBySection[section]) await onDismissKeyIssue(issueId)
       }
-      setSelectedBySection((current) => ({ ...current, [correctionSection]: new Set() }))
+      setSelectedBySection({ "wrong-key": new Set(), "wrong-category": new Set(), "wrong-cut": new Set() })
       setDeleteOpen(false)
     } catch (reason) {
-      setIssueError(reason instanceof Error ? reason.message : "Unable to remove the selected corrections from history.")
+      setIssueError(reason instanceof Error ? reason.message : "Unable to archive the selected review items.")
     } finally {
       setDeleting(false)
     }
   }
 
-  const correctionProps = {
-    selectedIds: selectedCorrectionIds,
-    onToggleSelected: toggleCorrectionSelected,
-    onSetKeyIssueActive,
-    onEditSourceLoop,
-  }
-  const correctionSectionDetails: Record<CorrectionSection, { title: string; description: string; status: string }> = {
+  const correctionSectionDetails: Record<ReviewFilter, { title: string; description: string; status: string }> = {
+    all: {
+      title: "Review queue",
+      description: "Filter retained key, category and cut feedback without changing its source data.",
+      status: `${availableCorrectionCount} items`,
+    },
     "wrong-key": {
       title: "Wrong key history",
       description: "Review reported key mismatches without mixing them into activity history.",
@@ -4948,40 +5001,39 @@ function LibraryView({
     },
     "wrong-cut": {
       title: "Wrong cut history",
-      description: "Open quarantined source loops in Studio and repair their extraction timeline.",
+      description: "Review local extraction reports. Studio is reserved for category edits.",
       status: `${wrongCutIssues.filter((issue) => issue.active).length} active`,
     },
   }
-  const activeCorrectionDetails = correctionSection ? correctionSectionDetails[correctionSection] : null
+  const activeCorrectionDetails = correctionSectionDetails[activeSection]
 
   return (
     <div className="page-stack library-page">
-      <PageHeader eyebrow="Workspace / Library" title="Library" description="Review catalogue corrections and manage which local or Cloud libraries stay available to Slicer." />
+      <PageHeader eyebrow="Workspace / Review" title="Review" description="Review local catalogue feedback without mixing corrections into activity history or Cloud management." />
 
-      <div className="workspace-section-tabs library-section-tabs" role="group" aria-label="Library sections">
+      <div className="workspace-filter-bar" role="group" aria-label="Filter review items">
         {([
-          { id: "wrong-key" as const, label: "Wrong key", description: "Key reports and quarantines", icon: CircleAlert, count: wrongKeyIssues.length },
-          { id: "wrong-category" as const, label: "Wrong category", description: "Saved category corrections", icon: Layers3, count: categoryCorrections.length },
-          { id: "wrong-cut" as const, label: "Wrong cut", description: "Loops awaiting a new slice", icon: Scissors, count: wrongCutIssues.length },
-          { id: "cloud" as const, label: "Cloud libraries", description: "Publish, pause and select", icon: Cloud, count: 0 },
-        ]).map(({ id, label, description, icon: Icon, count }) => (
+          { id: "all" as const, label: "All", icon: ListFilter, count: wrongKeyIssues.length + categoryCorrections.length + wrongCutIssues.length },
+          { id: "wrong-key" as const, label: "Wrong key", icon: CircleAlert, count: wrongKeyIssues.length },
+          { id: "wrong-category" as const, label: "Wrong category", icon: Layers3, count: categoryCorrections.length },
+          { id: "wrong-cut" as const, label: "Wrong cut", icon: Scissors, count: wrongCutIssues.length },
+        ]).map(({ id, label, icon: Icon, count }) => (
           <button
             key={id}
             type="button"
             aria-pressed={activeSection === id}
-            aria-controls={`library-panel-${id}`}
-            className="workspace-section-tab"
+            className="workspace-filter-chip"
             data-section={id}
             onClick={() => setActiveSection(id)}
           >
-            <span className="workspace-tab-icon"><Icon aria-hidden="true" /></span>
-            <span><strong>{label}</strong><small>{description}</small></span>
-            {id === "cloud" ? <Badge variant="warning">Cloud</Badge> : <Badge variant="secondary">{count}</Badge>}
+            <Icon aria-hidden="true" />
+            <span>{label}</span>
+            <b className="tabular">{count}</b>
           </button>
         ))}
       </div>
 
-      {correctionSection && activeCorrectionDetails ? <section id={`library-panel-${correctionSection}`} role="tabpanel" className="library-correction-panel">
+      <section className="library-correction-panel">
         <div className="history-section-heading library-correction-heading">
           <div><h2>{activeCorrectionDetails.title}</h2><p>{activeCorrectionDetails.description}</p></div>
           <div className="library-selection-toolbar app-no-drag">
@@ -4989,28 +5041,37 @@ function LibraryView({
             <Button
               variant="outline"
               size="sm"
-              disabled={availableCorrectionIds.length === 0}
+              disabled={availableCorrectionCount === 0}
               aria-pressed={allCorrectionsSelected}
-              onClick={() => setSelectedBySection((current) => ({
-                ...current,
-                [correctionSection]: allCorrectionsSelected ? new Set() : new Set(availableCorrectionIds),
-              }))}
+              onClick={() => setSelectedBySection((current) => Object.fromEntries(correctionSections.map((section) => [
+                section,
+                visibleCorrectionSections.includes(section) ? (allCorrectionsSelected ? new Set() : new Set(correctionIds[section])) : current[section],
+              ])) as Record<CorrectionSection, Set<string>>)}
             >
               {allCorrectionsSelected ? <Square aria-hidden="true" /> : <CheckSquare2 aria-hidden="true" />}
               {allCorrectionsSelected ? "Clear selection" : "Select all"}
             </Button>
-            <Button variant="destructive" size="sm" disabled={selectedCorrectionCount === 0} onClick={() => setDeleteOpen(true)}>
-              <Trash2 aria-hidden="true" /> Remove from history
+            <Button variant="outline" size="sm" disabled={selectedCorrectionCount === 0} onClick={() => setDeleteOpen(true)}>
+              <Archive aria-hidden="true" /> Archive selected
             </Button>
           </div>
         </div>
 
-        {correctionSection === "wrong-category" ? categoryCorrections.length > 0 ? <div className="category-correction-list library-category-correction-list">
+        <div className="review-unified-list">
+        {visibleCorrectionSections.includes("wrong-key") && wrongKeyIssues.length > 0 ? (
+          <LibraryIssueList
+            issues={wrongKeyIssues}
+            selectedIds={selectedBySection["wrong-key"]}
+            onToggleSelected={(id, selected) => toggleCorrectionSelected("wrong-key", id, selected)}
+            onSetKeyIssueActive={onSetKeyIssueActive}
+          />
+        ) : null}
+        {visibleCorrectionSections.includes("wrong-category") && categoryCorrections.length > 0 ? <div className="category-correction-list library-category-correction-list">
           {categoryCorrections.map((correction) => {
             const provenance = provenanceForLayer({ sourceFile: correction.filename, sourceLoopId: correction.sourceLoopId })
             const relatedIssue = keyIssues.find((issue) => sourceLoopKey(issue.libraryRoot, issue.sourceLoopId) === sourceLoopKey(correction.libraryRoot, correction.sourceLoopId))
             return (
-              <Card key={correction.identity} className={cn("category-correction-item", selectedCorrectionIds.has(correction.identity) && "is-selected")}>
+              <Card key={correction.identity} className={cn("category-correction-item", selectedBySection["wrong-category"].has(correction.identity) && "is-selected")}>
                 <CardContent>
                   <span className="category-correction-icon"><Check aria-hidden="true" /></span>
                   <div className="category-correction-copy"><strong title={stripAudioExtension(correction.filename)}>{provenance.loopName}</strong><small>{provenance.producers.join(", ")}</small></div>
@@ -5020,7 +5081,7 @@ function LibraryView({
                     <Button variant="outline" size="sm" onClick={() => void window.stemSlicer?.revealPath(correction.path)}><FolderOpen aria-hidden="true" /> Reveal</Button>
                     <Button variant="outline" size="sm" onClick={() => onEditSourceLoop({ libraryRoot: correction.libraryRoot, sourceLoopId: correction.sourceLoopId, issueId: relatedIssue?.id ?? "", issueActive: relatedIssue?.active ?? false })}><Pencil aria-hidden="true" /> Studio</Button>
                     <label className="library-history-select">
-                      <input type="checkbox" checked={selectedCorrectionIds.has(correction.identity)} onChange={(event) => toggleCorrectionSelected(correction.identity, event.target.checked)} />
+                      <input type="checkbox" checked={selectedBySection["wrong-category"].has(correction.identity)} onChange={(event) => toggleCorrectionSelected("wrong-category", correction.identity, event.target.checked)} />
                       <span className="sr-only">Select {provenance.loopName} correction</span>
                     </label>
                   </div>
@@ -5028,28 +5089,36 @@ function LibraryView({
               </Card>
             )
           })}
-        </div> : <p className="key-issues-empty">No category correction has been saved yet.</p>
-          : <LibraryIssueList issues={correctionSection === "wrong-key" ? wrongKeyIssues : wrongCutIssues} {...correctionProps} />}
-      </section> : null}
+        </div> : null}
+        {visibleCorrectionSections.includes("wrong-cut") && wrongCutIssues.length > 0 ? (
+          <LibraryIssueList
+            issues={wrongCutIssues}
+            selectedIds={selectedBySection["wrong-cut"]}
+            onToggleSelected={(id, selected) => toggleCorrectionSelected("wrong-cut", id, selected)}
+            onSetKeyIssueActive={onSetKeyIssueActive}
+          />
+        ) : null}
+        {availableCorrectionCount === 0 ? <p className="key-issues-empty">No retained feedback matches this filter.</p> : null}
+        </div>
+      </section>
 
       {issueError ? <p className="dialog-inline-error" role="alert">{issueError}</p> : null}
-      {activeSection === "cloud" && active ? <section id="library-panel-cloud" role="tabpanel" className="library-cloud-panel"><CloudView library={library} section="libraries" embedded /></section> : null}
 
       <Dialog.Root open={deleteOpen} onOpenChange={(open) => { if (!deleting) setDeleteOpen(open) }}>
         <Dialog.Portal>
           <Dialog.Backdrop className="dialog-backdrop" />
           <Dialog.Viewport className="dialog-viewport">
-            <Dialog.Popup className="confirmation-dialog destructive-confirmation-dialog">
-              <span className="confirmation-dialog-icon"><Trash2 aria-hidden="true" /></span>
-              <Dialog.Title>Remove {selectedCorrectionCount} {selectedCorrectionCount === 1 ? "entry" : "entries"} from history?</Dialog.Title>
+            <Dialog.Popup className="confirmation-dialog">
+              <span className="confirmation-dialog-icon"><Archive aria-hidden="true" /></span>
+              <Dialog.Title>Archive {selectedCorrectionCount} {selectedCorrectionCount === 1 ? "review item" : "review items"}?</Dialog.Title>
               <Dialog.Description>
-                This only clears the selected correction history. Source audio, catalogue categories, quarantines and retained truth feedback stay unchanged.
+                Archived items leave Review, while source audio, category corrections, quarantines and retained feedback stay unchanged.
               </Dialog.Description>
               {issueError ? <p className="dialog-inline-error" role="alert">{issueError}</p> : null}
               <footer>
                 <Dialog.Close className="dialog-cancel" disabled={deleting}>Cancel</Dialog.Close>
-                <Button variant="destructive" disabled={deleting} onClick={() => void dismissSelectedCorrections()}>
-                  <Trash2 aria-hidden="true" /> {deleting ? "Removing…" : "Remove from history"}
+                <Button disabled={deleting} onClick={() => void dismissSelectedCorrections()}>
+                  <Archive aria-hidden="true" /> {deleting ? "Archiving…" : "Archive items"}
                 </Button>
               </footer>
             </Dialog.Popup>
@@ -5068,7 +5137,7 @@ const EMPTY_CLOUD_STATE: CloudState = {
   libraries: [],
 }
 
-type CloudSection = "profile" | "producers" | "libraries"
+type CloudSection = "profile" | "producers" | "libraries" | "activity"
 
 function cloudErrorMessage(reason: unknown, fallback: string): string {
   const candidate = reason instanceof Error
@@ -5106,6 +5175,7 @@ function CloudProfileAvatar({ profile, large = false }: { profile?: CloudProfile
 }
 
 function CloudView({ library, section, embedded = false, generationHistory = [] }: { library: LibraryOverview; section: CloudSection; embedded?: boolean; generationHistory?: HistoryEntry[] }) {
+  const [activeCloudSection, setActiveCloudSection] = useState<Exclude<CloudSection, "profile">>(section === "profile" ? "producers" : section)
   const [cloud, setCloud] = useState<CloudState>(EMPTY_CLOUD_STATE)
   const [cloudActivity, setCloudActivity] = useState<CloudGenerationActivity[]>([])
   const [activityError, setActivityError] = useState("")
@@ -5135,6 +5205,11 @@ function CloudView({ library, section, embedded = false, generationHistory = [] 
   const [libraryRemovalError, setLibraryRemovalError] = useState("")
   const sharedSelectAllRef = useRef<HTMLInputElement>(null)
   const cloudProfileId = cloud.profile?.id ?? ""
+  const currentSection: CloudSection = section === "profile" ? "profile" : activeCloudSection
+
+  useEffect(() => {
+    if (section !== "profile") setActiveCloudSection(section)
+  }, [section])
 
   const refreshActivity = useCallback(async () => {
     try {
@@ -5366,7 +5441,7 @@ function CloudView({ library, section, embedded = false, generationHistory = [] 
 
   useEffect(() => {
     if (sharedSelectAllRef.current) sharedSelectAllRef.current.indeterminate = someReadyLibrariesEnabled
-  }, [section, someReadyLibrariesEnabled])
+  }, [currentSection, someReadyLibrariesEnabled])
 
   const setAllReadyLibrariesEnabled = (enabled: boolean) => {
     void perform(async () => {
@@ -5382,11 +5457,11 @@ function CloudView({ library, section, embedded = false, generationHistory = [] 
   return (
     <div className={cn("page-stack cloud-page", embedded && "is-embedded")}>
       {!embedded ? <PageHeader
-        eyebrow={section === "profile" ? "Workspace / Profile" : "Workspace / Cloud"}
-        title={section === "profile" ? "Producer profile" : "Trusted producers"}
-        description={section === "profile"
+        eyebrow={currentSection === "profile" ? "Workspace / Profile" : "Workspace / Cloud"}
+        title={currentSection === "profile" ? "Producer profile" : "Slicer Cloud"}
+        description={currentSection === "profile"
           ? "Edit the identity, credits and public details that follow your Cloud libraries."
-          : "Connect with producers you trust before exchanging private libraries and generation credits."}
+          : "Connect producers, manage shared libraries and review Cloud generation activity."}
         actions={<Badge variant={cloud.authenticated ? "success" : "warning"}>{cloud.authenticated ? "Connected alpha" : "Cloud alpha"}</Badge>}
       /> : null}
 
@@ -5462,7 +5537,23 @@ function CloudView({ library, section, embedded = false, generationHistory = [] 
             <Button variant="outline" size="sm" disabled={busy} onClick={() => void perform(() => window.stemSlicer?.cloudSignOut() ?? Promise.resolve(undefined))}><LogOut aria-hidden="true" /> Sign out</Button>
           </section>
 
-          {section === "profile" ? (
+          {currentSection !== "profile" ? (
+            <div className="workspace-filter-bar cloud-filter-bar" role="group" aria-label="Cloud sections">
+              {([
+                { id: "producers" as const, label: "Producers", icon: UsersRound, count: acceptedConnections.length },
+                { id: "libraries" as const, label: "Libraries", icon: LibraryIcon, count: cloud.libraries.length },
+                { id: "activity" as const, label: "Activity", icon: History, count: cloudActivity.length + localOnlyCloudHistory.length },
+              ]).map(({ id, label, icon: Icon, count }) => (
+                <button key={id} type="button" className="workspace-filter-chip" aria-pressed={activeCloudSection === id} onClick={() => setActiveCloudSection(id)}>
+                  <Icon aria-hidden="true" />
+                  <span>{label}</span>
+                  <b className="tabular">{count}</b>
+                </button>
+              ))}
+            </div>
+          ) : null}
+
+          {currentSection === "profile" ? (
             <div className="cloud-profile-layout">
               <Card className="cloud-panel cloud-profile-card">
                 <section className="cloud-profile-preview" aria-labelledby="cloud-profile-preview-title">
@@ -5528,9 +5619,9 @@ function CloudView({ library, section, embedded = false, generationHistory = [] 
             </div>
           ) : null}
 
-          {section === "producers" ? (
-            <div className="cloud-network-grid">
-              <Card className="cloud-panel cloud-producers-panel">
+          {currentSection === "producers" || currentSection === "activity" ? (
+            <div className="cloud-network-grid is-single-section">
+              <Card className="cloud-panel cloud-producers-panel" hidden={currentSection !== "producers"}>
                 <CardHeader><div><CardTitle>Trusted producers</CardTitle><CardDescription>Connect by handle. Both producers must accept before private libraries become available.</CardDescription></div><Badge>{acceptedConnections.length} connected</Badge></CardHeader>
                 <CardContent>
                   <form className="cloud-connect-form" onSubmit={requestConnection}>
@@ -5564,7 +5655,7 @@ function CloudView({ library, section, embedded = false, generationHistory = [] 
                 </CardContent>
               </Card>
 
-              <Card className="cloud-panel cloud-activity-panel">
+              <Card className="cloud-panel cloud-activity-panel" hidden={currentSection !== "activity"}>
                 <CardHeader><div><CardTitle>Cloud activity</CardTitle><CardDescription>See who generated with shared layers. Local exports are marked when audio leaves Slicer.</CardDescription></div><Badge>{cloudActivity.length + localOnlyCloudHistory.length} events</Badge></CardHeader>
                 <CardContent>
                   {activityError ? <p className="cloud-activity-error" role="status"><CircleAlert aria-hidden="true" />{activityError}</p> : null}
@@ -5619,7 +5710,7 @@ function CloudView({ library, section, embedded = false, generationHistory = [] 
             </div>
           ) : null}
 
-          {section === "libraries" ? (
+          {currentSection === "libraries" ? (
             <div className="cloud-grid">
               <Card className="cloud-panel">
                 <CardHeader><div><CardTitle>Your Cloud libraries</CardTitle><CardDescription>Pause sharing without reuploading, or remove Cloud files permanently. Local folders always stay untouched.</CardDescription></div><Badge>{sharedOwnLibraries.length} shared</Badge></CardHeader>
@@ -6266,7 +6357,7 @@ export function App() {
           <div hidden={activeView !== "quick-tools"}><QuickToolsView previewLayers={quickPreviewLayers} setPreviewLayers={setQuickPreviewLayers} playback={playback} onActiveToolChange={setActiveQuickTool} onExtractionCompleted={addExtractionHistory} onConvertCompleted={addConvertHistory} /></div>
           <div hidden={activeView !== "history"}><HistoryView history={history} extractionHistory={extractionHistory} convertHistory={convertHistory} playback={playback} onReopen={reopenHistory} onTrashGenerated={trashHistoryEntries} onTrashExtractions={trashExtractionEntries} onTrashConversions={trashConvertEntries} onMarkExported={markHistoryExported} onTogglePlayback={toggleHistoryPlayback} /></div>
           <div hidden={activeView !== "library"} className={cn("library-workspace", studioActive && "is-studio")}>
-            <div hidden={studioActive}><LibraryView active={activeView === "library" && !studioActive} library={library} keyIssues={keyIssues} categoryCorrections={categoryCorrections} onSetKeyIssueActive={updateKeyIssueState} onDismissKeyIssue={dismissKeyIssue} onDismissCategoryCorrections={dismissCategoryCorrectionHistory} onEditSourceLoop={openSourceLoopStudio} /></div>
+            <div hidden={studioActive}><LibraryView keyIssues={keyIssues} categoryCorrections={categoryCorrections} onSetKeyIssueActive={updateKeyIssueState} onDismissKeyIssue={dismissKeyIssue} onDismissCategoryCorrections={dismissCategoryCorrectionHistory} onEditSourceLoop={openSourceLoopStudio} /></div>
             {studioSource ? <SourceLoopStudio active={studioActive} {...studioSource} onSetKeyIssueActive={updateKeyIssueState} onSaved={async () => { await refreshLibrary(); await refreshCategoryCorrections() }} onClose={closeSourceLoopStudio} /> : null}
           </div>
           <div hidden={activeView !== "cloud"}>{activeView === "cloud" ? <CloudView library={library} section="producers" generationHistory={history} /> : null}</div>

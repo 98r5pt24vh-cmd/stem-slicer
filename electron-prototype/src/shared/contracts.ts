@@ -63,6 +63,7 @@ export interface CloudLibrarySummary {
   own: boolean
   enabledForGenerate: boolean
   updatedAt: string
+  categories?: CategorySummary[]
 }
 
 export interface CloudTestAccount {
@@ -196,6 +197,18 @@ export interface LibraryProducerSummary {
   cloudLoopCount?: number
   cloudLoopCountsByCreditCount?: Record<string, number>
   cloudLayerCountsByCreditCount?: Record<string, number>
+}
+
+export interface LibrarySelectionSummaryRequest {
+  libraryRoots: string[]
+  allowedProducers: string[]
+  allowedCreditCounts: number[]
+}
+
+export interface LibrarySelectionSummary {
+  layerCount: number
+  loopCount: number
+  categories: CategorySummary[]
 }
 
 export interface MigrationModule {
@@ -565,6 +578,7 @@ export interface StemSlicerDesktopApi {
   trashHistoryPath: (request: TrashHistoryOutputRequest) => Promise<void>
   getLibraryOverview: () => Promise<LibraryOverview>
   getLibraryProducers: () => Promise<LibraryProducerSummary[]>
+  getLibrarySelectionSummary: (request: LibrarySelectionSummaryRequest) => Promise<LibrarySelectionSummary>
   removeLibraryRoot: (libraryRoot: string) => Promise<LibraryOverview>
   getKeyIssueReports: () => Promise<KeyIssueReport[]>
   getCategoryCorrections: () => Promise<CategoryCorrection[]>

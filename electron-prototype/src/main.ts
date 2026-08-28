@@ -10,7 +10,7 @@ import { historyRoot, isAllowedHistoryOutput, readHistoryStorageUsage, readQuick
 import { dismissCategoryCorrections, getSourceLoopEditor, listCategoryCorrections, saveSourceLoopEdit, setLayerCategory } from "./main/catalog-edits"
 import { CloudService, cloudErrorMessage } from "./main/cloud-service"
 import { dismissKeyIssueReport, listKeyIssueReports, reportKeyIssue, setKeyIssueActive } from "./main/key-feedback"
-import { readLibraryOverview, readLibraryProducers, removeLibraryRoot } from "./main/library-cache"
+import { readLibraryOverview, readLibraryProducers, readLibrarySelectionSummary, removeLibraryRoot } from "./main/library-cache"
 import { mediaMimeType, parseByteRange } from "./main/media-range"
 import { migrationModules } from "./main/migration-modules"
 import { readGenerationStorageUsage } from "./main/storage-usage"
@@ -24,6 +24,7 @@ import type {
   CloudSignUpRequest,
   ConfigureCloudRequest,
   GenerateJobRequest,
+  LibrarySelectionSummaryRequest,
   TrashHistoryOutputRequest,
   ReportKeyIssueRequest,
   SaveSourceLoopEditRequest,
@@ -277,6 +278,12 @@ function registerIpc(): void {
     readLibraryOverview(acceptedCachePath),
   )
   ipcMain.handle("library:get-producers", () => readLibraryProducers(acceptedCachePath))
+  ipcMain.handle("library:get-selection-summary", (_event: IpcMainInvokeEvent, request: LibrarySelectionSummaryRequest) => {
+    if (!request || typeof request !== "object" || !Array.isArray(request.libraryRoots) || !Array.isArray(request.allowedProducers) || !Array.isArray(request.allowedCreditCounts)) {
+      throw new Error("The Generate library selection is invalid.")
+    }
+    return readLibrarySelectionSummary(acceptedCachePath, request)
+  })
   ipcMain.handle("library:remove-root", (_event: IpcMainInvokeEvent, libraryRoot: unknown) => {
     if (typeof libraryRoot !== "string") {
       throw new Error("The indexed library path is invalid.")

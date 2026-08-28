@@ -7,6 +7,8 @@ import type {
   LibraryOverview,
   LibraryProducerSummary,
   LibraryRootSummary,
+  LibrarySelectionSummary,
+  LibrarySelectionSummaryRequest,
 } from "../shared/contracts"
 import { PRIMARY_PRODUCER, sourceProvenance, uniqueProducerCredits } from "../lib/source-provenance"
 
@@ -33,6 +35,10 @@ interface ProducerSourceRow {
   library_root: string
   source_loop_id: string
   filename: string
+}
+
+export interface LibrarySelectionSourceRow extends ProducerSourceRow {
+  category: string
 }
 
 function activeLayerWhere(database: DatabaseSync): string {
@@ -211,6 +217,62 @@ export function summarizeLibraryProducers(rows: ProducerSourceRow[]): LibraryPro
       if (right.name === PRIMARY_PRODUCER) return 1
       return right.loopCount - left.loopCount || left.name.localeCompare(right.name)
     })
+}
+
+export function summarizeLibrarySelection(
+  rows: LibrarySelectionSourceRow[],
+  request: Pick<LibrarySelectionSummaryRequest, "allowedProducers" | "allowedCreditCounts">,
+): LibrarySelectionSummary {
+  const allowedProducerKeys = new Set(request.allowedProducers.map((producer) => producer.trim().toLowerCase()).filter(Boolean))
+  const anyCreditCount = request.allowedCreditCounts.includes(0)
+  const maximumCreditCount = anyCreditCount ? Number.POSITIVE_INFINITY : Math.max(1, ...request.allowedCreditCounts)
+  const loops = new Set<string>()
+  const categories = new Map<string, number>()
+  let layerCount = 0
+
+  for (const row of rows) {
+    const credits = uniqueProducerCredits(sourceProvenance(row.filename, row.source_loop_id).producers)
+    if (allowedProducerKeys.size > 0 && credits.some((producer) => !allowedProducerKeys.has(producer.toLowerCase()))) continue
+    if (credits.length > maximumCreditCount) continue
+    layerCount += 1
+    loops.add(`${row.library_root}\u0000${row.source_loop_id}`)
+    categories.set(row.category, (categories.get(row.category) ?? 0) + 1)
+  }
+
+  return {
+    layerCount,
+    loopCount: loops.size,
+    categories: [...categories].map(([name, count]) => ({ name, count }))
+      .sort((left, right) => right.count - left.count || left.name.localeCompare(right.name)),
+  }
+}
+
+export function readLibrarySelectionSummary(
+  acceptedCachePath: string,
+  request: LibrarySelectionSummaryRequest,
+): LibrarySelectionSummary {
+  const databasePath = path.join(acceptedCachePath, "generate", "library.sqlite3")
+  if (!existsSync(databasePath) || request.libraryRoots.length === 0) {
+    return { layerCount: 0, loopCount: 0, categories: [] }
+  }
+  const roots = [...new Set(request.libraryRoots.filter((root) => path.isAbsolute(root)).map((root) => path.resolve(root)))]
+  if (roots.length === 0) return { layerCount: 0, loopCount: 0, categories: [] }
+  const database = new DatabaseSync(databasePath, { readOnly: true })
+  try {
+    const activeCondition = activeLayerWhere(database).replace(/^\s*WHERE\s+/i, "")
+    const rows = database.prepare(`
+      SELECT
+        library_root,
+        source_loop_id,
+        filename,
+        COALESCE(NULLIF(manual_label, ''), NULLIF(predicted_label, ''), 'Unknown') AS category
+      FROM layer_cache
+      WHERE ${activeCondition ? `${activeCondition} AND ` : ""}library_root IN (${roots.map(() => "?").join(",")})
+    `).all(...roots) as unknown as LibrarySelectionSourceRow[]
+    return summarizeLibrarySelection(rows, request)
+  } finally {
+    database.close()
+  }
 }
 
 export function readLibraryProducers(acceptedCachePath: string): LibraryProducerSummary[] {

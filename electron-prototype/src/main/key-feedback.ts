@@ -23,6 +23,7 @@ interface FeedbackRow {
   generation_output_directory: string
   created_at: string
   resolved_at: string | null
+  hidden_at: string | null
 }
 
 interface LayerRow {
@@ -58,12 +59,16 @@ function ensureFeedbackSchema(database: DatabaseSync): void {
       generation_output_directory TEXT NOT NULL,
       created_at TEXT NOT NULL,
       resolved_at TEXT,
+      hidden_at TEXT,
       UNIQUE (library_root, source_loop_id)
     )
   `)
   const columns = database.prepare("PRAGMA table_info(key_issue_reports)").all() as unknown as Array<{ name: string }>
   if (!columns.some((column) => column.name === "issue_type")) {
     database.exec("ALTER TABLE key_issue_reports ADD COLUMN issue_type TEXT NOT NULL DEFAULT 'wrong-key'")
+  }
+  if (!columns.some((column) => column.name === "hidden_at")) {
+    database.exec("ALTER TABLE key_issue_reports ADD COLUMN hidden_at TEXT")
   }
 }
 
@@ -145,6 +150,7 @@ export function listKeyIssueReports(acceptedCachePath: string): KeyIssueReport[]
     const rows = feedbackDatabase.prepare(`
       SELECT *
       FROM key_issue_reports
+      WHERE hidden_at IS NULL
       ORDER BY created_at DESC
     `).all() as unknown as FeedbackRow[]
     return rows.map((row) => ({
@@ -228,8 +234,9 @@ export function reportKeyIssue(
         target_key,
         generation_output_directory,
         created_at,
-        resolved_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+        resolved_at,
+        hidden_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
       ON CONFLICT (library_root, source_loop_id) DO UPDATE SET
         issue_type = excluded.issue_type,
         reported_identity = excluded.reported_identity,
@@ -239,7 +246,8 @@ export function reportKeyIssue(
         target_key = excluded.target_key,
         generation_output_directory = excluded.generation_output_directory,
         created_at = excluded.created_at,
-        resolved_at = NULL
+        resolved_at = NULL,
+        hidden_at = NULL
     `).run(
       issueId(libraryRoot, sourceLoopId),
       issueType,
@@ -293,9 +301,10 @@ export function dismissKeyIssueReport(
   try {
     ensureFeedbackSchema(database)
     const result = database.prepare(`
-      DELETE FROM key_issue_reports
+      UPDATE key_issue_reports
+      SET hidden_at = ?
       WHERE id = ?
-    `).run(id)
+    `).run(new Date().toISOString(), id)
     if (Number(result.changes) !== 1) throw new Error("The key-issue report is unavailable.")
   } finally {
     database.close()
