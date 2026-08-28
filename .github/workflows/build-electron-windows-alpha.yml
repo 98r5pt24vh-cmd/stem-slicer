@@ -141,7 +141,6 @@ jobs:
           $expected = "4b3a7a7c41a4064a8738536da6a304371c1fdc567c599ccb768bebd49ccdb9fb"
           $actual = (Get-FileHash "vendor-windows/ffmpeg-bin/ffmpeg.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
           if ($actual -ne $expected) { throw "Unexpected FFmpeg SHA-256: $actual" }
-          Copy-Item vendor-windows/ffmpeg-bin/ffmpeg.exe vendor-windows/ffmpeg-bin/ffprobe.exe
 
       - name: Fetch and verify the pinned offline MERT payload
         run: python scripts/fetch_mert_payload.py

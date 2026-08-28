@@ -1,5 +1,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs"
 import path from "node:path"
+import process from "node:process"
+import { URL } from "node:url"
 
 const applicationRoot = path.resolve(process.argv[2] || "")
 if (!applicationRoot || !existsSync(applicationRoot)) {
@@ -30,4 +32,4 @@ for (const relativePath of requiredFiles) {
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"))
 if (packageJson.productName !== "Slicer") throw new Error(`Unexpected product name: ${packageJson.productName}`)
 
-console.log(`Validated Slicer ${packageJson.version} Windows bundle at ${applicationRoot}`)
+process.stdout.write(`Validated Slicer ${packageJson.version} Windows bundle at ${applicationRoot}\n`)

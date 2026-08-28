@@ -40,7 +40,7 @@ Les boutons de test ne transmettent aucun mot de passe à l’interface. Le proc
 - bucket audio privé ;
 - téléchargement authentifié d’un seul objet sélectionné ;
 - réutilisation du fichier local après vérification SHA-256 ;
-- 50 tests TypeScript et 11 tests Python réussis ;
+- 53 tests TypeScript et 11 tests Python réussis ;
 - typecheck et ESLint réussis.
 
 ## Fondation du profil Cloud

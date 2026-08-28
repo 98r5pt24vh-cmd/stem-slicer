@@ -27,6 +27,7 @@ const config: ForgeConfig = {
     {
       name: "@electron-forge/maker-zip",
       platforms: ["win32"],
+      config: {},
     },
   ],
   plugins: [
