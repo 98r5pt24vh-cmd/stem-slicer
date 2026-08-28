@@ -1,3 +1,4 @@
+import path from "node:path"
 import { describe, expect, it } from "vitest"
 
 import { audioMimeType, cloudCachePath, safeObjectFileName } from "./cloud-catalog"
@@ -9,7 +10,7 @@ describe("cloud catalogue helpers", () => {
 
   it("uses a deterministic isolated cache path", () => {
     expect(cloudCachePath("/cache", "owner", "library", "abc123", "Layer.wav"))
-      .toBe("/cache/owner/library/abc123.wav")
+      .toBe(path.join("/cache", "owner", "library", "abc123.wav"))
   })
 
   it("maps the supported alpha audio formats", () => {
@@ -18,4 +19,3 @@ describe("cloud catalogue helpers", () => {
     expect(audioMimeType("layer.unknown")).toBe("application/octet-stream")
   })
 })
-
