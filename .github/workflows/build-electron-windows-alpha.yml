@@ -2,6 +2,9 @@ name: Build Slicer Electron Windows Cloud alpha
 
 on:
   workflow_dispatch:
+  push:
+    tags:
+      - "electron-windows-alpha-*"
 
 permissions:
   contents: read
