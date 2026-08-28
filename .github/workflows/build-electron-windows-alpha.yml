@@ -77,15 +77,18 @@ jobs:
           python -m pip check
 
       - name: Validate complete Quick Extract MIDI
+        shell: pwsh
         env:
           QT_QPA_PLATFORM: windows
           STEM_SLICER_DISABLE_ENGINE_AUTOSTART: "1"
-        run: >-
-          python scripts/diagnose_midi_startup.py
-          --source-root .
-          --mode quick-extract-midi
-          --timeout 30
-          --require-ready
+        run: |
+          python -m venv --system-site-packages midi-gate-runtime
+          & "midi-gate-runtime/Scripts/python.exe" -m pip install PySide6==6.11.1
+          & "midi-gate-runtime/Scripts/python.exe" scripts/diagnose_midi_startup.py `
+            --source-root . `
+            --mode quick-extract-midi `
+            --timeout 30 `
+            --require-ready
 
       - name: Build the validated OpenKeyScan analyzer
         shell: pwsh
