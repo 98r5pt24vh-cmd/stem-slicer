@@ -1414,7 +1414,8 @@ main:focus {
   gap: 6px;
 }
 
-.collaborator-sort-toggle {
+.collaborator-sort-toggle,
+.collaborator-select-all-toggle {
   display: inline-flex;
   min-height: 30px;
   align-items: center;
@@ -1427,10 +1428,18 @@ main:focus {
   text-decoration: none !important;
 }
 
-.collaborator-sort-toggle svg {
+.collaborator-sort-toggle svg,
+.collaborator-select-all-toggle svg {
   width: 12px;
   height: 12px;
+}
+
+.collaborator-sort-toggle svg {
   color: var(--signal-yellow);
+}
+
+.collaborator-select-all-toggle svg {
+  color: var(--primary);
 }
 
 .collaborator-owner-row {
@@ -1519,7 +1528,7 @@ main:focus {
 .collaborator-row {
   display: grid;
   min-height: 58px;
-  grid-template-columns: minmax(0, 1fr) auto 34px;
+  grid-template-columns: minmax(0, 1fr) auto 34px 18px;
   align-items: center;
   gap: 8px;
   border: 1px solid rgb(255 255 255 / 0.075);
@@ -1536,19 +1545,14 @@ main:focus {
 .collaborator-row > label {
   display: grid;
   min-width: 0;
-  grid-template-columns: 18px 36px minmax(0, 1fr);
+  grid-template-columns: 36px minmax(0, 1fr);
   align-items: center;
   gap: 10px;
+  cursor: pointer;
 }
 
 .collaborator-row > .producer-pin-button {
   grid-column: 3;
-}
-
-.collaborator-row input {
-  width: 18px;
-  height: 18px;
-  accent-color: var(--primary);
 }
 
 .collaborator-row label > span {
@@ -5769,11 +5773,11 @@ td strong {
 }
 
 .cloud-library-toolbar {
-  display: flex;
+  display: grid;
   min-height: 38px;
+  grid-template-columns: 38px minmax(0, 1fr) 34px auto;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  column-gap: 11px;
   margin-block-end: 9px;
   border-block-end: 1px solid rgb(255 255 255 / 0.065);
   padding-inline: 12px 7px;
@@ -5786,26 +5790,30 @@ td strong {
   min-height: 32px;
   align-items: center;
   gap: 7px;
+  border: 1px solid var(--border);
   border-radius: 8px;
+  background: rgb(255 255 255 / 0.025);
   color: var(--muted-foreground);
+  padding-inline: 9px;
   font-size: 9px;
   font-weight: 750;
 }
 
-.cloud-library-toolbar label {
+.cloud-library-sort-control {
+  grid-column: 2;
+  justify-self: start;
+}
+
+.cloud-select-all-control {
+  grid-column: 4;
+  justify-self: end;
+  margin-inline-end: -5px;
+  padding-inline: 9px 5px !important;
   cursor: pointer;
 }
 
-.cloud-library-toolbar input {
-  width: 16px;
-  height: 16px;
-  accent-color: var(--primary);
-}
-
 .cloud-library-toolbar button {
-  border: 1px solid var(--border);
-  background: rgb(255 255 255 / 0.025);
-  padding-inline: 10px;
+  padding-inline: 9px;
 }
 
 .cloud-library-toolbar button:focus-visible,
@@ -5822,7 +5830,7 @@ td strong {
 .cloud-shared-library {
   display: grid;
   min-height: 56px;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) 34px 18px;
   align-items: center;
   gap: 7px;
   border: 1px solid var(--border);
@@ -5843,18 +5851,12 @@ td strong {
 .cloud-shared-library-main {
   display: grid;
   min-width: 0;
-  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
   align-items: center;
   gap: 11px;
   border-radius: 7px;
   padding: 1px 4px;
   cursor: pointer;
-}
-
-.cloud-shared-library-main input {
-  width: 16px;
-  height: 16px;
-  accent-color: var(--primary);
 }
 
 .cloud-shared-library-main > span:not(.cloud-profile-mark),
@@ -5898,6 +5900,78 @@ td strong {
 .cloud-library-pin svg {
   width: 14px;
   height: 14px;
+}
+
+.slicer-checkbox {
+  appearance: none;
+  position: relative;
+  display: grid;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  place-items: center;
+  border: 1px solid rgb(255 255 255 / 0.22);
+  border-radius: 5px;
+  background: rgb(255 255 255 / 0.045);
+  box-shadow: 0 1px 0 rgb(255 255 255 / 0.06) inset, 0 3px 8px rgb(0 0 0 / 0.18);
+  cursor: pointer;
+  transition-property: border-color, background-color, box-shadow, scale, opacity;
+  transition-duration: 120ms;
+  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+}
+
+.slicer-checkbox::after {
+  content: "";
+  width: 5px;
+  height: 9px;
+  border-inline-end: 2px solid #0a1205;
+  border-block-end: 2px solid #0a1205;
+  filter: blur(4px);
+  opacity: 0;
+  rotate: 45deg;
+  scale: 0.25;
+  translate: 0 -1px;
+  transition-property: scale, opacity, filter;
+  transition-duration: 120ms;
+  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+}
+
+.slicer-checkbox:checked,
+.slicer-checkbox:indeterminate {
+  border-color: rgb(144 226 18 / 0.85);
+  background: var(--primary);
+  box-shadow: 0 0 0 1px rgb(139 218 17 / 0.14), 0 0 13px rgb(111 205 0 / 0.18);
+}
+
+.slicer-checkbox:checked::after,
+.slicer-checkbox:indeterminate::after {
+  filter: blur(0);
+  opacity: 1;
+  scale: 1;
+}
+
+.slicer-checkbox:indeterminate::after {
+  width: 8px;
+  height: 2px;
+  border: 0;
+  border-radius: 99px;
+  background: #0a1205;
+  rotate: 0deg;
+  translate: 0;
+}
+
+.slicer-checkbox:active:not(:disabled) {
+  scale: 0.96;
+}
+
+.slicer-checkbox:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.slicer-checkbox:disabled {
+  cursor: not-allowed;
+  opacity: 0.38;
 }
 
 @media (hover: hover) {

@@ -753,7 +753,8 @@ function CollaboratorsDialog({
                       </button>
                     ) : null}
                     {selectableProducers.length > 0 ? (
-                      <button type="button" onClick={toggleAllSelectable}>
+                      <button type="button" className="collaborator-select-all-toggle" onClick={toggleAllSelectable}>
+                        {allSelectableAllowed ? <Square aria-hidden="true" /> : <CheckSquare2 aria-hidden="true" />}
                         {allSelectableAllowed ? (requiredProducers.length > 0 ? "Clear optional" : "Clear") : "Allow all"}
                       </button>
                     ) : null}
@@ -795,20 +796,14 @@ function CollaboratorsDialog({
                 {!collaborationEnabled ? (
                   <p className="collaborator-empty">Choose “+1 collaborator” above to enable collaborators.</p>
                 ) : <div className="collaborator-list" role="group" aria-label="Collaborators who may contribute">
-                  {displayedProducers.map((producer) => {
+                  {displayedProducers.map((producer, producerIndex) => {
                     const checked = allowedSet.has(producer.name.toLowerCase())
                     const required = requiredSet.has(producer.name.toLowerCase())
                     const pinned = pinnedSet.has(producer.name.toLowerCase())
+                    const collaboratorInputId = `collaborator-${producerIndex}-${producer.name.replace(/[^a-z0-9_-]/gi, "-")}`
                     return (
                       <div className={cn("collaborator-row", checked && "is-selected")} key={producer.name}>
-                        <label>
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            disabled={!checked && collaboratorSlotsFilled}
-                            aria-label={`Allow ${producer.name} to contribute`}
-                            onChange={(event) => toggleProducer(producer.name, event.target.checked)}
-                          />
+                        <label htmlFor={collaboratorInputId}>
                           <ProducerAvatar producer={producer.name} profile={producerProfileFor(profiles, producer.name)} />
                           <span>
                             <strong>{producer.name}</strong>
@@ -838,6 +833,15 @@ function CollaboratorsDialog({
                         >
                           <Pin aria-hidden="true" />
                         </button>
+                        <input
+                          id={collaboratorInputId}
+                          className="slicer-checkbox"
+                          type="checkbox"
+                          checked={checked}
+                          disabled={!checked && collaboratorSlotsFilled}
+                          aria-label={`Allow ${producer.name} to contribute`}
+                          onChange={(event) => toggleProducer(producer.name, event.target.checked)}
+                        />
                       </div>
                     )
                   })}
@@ -5132,8 +5136,19 @@ function CloudView({ library }: { library: LibraryOverview }) {
                 <CardContent>
                   {sharedLibraries.length > 0 ? (
                     <div className="cloud-library-toolbar">
-                      <label>
+                      <button
+                        type="button"
+                        className="cloud-library-sort-control"
+                        aria-label={`Sort libraries by name ${sharedLibrarySortDirection === "asc" ? "descending" : "ascending"}`}
+                        onClick={() => setSharedLibrarySortDirection((direction) => direction === "asc" ? "desc" : "asc")}
+                      >
+                        {sharedLibrarySortDirection === "asc" ? <ArrowUpNarrowWide aria-hidden="true" /> : <ArrowDownWideNarrow aria-hidden="true" />}
+                        Name {sharedLibrarySortDirection === "asc" ? "A–Z" : "Z–A"}
+                      </button>
+                      <label className="cloud-select-all-control">
+                        <span>{allReadyLibrariesEnabled ? "Clear all" : "Select all"}</span>
                         <input
+                          className="slicer-checkbox"
                           ref={sharedSelectAllRef}
                           type="checkbox"
                           checked={allReadyLibrariesEnabled}
@@ -5141,44 +5156,40 @@ function CloudView({ library }: { library: LibraryOverview }) {
                           disabled={readySharedLibraries.length === 0 || busy}
                           onChange={(event) => setAllReadyLibrariesEnabled(event.target.checked)}
                         />
-                        <span>{allReadyLibrariesEnabled ? "Clear all" : "Select all"}</span>
                       </label>
-                      <button
-                        type="button"
-                        aria-label={`Sort libraries by name ${sharedLibrarySortDirection === "asc" ? "descending" : "ascending"}`}
-                        onClick={() => setSharedLibrarySortDirection((direction) => direction === "asc" ? "desc" : "asc")}
-                      >
-                        {sharedLibrarySortDirection === "asc" ? <ArrowUpNarrowWide aria-hidden="true" /> : <ArrowDownWideNarrow aria-hidden="true" />}
-                        Name {sharedLibrarySortDirection === "asc" ? "A–Z" : "Z–A"}
-                      </button>
                     </div>
                   ) : null}
                   <div className="cloud-shared-grid">
-                    {sortedSharedLibraries.map((item) => (
-                      <div className={cn("cloud-shared-library", item.enabledForGenerate && "is-enabled", pinnedSharedLibraryIds.has(item.id) && "is-pinned")} key={item.id}>
-                        <label className="cloud-shared-library-main">
+                    {sortedSharedLibraries.map((item) => {
+                      const libraryInputId = `cloud-library-${item.id.replace(/[^a-z0-9_-]/gi, "-")}`
+                      return (
+                        <div className={cn("cloud-shared-library", item.enabledForGenerate && "is-enabled", pinnedSharedLibraryIds.has(item.id) && "is-pinned")} key={item.id}>
+                          <label className="cloud-shared-library-main" htmlFor={libraryInputId}>
+                            <CloudProfileAvatar profile={item.owner} />
+                            <span><strong>{item.name}</strong><small>{item.owner.displayName} · {formatCount(item.loopCount)} loops · {formatCount(item.layerCount)} layers · {formatDecimalBytes(item.totalBytes)}</small></span>
+                            <Badge variant={item.status === "ready" ? "success" : "warning"} title={item.status === "ready" ? "Available to Generate" : item.status === "archived" ? "Unavailable to Generate" : undefined}>{item.status === "ready" ? "Ready" : item.status === "archived" ? "Archived" : item.status}</Badge>
+                          </label>
+                          <button
+                            type="button"
+                            className="cloud-library-pin"
+                            aria-pressed={pinnedSharedLibraryIds.has(item.id)}
+                            aria-label={`${pinnedSharedLibraryIds.has(item.id) ? "Unpin" : "Pin"} ${item.name}`}
+                            onClick={() => toggleSharedLibraryPin(item.id)}
+                          >
+                            <Pin aria-hidden="true" />
+                          </button>
                           <input
+                            id={libraryInputId}
+                            className="slicer-checkbox"
                             type="checkbox"
                             checked={item.enabledForGenerate}
                             disabled={item.status !== "ready" || busy}
                             aria-label={`${item.enabledForGenerate ? "Disable" : "Enable"} ${item.name} for Generate`}
                             onChange={(event) => void perform(() => window.stemSlicer?.cloudSetLibraryEnabled(item.id, event.target.checked) ?? Promise.resolve(undefined))}
                           />
-                          <CloudProfileAvatar profile={item.owner} />
-                          <span><strong>{item.name}</strong><small>{item.owner.displayName} · {formatCount(item.loopCount)} loops · {formatCount(item.layerCount)} layers · {formatDecimalBytes(item.totalBytes)}</small></span>
-                          <Badge variant={item.status === "ready" ? "success" : "warning"} title={item.status === "ready" ? "Available to Generate" : item.status === "archived" ? "Unavailable to Generate" : undefined}>{item.status === "ready" ? "Ready" : item.status === "archived" ? "Archived" : item.status}</Badge>
-                        </label>
-                        <button
-                          type="button"
-                          className="cloud-library-pin"
-                          aria-pressed={pinnedSharedLibraryIds.has(item.id)}
-                          aria-label={`${pinnedSharedLibraryIds.has(item.id) ? "Unpin" : "Pin"} ${item.name}`}
-                          onClick={() => toggleSharedLibraryPin(item.id)}
-                        >
-                          <Pin aria-hidden="true" />
-                        </button>
-                      </div>
-                    ))}
+                        </div>
+                      )
+                    })}
                   </div>
                   {sharedLibraries.length === 0 ? <p className="cloud-empty-copy">Accepted producers’ ready libraries will appear here.</p> : null}
                 </CardContent>
