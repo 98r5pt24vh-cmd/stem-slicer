@@ -7,7 +7,6 @@ import {
   ArrowUpNarrowWide,
   Check,
   CheckSquare2,
-  Camera,
   ChevronDown,
   ChevronLeft,
   CircleAlert,
@@ -4684,7 +4683,7 @@ function CloudProfileAvatar({ profile, large = false }: { profile?: CloudProfile
     <span className={cn("cloud-profile-mark", large && "is-large")} aria-hidden="true">
       {avatarUrl && failedUrl !== avatarUrl
         ? <img src={avatarUrl} alt="" onError={() => setFailedUrl(avatarUrl)} />
-        : producerMonogram(profile?.displayName ?? "Producer")}
+        : <span className="cloud-profile-mark-fallback">{producerMonogram(profile?.displayName ?? "Producer")}</span>}
     </span>
   )
 }
@@ -5003,13 +5002,18 @@ function CloudView({ library }: { library: LibraryOverview }) {
 
           {activeSection === "profile" ? (
             <div className="cloud-profile-layout">
-              <Card className="cloud-panel cloud-profile-preview">
-                <CardContent>
+              <Card className="cloud-panel cloud-profile-card">
+                <section className="cloud-profile-preview" aria-labelledby="cloud-profile-preview-title">
                   <div className="cloud-profile-identity">
-                    {cloud.profile ? <CloudProfileAvatar large profile={{ ...cloud.profile, avatarUrl: localAvatarPreview || cloud.profile.avatarUrl }} /> : null}
+                    {cloud.profile ? (
+                      <button type="button" className="cloud-profile-avatar-edit" aria-label="Change profile photo" title="Change profile photo" onClick={() => void pickProfileAvatar()}>
+                        <CloudProfileAvatar large profile={{ ...cloud.profile, avatarUrl: localAvatarPreview || cloud.profile.avatarUrl }} />
+                        <span className="cloud-profile-avatar-edit-icon" aria-hidden="true"><Pencil /></span>
+                      </button>
+                    ) : null}
                     <div>
                       <span className="cloud-profile-kicker">Slicer producer</span>
-                      <h2>{profileDisplayName || cloud.profile?.displayName}</h2>
+                      <h2 id="cloud-profile-preview-title">{profileDisplayName || cloud.profile?.displayName}</h2>
                       <p>@{profileHandle || cloud.profile?.handle}</p>
                     </div>
                     {profileOpenToCollaborate ? <Badge variant="success">Open to collaborate</Badge> : <Badge>Private profile</Badge>}
@@ -5032,18 +5036,14 @@ function CloudView({ library }: { library: LibraryOverview }) {
                     <div><dt>Published loops</dt><dd>{formatCount(publishedLoopCount)}</dd></div>
                     <div><dt>Published layers</dt><dd>{formatCount(publishedLayerCount)}</dd></div>
                   </dl>
-                </CardContent>
-              </Card>
+                </section>
 
-              <Card className="cloud-panel cloud-profile-editor">
-                <CardHeader><div><CardTitle>Edit Cloud profile</CardTitle><CardDescription>This identity follows your shared libraries and generation credits.</CardDescription></div></CardHeader>
-                <CardContent>
+                <section className="cloud-profile-editor" aria-labelledby="cloud-profile-editor-title">
+                  <header className="cloud-profile-editor-heading">
+                    <h2 id="cloud-profile-editor-title">Edit profile</h2>
+                    <p>Changes appear in the preview and follow your shared libraries and generation credits.</p>
+                  </header>
                   <form className="cloud-form" onSubmit={saveProfile}>
-                    <div className="cloud-avatar-editor">
-                      <span className="cloud-avatar-editor-icon" aria-hidden="true"><Camera /></span>
-                      <span><strong>Profile photo</strong><small>Square PNG, JPEG, WebP or HEIC. Slicer prepares it before upload.</small></span>
-                      <Button type="button" variant="outline" size="sm" onClick={() => void pickProfileAvatar()}><Camera aria-hidden="true" /> Choose photo</Button>
-                    </div>
                     <div className="cloud-form-pair">
                       <label><span>Producer name</span><Input value={profileDisplayName} onChange={(event) => setProfileDisplayName(event.target.value)} maxLength={64} required /></label>
                       <label><span>Cloud handle</span><Input value={profileHandle} onChange={(event) => setProfileHandle(event.target.value)} minLength={3} maxLength={32} required /></label>
@@ -5059,7 +5059,7 @@ function CloudView({ library }: { library: LibraryOverview }) {
                     </label>
                     <Button type="submit" disabled={busy}><Check aria-hidden="true" />{busy ? "Saving…" : "Save profile"}</Button>
                   </form>
-                </CardContent>
+                </section>
               </Card>
             </div>
           ) : null}

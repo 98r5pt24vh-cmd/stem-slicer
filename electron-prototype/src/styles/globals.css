@@ -5048,6 +5048,7 @@ td strong {
 }
 
 .cloud-form label {
+  align-content: start;
   gap: 6px;
 }
 
@@ -5062,6 +5063,7 @@ td strong {
 .cloud-form-pair {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
   gap: 12px;
 }
 
@@ -5154,6 +5156,7 @@ td strong {
 }
 
 .cloud-profile-mark {
+  position: relative;
   display: grid;
   width: 38px;
   height: 38px;
@@ -5169,11 +5172,22 @@ td strong {
 }
 
 .cloud-profile-mark img {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
   outline: 1px solid rgb(255 255 255 / 0.1);
   outline-offset: -1px;
+}
+
+.cloud-profile-mark-fallback {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  line-height: 1;
+  text-align: center;
 }
 
 .cloud-profile-mark.is-small {
@@ -5256,17 +5270,53 @@ td strong {
 }
 
 .cloud-profile-layout {
-  display: grid;
-  grid-template-columns: minmax(300px, 0.9fr) minmax(420px, 1.1fr);
-  gap: 12px;
+  min-width: 0;
 }
 
-.cloud-profile-preview > div {
+.cloud-profile-card {
+  display: grid;
+  grid-template-columns: minmax(300px, 0.9fr) minmax(420px, 1.1fr);
+  overflow: hidden;
+}
+
+.cloud-profile-preview,
+.cloud-profile-editor {
+  min-width: 0;
+  padding: 18px;
+}
+
+.cloud-profile-preview {
   display: grid;
   align-content: start;
   gap: 20px;
-  min-height: 100%;
-  padding-block-start: 18px;
+}
+
+.cloud-profile-editor {
+  border-inline-start: 1px solid rgb(255 255 255 / 0.075);
+  background: rgb(255 255 255 / 0.012);
+}
+
+.cloud-profile-editor-heading {
+  margin-block-end: 14px;
+}
+
+.cloud-profile-editor-heading h2,
+.cloud-profile-editor-heading p {
+  margin: 0;
+}
+
+.cloud-profile-editor-heading h2 {
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.cloud-profile-editor-heading p {
+  max-width: 62ch;
+  margin-block-start: 4px;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  line-height: 1.5;
 }
 
 .cloud-profile-identity {
@@ -5301,6 +5351,78 @@ td strong {
   font-weight: 850;
   letter-spacing: 0.12em;
   text-transform: uppercase;
+}
+
+.cloud-profile-avatar-edit {
+  position: relative;
+  display: grid;
+  width: 92px;
+  height: 92px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  padding: 0;
+}
+
+.cloud-profile-avatar-edit .cloud-profile-mark {
+  pointer-events: none;
+}
+
+.cloud-profile-avatar-edit-icon {
+  position: absolute;
+  inset-inline-end: -1px;
+  inset-block-end: 2px;
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid rgb(194 255 101 / 0.3);
+  border-radius: 50%;
+  background: #151b11;
+  color: var(--primary);
+  box-shadow: 0 5px 13px rgb(0 0 0 / 0.48), 0 1px 0 rgb(255 255 255 / 0.1) inset;
+  filter: blur(4px);
+  opacity: 0;
+  pointer-events: none;
+  scale: 0.25;
+  transition-property: scale, opacity, filter;
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+}
+
+.cloud-profile-avatar-edit-icon svg {
+  width: 13px;
+  height: 13px;
+  stroke-width: 2;
+}
+
+.cloud-profile-avatar-edit:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 3px;
+}
+
+.cloud-profile-avatar-edit:focus-visible .cloud-profile-avatar-edit-icon {
+  filter: blur(0);
+  opacity: 1;
+  scale: 1;
+}
+
+@media (hover: hover) {
+  .cloud-profile-avatar-edit:hover .cloud-profile-avatar-edit-icon {
+    filter: blur(0);
+    opacity: 1;
+    scale: 1;
+  }
+}
+
+@media (hover: none) {
+  .cloud-profile-avatar-edit-icon {
+    filter: blur(0);
+    opacity: 0.88;
+    scale: 1;
+  }
 }
 
 .cloud-profile-bio {
@@ -5434,49 +5556,6 @@ td strong {
   color: var(--muted-foreground);
   font-size: 8px;
   text-align: end;
-}
-
-.cloud-avatar-editor {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 11px;
-  border-radius: 10px;
-  background: rgb(255 255 255 / 0.025);
-  padding: 10px;
-}
-
-.cloud-avatar-editor-icon {
-  display: grid;
-  width: 38px;
-  height: 38px;
-  place-items: center;
-  border: 1px solid rgb(194 255 101 / 0.18);
-  border-radius: 50%;
-  background: rgb(111 205 0 / 0.07);
-  color: var(--primary);
-}
-
-.cloud-avatar-editor-icon svg {
-  width: 17px;
-  height: 17px;
-}
-
-.cloud-avatar-editor > span:not(.cloud-profile-mark),
-.cloud-avatar-editor strong,
-.cloud-avatar-editor small {
-  display: block;
-}
-
-.cloud-avatar-editor strong {
-  font-size: 10px;
-}
-
-.cloud-avatar-editor small {
-  margin-block-start: 3px;
-  color: var(--muted-foreground);
-  font-size: 8px;
-  line-height: 1.45;
 }
 
 .cloud-opportunity-toggle {
@@ -5830,9 +5909,14 @@ td strong {
 
 @media (max-width: 1060px) {
   .cloud-grid,
-  .cloud-profile-layout,
+  .cloud-profile-card,
   .cloud-config-form {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cloud-profile-editor {
+    border-block-start: 1px solid rgb(255 255 255 / 0.075);
+    border-inline-start: 0;
   }
 
   .cloud-config-form > button {
@@ -5847,13 +5931,11 @@ td strong {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .cloud-profile-identity,
-  .cloud-avatar-editor {
+  .cloud-profile-identity {
     grid-template-columns: auto minmax(0, 1fr);
   }
 
-  .cloud-profile-identity > .badge,
-  .cloud-avatar-editor > button {
+  .cloud-profile-identity > .badge {
     grid-column: 1 / -1;
     justify-self: start;
   }
