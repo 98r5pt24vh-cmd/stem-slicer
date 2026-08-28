@@ -29,6 +29,19 @@ for (const relativePath of requiredFiles) {
   }
 }
 
+const forbiddenBuildArtifacts = [
+  "resources/engine/analyzer/.venv-build",
+  "resources/engine/analyzer/build",
+  "resources/engine/analyzer/dist",
+  "resources/engine/analyzer/__pycache__",
+]
+
+for (const relativePath of forbiddenBuildArtifacts) {
+  if (existsSync(path.join(applicationRoot, relativePath))) {
+    throw new Error(`Temporary analyzer build artifact leaked into the Windows bundle: ${relativePath}`)
+  }
+}
+
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"))
 if (packageJson.productName !== "Slicer") throw new Error(`Unexpected product name: ${packageJson.productName}`)
 

@@ -51,6 +51,18 @@ _COMPACT_KEY = re.compile(r"^[A-G](?:#|b|♯|♭)?(?:(?:m|min|minor|maj|major))?
 _MODE_TOKEN = re.compile(r"^(?:m|min|minor|maj|major)$", re.IGNORECASE)
 
 
+def _hidden_process_kwargs() -> dict[str, object]:
+    if os.name != "nt":
+        return {}
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startupinfo.wShowWindow = subprocess.SW_HIDE
+    return {
+        "startupinfo": startupinfo,
+        "creationflags": subprocess.CREATE_NO_WINDOW,
+    }
+
+
 def _key_token_count(tokens: list[str], index: int) -> int:
     token = tokens[index] if 0 <= index < len(tokens) else ""
     if not _COMPACT_KEY.fullmatch(token):
@@ -658,6 +670,7 @@ class AnalyzerClient:
             text=True,
             encoding="utf-8",
             bufsize=1,
+            **_hidden_process_kwargs(),
         )
         self.messages: queue.Queue[dict | None] = queue.Queue()
         self.stderr_lines: list[str] = []
@@ -842,6 +855,7 @@ def waveform_peaks(path: Path, points: int = 72) -> list[float]:
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
         check=False,
+        **_hidden_process_kwargs(),
     )
     samples = array("h")
     raw = completed.stdout[: len(completed.stdout) // 2 * 2]

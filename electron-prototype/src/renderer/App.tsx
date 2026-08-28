@@ -4670,6 +4670,11 @@ const EMPTY_CLOUD_STATE: CloudState = {
 
 type CloudSection = "profile" | "producers" | "libraries"
 
+function cloudErrorMessage(reason: unknown, fallback: string): string {
+  const message = reason instanceof Error ? reason.message : fallback
+  return message.replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/i, "")
+}
+
 function CloudProfileAvatar({ profile, large = false }: { profile?: CloudProfile; large?: boolean }) {
   const [failedUrl, setFailedUrl] = useState("")
   const avatarUrl = profile?.avatarUrl || ""
@@ -4718,7 +4723,7 @@ function CloudView({ library }: { library: LibraryOverview }) {
     let cancelled = false
     void window.stemSlicer?.getCloudState()
       .then((state) => { if (!cancelled && state) setCloud(state) })
-      .catch((reason) => { if (!cancelled) setError(reason instanceof Error ? reason.message : "Cloud is unavailable.") })
+      .catch((reason) => { if (!cancelled) setError(cloudErrorMessage(reason, "Cloud is unavailable.")) })
       .finally(() => { if (!cancelled) setLoading(false) })
     const unsubscribe = window.stemSlicer?.onCloudPublishEvent((event) => {
       setPublishEvent(event)
@@ -4758,7 +4763,7 @@ function CloudView({ library }: { library: LibraryOverview }) {
         if (state.message) setNotice(state.message)
       }
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "The Cloud request failed.")
+      setError(cloudErrorMessage(reason, "The Cloud request failed."))
     } finally {
       setBusy(false)
     }
@@ -4797,7 +4802,7 @@ function CloudView({ library }: { library: LibraryOverview }) {
     try {
       await window.stemSlicer?.cloudPublishLibrary(root)
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "The Cloud upload could not start.")
+      setError(cloudErrorMessage(reason, "The Cloud upload could not start."))
       setPublishEvent(null)
     }
   }
@@ -4809,7 +4814,7 @@ function CloudView({ library }: { library: LibraryOverview }) {
       if (!result || result.canceled || !result.paths[0]) return
       setProfileAvatarFilePath(result.paths[0])
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Unable to prepare this profile image.")
+      setError(cloudErrorMessage(reason, "Unable to prepare this profile image."))
     }
   }
 

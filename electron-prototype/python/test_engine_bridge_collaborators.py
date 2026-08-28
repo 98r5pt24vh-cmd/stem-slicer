@@ -15,6 +15,20 @@ from generation_policy import GenerationRequest, LayerCandidate, select_generati
 
 
 class CollaboratorGenerationTests(unittest.TestCase):
+    def test_windows_helper_processes_never_open_a_console(self) -> None:
+        with (
+            patch.object(bridge.os, "name", "nt"),
+            patch.object(bridge.subprocess, "STARTUPINFO", return_value=SimpleNamespace(dwFlags=0, wShowWindow=None), create=True),
+            patch.object(bridge.subprocess, "STARTF_USESHOWWINDOW", 1, create=True),
+            patch.object(bridge.subprocess, "SW_HIDE", 0, create=True),
+            patch.object(bridge.subprocess, "CREATE_NO_WINDOW", 0x08000000, create=True),
+        ):
+            options = bridge._hidden_process_kwargs()
+
+        self.assertEqual(options["creationflags"], 0x08000000)
+        self.assertEqual(options["startupinfo"].dwFlags, 1)
+        self.assertEqual(options["startupinfo"].wShowWindow, 0)
+
     def test_source_pool_can_exclude_every_local_candidate(self) -> None:
         local = [{"identity": "local"}]
         cloud = [{"identity": "cloud"}]

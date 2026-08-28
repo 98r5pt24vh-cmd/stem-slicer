@@ -5123,17 +5123,17 @@ td strong {
 }
 
 .cloud-account-bar > div:nth-child(2),
-.cloud-account-bar strong,
-.cloud-account-bar span {
+.cloud-account-bar > div:nth-child(2) strong,
+.cloud-account-bar > div:nth-child(2) span {
   display: block;
   min-width: 0;
 }
 
-.cloud-account-bar strong {
+.cloud-account-bar > div:nth-child(2) strong {
   font-size: 12px;
 }
 
-.cloud-account-bar span {
+.cloud-account-bar > div:nth-child(2) span {
   margin-block-start: 2px;
   overflow: hidden;
   color: var(--muted-foreground);
@@ -5151,8 +5151,9 @@ td strong {
   border-radius: 12px;
   background: linear-gradient(145deg, #293416, #10150b);
   color: var(--primary);
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 900;
+  letter-spacing: -0.03em;
   overflow: hidden;
 }
 
@@ -5168,14 +5169,14 @@ td strong {
   width: 31px;
   height: 31px;
   border-radius: 50%;
-  font-size: 8px;
+  font-size: 9px;
 }
 
 .cloud-profile-mark.is-large {
   width: 92px;
   height: 92px;
   border-radius: 24px;
-  font-size: 18px;
+  font-size: 24px;
   box-shadow: 0 18px 44px rgb(0 0 0 / 0.32), 0 0 28px rgb(111 205 0 / 0.08);
 }
 
@@ -5537,7 +5538,7 @@ td strong {
   padding: 7px 9px;
 }
 
-.cloud-list-row > span,
+.cloud-list-row > span:not(.cloud-profile-mark),
 .cloud-list-row strong,
 .cloud-list-row small {
   display: block;
@@ -5685,7 +5686,7 @@ td strong {
   accent-color: var(--primary);
 }
 
-.cloud-shared-library span,
+.cloud-shared-library > span:not(.cloud-profile-mark),
 .cloud-shared-library strong,
 .cloud-shared-library small {
   display: block;

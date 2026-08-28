@@ -6,6 +6,7 @@ import {
   CloudService,
   normalizeAliases,
   normalizeInstagramHandle,
+  profileAvatarCropRect,
 } from "./cloud-service"
 
 function request(sourcePool: GenerateJobRequest["sourcePool"]): GenerateJobRequest {
@@ -80,5 +81,10 @@ describe("Cloud producer profiles", () => {
         openToCollaborate: true,
       },
     )).toEqual(["+NRGY", "XT"])
+  })
+
+  it("center-crops rectangular profile images before Cloud upload", () => {
+    expect(profileAvatarCropRect(1200, 800)).toEqual({ x: 200, y: 0, width: 800, height: 800 })
+    expect(profileAvatarCropRect(600, 900)).toEqual({ x: 0, y: 150, width: 600, height: 600 })
   })
 })

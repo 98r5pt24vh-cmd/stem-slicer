@@ -162,13 +162,24 @@ jobs:
           $bridge = "$packaging/python"
           New-Item -ItemType Directory -Force $engine, $runtime, $bridge | Out-Null
           Get-ChildItem -Path . -Filter *.py -File | Copy-Item -Destination $engine
-          foreach ($directory in @("analyzer", "assets", "basic_pitch", "bin", "licenses", "models", "vendor-windows")) {
+          foreach ($directory in @("assets", "basic_pitch", "bin", "licenses", "models", "vendor-windows")) {
             Copy-Item -Recurse -Force $directory $engine
           }
+          robocopy analyzer "$engine/analyzer" /E /XD .venv-build build dist __pycache__ /XF *.spec requirements*.txt README.md INTERFACING.md
+          if ($LASTEXITCODE -ge 8) { throw "Unable to stage the curated analyzer source tree." }
           Copy-Item THIRD_PARTY_NOTICES.md $engine
           Copy-Item electron-prototype/python/engine_bridge.py $bridge
           $pythonRoot = python -c "import sys; print(sys.base_prefix)"
           Copy-Item -Recurse -Force "$pythonRoot/*" $runtime
+
+      - name: Report packaged payload sizes
+        shell: pwsh
+        run: |
+          $root = "electron-prototype/.packaging"
+          foreach ($relative in @("engine/models", "engine/vendor-windows/openkeyscan-analyzer", "engine/bin", ".runtime/python")) {
+            $bytes = (Get-ChildItem "$root/$relative" -Recurse -File | Measure-Object Length -Sum).Sum
+            "{0}: {1:N0} bytes" -f $relative, $bytes
+          }
 
       - name: Smoke-test the staged persistent bridge
         shell: pwsh

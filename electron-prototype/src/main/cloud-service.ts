@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto"
 import { readFile } from "node:fs/promises"
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
-import { safeStorage } from "electron"
+import { nativeImage, safeStorage } from "electron"
 import { createClient, type Session, type SupabaseClient } from "@supabase/supabase-js"
 
 import type {
@@ -32,6 +32,9 @@ const FREE_PROJECT_OBJECT_LIMIT = 50_000_000
 const UPLOAD_CONCURRENCY = 3
 const INSERT_BATCH_SIZE = 200
 const CATALOG_PAGE_SIZE = 1_000
+const PROFILE_AVATAR_SOURCE_LIMIT = 25_000_000
+const PROFILE_AVATAR_UPLOAD_LIMIT = 5_000_000
+const PROFILE_AVATAR_EDGE = 512
 
 interface CloudLocalSettings {
   projectUrl?: string
@@ -154,6 +157,16 @@ export function normalizeAliases(values: string[]): string[] {
   }
   if (aliases.length > 12) throw new Error("Keep up to 12 producer aliases on one profile.")
   return aliases
+}
+
+export function profileAvatarCropRect(width: number, height: number): { x: number; y: number; width: number; height: number } {
+  const edge = Math.max(1, Math.min(Math.floor(width), Math.floor(height)))
+  return {
+    x: Math.max(0, Math.floor((width - edge) / 2)),
+    y: Math.max(0, Math.floor((height - edge) / 2)),
+    width: edge,
+    height: edge,
+  }
 }
 
 export function canonicalizeCloudProducerCredits(producers: string[], owner?: CloudProfile): string[] {
@@ -461,9 +474,19 @@ export class CloudService {
 
     let avatarPath: string | undefined
     if (request.avatarFilePath) {
-      const avatarBytes = await readFile(request.avatarFilePath)
-      if (avatarBytes.length === 0 || avatarBytes.length > 5_000_000) {
-        throw new Error("Choose a profile image smaller than 5 MB.")
+      const sourceBytes = await readFile(request.avatarFilePath)
+      if (sourceBytes.length === 0 || sourceBytes.length > PROFILE_AVATAR_SOURCE_LIMIT) {
+        throw new Error("Choose a profile image smaller than 25 MB.")
+      }
+      const sourceImage = nativeImage.createFromPath(request.avatarFilePath)
+      if (sourceImage.isEmpty()) throw new Error("Slicer could not read this profile image.")
+      const sourceSize = sourceImage.getSize()
+      const avatarBytes = sourceImage
+        .crop(profileAvatarCropRect(sourceSize.width, sourceSize.height))
+        .resize({ width: PROFILE_AVATAR_EDGE, height: PROFILE_AVATAR_EDGE, quality: "best" })
+        .toPNG()
+      if (avatarBytes.length === 0 || avatarBytes.length > PROFILE_AVATAR_UPLOAD_LIMIT) {
+        throw new Error("Slicer could not prepare this profile image for Cloud upload.")
       }
       avatarPath = `${session.user.id}/avatar.png`
       const uploaded = await this.supabase().storage
