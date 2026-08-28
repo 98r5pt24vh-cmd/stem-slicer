@@ -2,7 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, net, protocol, 
 import type { IpcMainInvokeEvent } from "electron"
 import path from "node:path"
 import { homedir } from "node:os"
-import { existsSync, statSync } from "node:fs"
+import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs"
 import { pathToFileURL } from "node:url"
 
 import { AudioEngineService } from "./main/audio-engine"
@@ -35,6 +35,7 @@ const prototypeCachePath = path.join(
   "Stem Slicer",
   "electron-prototype",
 )
+const profileImageRoot = path.join(prototypeCachePath, "profile-images")
 const generatedOutputRoot = path.join(
   homedir(),
   "Documents",
@@ -42,6 +43,30 @@ const generatedOutputRoot = path.join(
   "Generated Loops",
 )
 const dragPreviewMaxSize = 40
+const profileImageMaxSize = 512
+
+function importProfileImage(sourcePath: string): string {
+  if (!existsSync(sourcePath) || !statSync(sourcePath).isFile()) {
+    throw new Error("The selected profile image is unavailable.")
+  }
+  const source = nativeImage.createFromPath(sourcePath)
+  if (source.isEmpty()) {
+    throw new Error("Unable to read this image. Choose a PNG, JPEG, WebP, AVIF, GIF, BMP, TIFF or HEIC file.")
+  }
+  const sourceSize = source.getSize()
+  const scale = Math.min(profileImageMaxSize / sourceSize.width, profileImageMaxSize / sourceSize.height, 1)
+  const normalized = scale < 1
+    ? source.resize({
+        width: Math.max(1, Math.round(sourceSize.width * scale)),
+        height: Math.max(1, Math.round(sourceSize.height * scale)),
+        quality: "best",
+      })
+    : source
+  mkdirSync(profileImageRoot, { recursive: true })
+  const outputPath = path.join(profileImageRoot, "primary-profile.png")
+  writeFileSync(outputPath, normalized.toPNG())
+  return outputPath
+}
 
 async function createMediaResponse(request: Request, targetPath: string): Promise<Response> {
   const size = statSync(targetPath).size
@@ -225,9 +250,10 @@ function registerIpc(): void {
     const result = await dialog.showOpenDialog({
       title: "Choose a producer profile image",
       properties: ["openFile"],
-      filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "avif"] }],
+      filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "avif", "gif", "bmp", "tif", "tiff", "heic", "heif"] }],
     })
-    return { canceled: result.canceled, paths: result.filePaths }
+    if (result.canceled || !result.filePaths[0]) return { canceled: true, paths: [] }
+    return { canceled: false, paths: [importProfileImage(result.filePaths[0])] }
   })
   ipcMain.handle("shell:reveal-path", (_event: IpcMainInvokeEvent, targetPath: unknown) => {
     if (typeof targetPath !== "string" || targetPath.length === 0) return

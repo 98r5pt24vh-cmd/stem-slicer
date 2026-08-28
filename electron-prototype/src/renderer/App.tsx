@@ -309,6 +309,7 @@ type ProducerSortDirection = "desc" | "asc"
 
 interface ProducerProfileSettings {
   avatarPath?: string
+  avatarRevision?: number
 }
 
 interface CollaboratorSettings {
@@ -401,10 +402,16 @@ function producerProfileFor(profiles: Record<string, ProducerProfileSettings>, p
 }
 
 function ProducerAvatar({ producer, profile }: { producer: string; profile?: ProducerProfileSettings }) {
-  const avatarUrl = profile?.avatarPath ? window.stemSlicer?.mediaUrl(profile.avatarPath) : ""
+  const baseAvatarUrl = profile?.avatarPath ? window.stemSlicer?.mediaUrl(profile.avatarPath) : ""
+  const avatarUrl = baseAvatarUrl && profile?.avatarRevision
+    ? `${baseAvatarUrl}&revision=${encodeURIComponent(profile.avatarRevision)}`
+    : baseAvatarUrl
+  const [failedAvatarUrl, setFailedAvatarUrl] = useState("")
   return (
     <i title={producer}>
-      {avatarUrl ? <img src={avatarUrl} alt="" /> : producerMonogram(producer)}
+      {avatarUrl && failedAvatarUrl !== avatarUrl
+        ? <img src={avatarUrl} alt="" onError={() => setFailedAvatarUrl(avatarUrl)} />
+        : producerMonogram(producer)}
     </i>
   )
 }
@@ -1469,17 +1476,23 @@ function AppSidebar({
   const [primaryProfile, setPrimaryProfile] = useState<ProducerProfileSettings | undefined>(() => (
     producerProfileFor(loadCollaboratorSettings().profiles, PRIMARY_PRODUCER)
   ))
+  const [profileError, setProfileError] = useState("")
   const editPrimaryProfile = async () => {
-    const result = await window.stemSlicer?.pickImageFile()
-    if (!result || result.canceled || !result.paths[0]) return
-    const settings = loadCollaboratorSettings()
-    const profiles = {
-      ...settings.profiles,
-      [PRIMARY_PRODUCER.toLowerCase()]: { avatarPath: result.paths[0] },
+    setProfileError("")
+    try {
+      const result = await window.stemSlicer?.pickImageFile()
+      if (!result || result.canceled || !result.paths[0]) return
+      const settings = loadCollaboratorSettings()
+      const profiles = {
+        ...settings.profiles,
+        [PRIMARY_PRODUCER.toLowerCase()]: { avatarPath: result.paths[0], avatarRevision: Date.now() },
+      }
+      saveCollaboratorSettings({ ...settings, profiles })
+      setPrimaryProfile(profiles[PRIMARY_PRODUCER.toLowerCase()])
+      window.dispatchEvent(new CustomEvent(PRODUCER_PROFILES_CHANGED_EVENT, { detail: profiles }))
+    } catch (reason) {
+      setProfileError(reason instanceof Error ? reason.message : "Unable to use this profile image.")
     }
-    saveCollaboratorSettings({ ...settings, profiles })
-    setPrimaryProfile(profiles[PRIMARY_PRODUCER.toLowerCase()])
-    window.dispatchEvent(new CustomEvent(PRODUCER_PROFILES_CHANGED_EVENT, { detail: profiles }))
   }
 
   return (
@@ -1554,6 +1567,7 @@ function AppSidebar({
         </span>
         <Pencil aria-hidden="true" />
       </button>
+      {profileError ? <p className="sidebar-profile-error" role="alert">{profileError}</p> : null}
 
       <div className="sidebar-footer">
         <div className="connection-dot" aria-hidden="true" />

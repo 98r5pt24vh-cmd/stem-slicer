@@ -531,6 +531,13 @@ a:focus-visible {
   outline-offset: 2px;
 }
 
+.sidebar-profile-error {
+  margin: -3px 10px 7px;
+  color: color-mix(in srgb, var(--destructive) 72%, white);
+  font-size: 9px;
+  line-height: 1.35;
+}
+
 .is-collapsed .sidebar-profile {
   width: 42px;
   min-height: 42px;
@@ -541,6 +548,10 @@ a:focus-visible {
 }
 
 .is-collapsed .sidebar-profile > svg {
+  display: none;
+}
+
+.is-collapsed .sidebar-profile-error {
   display: none;
 }
 
@@ -646,7 +657,7 @@ main:focus {
   width: min(100%, 1480px);
   margin-inline: auto;
   padding: clamp(24px, 3vw, 44px);
-  -webkit-app-region: no-drag;
+  -webkit-app-region: drag;
 }
 
 .page-stack > * {
