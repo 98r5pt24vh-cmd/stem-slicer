@@ -941,6 +941,7 @@ main:focus {
   border-radius: 9px;
   background: rgb(0 0 0 / 0.2);
   padding: 4px 9px;
+  box-shadow: 0 3px 0 #080b08, 0 6px 12px rgb(0 0 0 / 0.3), 0 1px 0 rgb(255 255 255 / 0.06) inset;
   text-align: start;
 }
 
@@ -2077,11 +2078,11 @@ main:focus {
 }
 
 .generate-action button {
-  width: 132px;
   min-width: 132px;
 }
 
 .generate-action .previous-seed-button {
+  min-width: 78px;
   height: 34px;
   font-size: 8px;
 }
@@ -2124,6 +2125,7 @@ main:focus {
 
 .generate-action .collaborators-trigger {
   display: inline-flex;
+  min-width: 112px;
   align-items: center;
   justify-content: center;
   gap: 6px;

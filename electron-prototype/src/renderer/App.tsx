@@ -68,6 +68,7 @@ import {
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { basename, cn, formatCount, formatDecimalBytes } from "@/lib/utils"
+import { GENERATE_CATEGORY_OPTIONS, mergeGenerateCategories } from "@/lib/generate-categories"
 import {
   parseConvertHistory,
   parseExtractionHistory,
@@ -220,11 +221,6 @@ const NAVIGATION: NavItem[] = [
   { id: "history", label: "History", icon: History },
   { id: "library", label: "Review", icon: LibraryIcon },
   { id: "cloud", label: "Cloud", icon: Cloud, badge: "ALPHA" },
-]
-
-const GENERATE_CATEGORY_OPTIONS = [
-  "Arp", "Bass", "Chords", "Counter", "Guitar Chords", "Keys",
-  "Lead", "Pad", "Pluck", "Strings", "Texture", "Vocal Chop",
 ]
 
 const SHARP_CAMELOT_KEYS: Record<string, string> = {
@@ -2285,22 +2281,6 @@ function LayerCard({
       </CardContent>
     </Card>
   )
-}
-
-function mergeGenerateCategories(...groups: Array<Array<{ name: string; count: number }>>) {
-  const supported = new Set(GENERATE_CATEGORY_OPTIONS.map((category) => category.toLowerCase()))
-  const canonicalNames = new Map(GENERATE_CATEGORY_OPTIONS.map((category) => [category.toLowerCase(), category]))
-  const counts = new Map<string, number>()
-  for (const group of groups) {
-    for (const category of group) {
-      const key = category.name.trim().toLowerCase()
-      if (!supported.has(key) || category.count <= 0) continue
-      const name = canonicalNames.get(key) ?? category.name.trim()
-      counts.set(name, (counts.get(name) ?? 0) + category.count)
-    }
-  }
-  return [...counts].map(([name, count]) => ({ name, count }))
-    .sort((left, right) => right.count - left.count || left.name.localeCompare(right.name))
 }
 
 function sourceLoopKey(libraryRoot: string | undefined, sourceLoopId: string | undefined) {
