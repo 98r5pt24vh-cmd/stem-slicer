@@ -338,6 +338,61 @@ class RendererTests(unittest.TestCase):
         percussion_call = next(item for item in backend.calls if item["identity"] == "perc")
         self.assertEqual(percussion_call["semitones"], 0)
 
+    def test_parallel_render_preserves_serial_audio_and_recipe_order(self):
+        plan = self._plan()
+        sample_rate = 100
+        loop_frames = 1_600
+        source_audio = {
+            "bass": np.linspace(-0.4, 0.4, loop_frames, dtype=np.float32).reshape((-1, 1)),
+            "perc": np.linspace(0.3, -0.3, loop_frames, dtype=np.float32).reshape((-1, 1)),
+        }
+
+        with tempfile.TemporaryDirectory() as root:
+            serial_encoder = CapturingEncoder()
+            serial = render_generation(
+                RenderRequest(
+                    plan=plan,
+                    output_root=Path(root) / "serial",
+                    generation_name="Serial",
+                    sample_rate=sample_rate,
+                    channels=2,
+                ),
+                backend=SyntheticBackend(source_audio),
+                encoder=serial_encoder,
+            )
+            parallel_encoder = CapturingEncoder()
+            parallel = render_generation(
+                RenderRequest(
+                    plan=plan,
+                    output_root=Path(root) / "parallel",
+                    generation_name="Parallel",
+                    sample_rate=sample_rate,
+                    channels=2,
+                ),
+                backend=SyntheticBackend(source_audio),
+                encoder=parallel_encoder,
+                transform_workers=2,
+                encode_workers=3,
+            )
+
+            self.assertEqual(
+                [item.selection.candidate.identity for item in parallel.stem_results],
+                [item.selection.candidate.identity for item in serial.stem_results],
+            )
+            for serial_path, parallel_path in zip(serial.stem_paths, parallel.stem_paths):
+                self.assertTrue(
+                    np.array_equal(
+                        serial_encoder.audio_for(serial_path),
+                        parallel_encoder.audio_for(parallel_path),
+                    )
+                )
+            self.assertTrue(
+                np.array_equal(
+                    serial_encoder.audio_for(serial.master_path),
+                    parallel_encoder.audio_for(parallel.master_path),
+                )
+            )
+
     def test_existing_run_directory_is_never_overwritten(self):
         plan = self._plan()
         frames = 1_600
