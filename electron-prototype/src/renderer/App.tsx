@@ -4739,13 +4739,16 @@ function CloudView({ library }: { library: LibraryOverview }) {
       .catch((reason) => { if (!cancelled) setError(cloudErrorMessage(reason, "Cloud is unavailable.")) })
       .finally(() => { if (!cancelled) setLoading(false) })
     const unsubscribe = window.stemSlicer?.onCloudPublishEvent((event) => {
-      setPublishEvent(event)
       if (event.type === "completed") {
+        setPublishEvent(null)
         setNotice(event.message)
         void refresh()
       } else if (event.type === "failed") {
+        setPublishEvent(event)
         setError(cloudErrorMessage(new Error(event.error || ""), "Cloud upload stopped. Check your connection, then retry the library."))
         void refresh()
+      } else {
+        setPublishEvent(event)
       }
     })
     return () => {
@@ -4884,6 +4887,7 @@ function CloudView({ library }: { library: LibraryOverview }) {
 
   const removeCloudLibrary = async () => {
     if (!libraryToRemove) return
+    const removedLibraryId = libraryToRemove.id
     setBusy(true)
     setError("")
     setNotice("")
@@ -4894,6 +4898,11 @@ function CloudView({ library }: { library: LibraryOverview }) {
         window.dispatchEvent(new CustomEvent(CLOUD_STATE_CHANGED_EVENT, { detail: state }))
         if (state.message) setNotice(state.message)
       }
+      setPublishEvent((current) => (
+        current?.type === "progress" || (current?.library && current.library.id !== removedLibraryId)
+          ? current
+          : null
+      ))
       setLibraryToRemove(null)
     } catch (reason) {
       setLibraryRemovalError(cloudErrorMessage(reason, "The Cloud library could not be removed."))
@@ -5200,7 +5209,7 @@ function CloudView({ library }: { library: LibraryOverview }) {
                     ))}
                     {ownLibraries.length === 0 && unpublishedRoots.length === 0 ? <p className="cloud-empty-copy">Index a small test folder in Generate before publishing it.</p> : null}
                   </div>
-                  {publishEvent ? (
+                  {publishEvent && publishEvent.type !== "completed" ? (
                     <div className={cn("cloud-upload-progress", publishEvent.type === "failed" && "is-error")}>
                       <span><strong>{publishEvent.message}</strong><small>{publishEvent.current != null && publishEvent.total ? `${publishEvent.current}/${publishEvent.total} files` : "Private Cloud transfer"}</small></span>
                       <output>{publishEvent.percent ?? 0}%</output>
