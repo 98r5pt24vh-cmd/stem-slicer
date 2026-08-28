@@ -5717,18 +5717,34 @@ td strong {
   grid-template-columns: minmax(0, 1fr) auto;
 }
 
+.cloud-library-row > span > strong {
+  display: -webkit-box;
+  line-height: 1.25;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
 .cloud-library-row.is-paused {
   background: rgb(225 213 0 / 0.025);
 }
 
 .cloud-owner-library-actions {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(168px, max-content);
   align-items: center;
-  justify-content: flex-end;
-  gap: 7px;
+  justify-content: end;
+  gap: 10px;
 }
 
-.cloud-owner-library-actions [data-slot="button"] {
+.cloud-owner-library-buttons {
+  display: grid;
+  gap: 6px;
+}
+
+.cloud-owner-library-buttons [data-slot="button"] {
+  width: 100%;
+  justify-content: flex-start;
   white-space: nowrap;
 }
 
@@ -6018,8 +6034,8 @@ td strong {
   }
 
   .cloud-owner-library-actions {
-    justify-content: flex-start;
-    flex-wrap: wrap;
+    grid-template-columns: auto minmax(168px, max-content);
+    justify-content: start;
   }
 }
 

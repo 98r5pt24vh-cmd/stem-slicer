@@ -5151,38 +5151,40 @@ function CloudView({ library }: { library: LibraryOverview }) {
                           <span><strong>{item.name}</strong><small>{formatCount(item.loopCount)} loops · {formatCount(item.layerCount)} layers · {formatDecimalBytes(item.totalBytes)} stored</small></span>
                           <div className="cloud-owner-library-actions">
                             <Badge variant={sharing ? "success" : paused ? "warning" : "secondary"}>{statusLabel}</Badge>
-                            {sharing || paused ? (
+                            <div className="cloud-owner-library-buttons">
+                              {sharing || paused ? (
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  disabled={busy}
+                                  onClick={() => void perform(() => window.stemSlicer?.cloudSetLibrarySharing(item.id, paused) ?? Promise.resolve(undefined))}
+                                >
+                                  {paused ? <RefreshCw aria-hidden="true" /> : <Pause aria-hidden="true" />}
+                                  {paused ? "Resume sharing" : "Pause sharing"}
+                                </Button>
+                              ) : null}
+                              {(item.status === "failed" || item.status === "uploading") && localRoot ? (
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  disabled={publishEvent?.type === "progress"}
+                                  onClick={() => void publishLibrary(localRoot.path)}
+                                >
+                                  <RefreshCw aria-hidden="true" /> {item.status === "failed" ? "Retry upload" : "Resume upload"}
+                                </Button>
+                              ) : null}
                               <Button
                                 type="button"
-                                variant="outline"
+                                variant="destructive"
                                 size="sm"
-                                disabled={busy}
-                                onClick={() => void perform(() => window.stemSlicer?.cloudSetLibrarySharing(item.id, paused) ?? Promise.resolve(undefined))}
+                                disabled={busy || item.status === "uploading"}
+                                onClick={() => { setLibraryRemovalError(""); setLibraryToRemove(item) }}
                               >
-                                {paused ? <RefreshCw aria-hidden="true" /> : <Pause aria-hidden="true" />}
-                                {paused ? "Resume sharing" : "Pause sharing"}
+                                <Trash2 aria-hidden="true" /> Remove from Cloud
                               </Button>
-                            ) : null}
-                            {(item.status === "failed" || item.status === "uploading") && localRoot ? (
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                disabled={publishEvent?.type === "progress"}
-                                onClick={() => void publishLibrary(localRoot.path)}
-                              >
-                                <RefreshCw aria-hidden="true" /> {item.status === "failed" ? "Retry upload" : "Resume upload"}
-                              </Button>
-                            ) : null}
-                            <Button
-                              type="button"
-                              variant="destructive"
-                              size="sm"
-                              disabled={busy || item.status === "uploading"}
-                              onClick={() => { setLibraryRemovalError(""); setLibraryToRemove(item) }}
-                            >
-                              <Trash2 aria-hidden="true" /> Remove from Cloud
-                            </Button>
+                            </div>
                           </div>
                         </div>
                       )
