@@ -4,7 +4,7 @@ import { VitePlugin } from "@electron-forge/plugin-vite"
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
-    name: "Stem Slicer Electron Prototype",
+    name: "Slicer",
   },
   makers: [],
   plugins: [

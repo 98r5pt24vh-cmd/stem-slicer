@@ -245,25 +245,49 @@ a:focus-visible {
 }
 
 .brand-mark {
+  position: relative;
   display: grid;
   width: 34px;
   height: 34px;
   flex: 0 0 34px;
   place-items: center;
-  border: 1px solid rgb(255 255 255 / 0.1);
+  overflow: hidden;
+  border: 1px solid rgb(225 213 0 / 0.22);
   border-radius: 12px;
-  background: linear-gradient(145deg, #2a2e2a, #101210 70%);
+  background: #070a09;
   color: var(--primary);
   box-shadow:
     0 6px 12px rgb(0 0 0 / 0.48),
-    0 1px 0 rgb(255 255 255 / 0.12) inset,
-    0 -3px 5px rgb(0 0 0 / 0.44) inset,
-    0 0 16px rgb(115 189 0 / 0.12);
+    0 0 15px rgb(115 189 0 / 0.2);
+  isolation: isolate;
 }
 
-.brand-mark svg {
+.brand-mark::after {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow:
+    0 1px 0 rgb(255 255 255 / 0.2) inset,
+    0 0 0 1px rgb(255 255 255 / 0.06) inset,
+    0 -5px 9px rgb(0 0 0 / 0.32) inset;
+  content: "";
+  pointer-events: none;
+}
+
+.brand-mark svg,
+.brand-mark img {
   width: 19px;
   height: 19px;
+}
+
+.brand-mark img {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
+  filter: brightness(1.12) contrast(1.08);
+  transform: scale(1.06);
 }
 
 .brand-mark:focus-visible {

@@ -13,9 +13,7 @@ import {
   CircleX,
   Cloud,
   CloudCog,
-  Database,
   Dices,
-  FolderCog,
   FolderOpen,
   GripVertical,
   HardDrive,
@@ -41,8 +39,8 @@ import {
   UsersRound,
   Volume2,
   WandSparkles,
-  Wrench,
   X,
+  Zap,
   type LucideIcon,
 } from "lucide-react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
@@ -165,10 +163,11 @@ function MidiFileIcon() {
 }
 
 type QuickToolId = "extract" | "scan" | "convert"
+type PlaybackContext = "generate" | "quick-extract" | "history"
 
 const NAVIGATION: NavItem[] = [
-  { id: "stem-slicer", label: "Stem Slicer", icon: FolderCog },
-  { id: "quick-tools", label: "Quick Tools", icon: Wrench },
+  { id: "stem-slicer", label: "Slicer", icon: Layers3 },
+  { id: "quick-tools", label: "Quick Tools", icon: Zap },
   { id: "generate", label: "Generate", icon: Sparkles },
   { id: "history", label: "History", icon: History },
   { id: "cloud", label: "Cloud", icon: Cloud, badge: "WIP" },
@@ -798,6 +797,7 @@ function usePlaybackClock(layers: GeneratedLayer[], stackPlayback: boolean) {
     const preservedLoopEnabled = loopEnabledRef.current
     const canHotSwap = playingRef.current
       && modeRef.current === "mix"
+      && stackPlayback
       && preservedSyncEnabled
       && preservedLoopEnabled
       && playableIdsRef.current.length > 0
@@ -885,7 +885,7 @@ function usePlaybackClock(layers: GeneratedLayer[], stackPlayback: boolean) {
     }
   // The serialized source list deliberately excludes volume so slider changes do not reset playback.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [commitLastSoloId, commitLoopEnabled, commitMode, commitMutedIds, commitPlaying, commitSyncEnabled, commitSyncSoloId, layerSourcesJson])
+  }, [commitLastSoloId, commitLoopEnabled, commitMode, commitMutedIds, commitPlaying, commitSyncEnabled, commitSyncSoloId, layerSourcesJson, stackPlayback])
 
   useEffect(() => {
     if (stackPlayback === syncEnabledRef.current) return
@@ -1585,6 +1585,24 @@ function AppSidebar({
     producerProfileFor(loadCollaboratorSettings().profiles, PRIMARY_PRODUCER)
   ))
   const [profileError, setProfileError] = useState("")
+  const [applicationLogoUrl, setApplicationLogoUrl] = useState("")
+
+  useEffect(() => {
+    const api = window.stemSlicer
+    if (!api) return
+    let active = true
+    void api.getEngineStatus()
+      .then((status) => {
+        if (active) setApplicationLogoUrl(api.mediaUrl(`${status.sourceRoot}/assets/app-icon.png`))
+      })
+      .catch(() => {
+        if (active) setApplicationLogoUrl("")
+      })
+    return () => {
+      active = false
+    }
+  }, [])
+
   const editPrimaryProfile = async () => {
     setProfileError("")
     try {
@@ -1618,12 +1636,14 @@ function AppSidebar({
           className="brand-mark app-no-drag"
           onClick={() => collapsed ? onToggle() : onNavigate("generate")}
           aria-label={collapsed ? "Déplier la barre latérale" : "Ouvrir Generate"}
-          title={collapsed ? "Déplier la barre latérale" : "Stem Slicer"}
+          title={collapsed ? "Déplier la barre latérale" : "Slicer"}
         >
-          <AudioLines aria-hidden="true" />
+          {applicationLogoUrl
+            ? <img src={applicationLogoUrl} alt="" />
+            : <Layers3 aria-hidden="true" />}
         </button>
         <div className="sidebar-copy">
-          <strong>Stem Slicer</strong>
+          <strong>Slicer</strong>
         </div>
         <Button
           type="button"
@@ -2749,7 +2769,7 @@ function GenerateView({
       <section className="generate-catalogue glass-panel" aria-labelledby="generate-catalogue-title">
         <div className="catalogue-toolbar">
           <div className="catalogue-heading">
-            <span className="catalogue-icon" aria-hidden="true"><Database /></span>
+            <span className="catalogue-icon" aria-hidden="true"><Layers3 /></span>
             <div>
               <h2 id="generate-catalogue-title">Layer library</h2>
               <p>Categories available to the current Generate selection</p>
@@ -2937,12 +2957,12 @@ function StemSlicerView() {
   return (
     <div className="page-stack stem-slicer-page">
       <PageHeader
-        eyebrow="Workspace / Stem Slicer"
-        title="Stem Slicer"
+        eyebrow="Workspace / Slicer"
+        title="Slicer"
         description="Configure one batch from its source folder through extraction, key naming and conversion."
       />
 
-      <section className="batch-workflow-shell unified-batch-workflow" aria-label="Stem Slicer batch workflow">
+      <section className="batch-workflow-shell unified-batch-workflow" aria-label="Slicer batch workflow">
         <section className="unified-source" aria-labelledby="stem-source-heading">
           <div className="unified-source-heading">
             <span className="unified-source-icon"><FolderOpen aria-hidden="true" /></span>
@@ -3044,11 +3064,11 @@ function StemSlicerView() {
             <div className="unified-operation-body unified-convert-body">
               <label className="unified-target-field">
                 <span className="unified-target-heading"><input type="checkbox" checked={targetBpmEnabled} onChange={(event) => setTargetBpmEnabled(event.target.checked)} /><b>Target BPM</b></span>
-                <Input aria-label="Stem Slicer target BPM" type="number" min="40" max="300" value={targetBpm} disabled={!targetBpmEnabled} onChange={(event) => setTargetBpm(Number(event.target.value))} />
+                <Input aria-label="Slicer target BPM" type="number" min="40" max="300" value={targetBpm} disabled={!targetBpmEnabled} onChange={(event) => setTargetBpm(Number(event.target.value))} />
               </label>
               <div className="unified-target-field">
                 <label className="unified-target-heading"><input type="checkbox" checked={targetKeyEnabled} onChange={(event) => setTargetKeyEnabled(event.target.checked)} /><b>Target key</b></label>
-                <Select id="stem-target-key" label="Stem Slicer target key" value={targetKey} onChange={setTargetKey} options={TARGET_KEY_FAMILIES} optionLabel={compactKeyFamilyLabel} disabled={!targetKeyEnabled} className="inline-select key-family-select" />
+                <Select id="stem-target-key" label="Slicer target key" value={targetKey} onChange={setTargetKey} options={TARGET_KEY_FAMILIES} optionLabel={compactKeyFamilyLabel} disabled={!targetKeyEnabled} className="inline-select key-family-select" />
               </div>
               <div className="unified-convert-route"><Repeat2 aria-hidden="true" /><div><span>Conversion input</span><strong>{layerExtraction ? "Extracted layers" : "Source loops"}</strong><small>Automatically follows the extraction setting.</small></div></div>
             </div>
@@ -3132,7 +3152,6 @@ function QuickToolsView({
 
   const selectTool = (tool: QuickToolId) => {
     if (tool === activeTool) return
-    playback.reset()
     setActiveTool(tool)
     onActiveToolChange(tool)
   }
@@ -4036,6 +4055,7 @@ function HistoryView({
   onSetKeyIssueActive,
   onDismissKeyIssue,
   onEditSourceLoop,
+  onTogglePlayback,
 }: {
   history: HistoryEntry[]
   keyIssues: KeyIssueReport[]
@@ -4046,6 +4066,7 @@ function HistoryView({
   onSetKeyIssueActive: (issueId: string, active: boolean) => Promise<void>
   onDismissKeyIssue: (issueId: string) => Promise<void>
   onEditSourceLoop: (request: SourceLoopStudioRequest) => void
+  onTogglePlayback: (entry: HistoryEntry) => void
 }) {
   const activeIssueCount = keyIssues.filter((issue) => issue.active).length
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
@@ -4114,7 +4135,7 @@ function HistoryView({
   return (
     <div className="page-stack">
       <PageHeader eyebrow="Workspace / History" title="Generation history" description="Reopen generated loops and review every correction saved to the local library." />
-      <section className="key-issues-section" aria-labelledby="key-issues-title">
+      <section className="key-issues-section app-no-drag" aria-labelledby="key-issues-title">
         <header className="history-section-heading">
           <div>
             <h2 id="key-issues-title">Library corrections</h2>
@@ -4212,7 +4233,7 @@ function HistoryView({
         </div>
       </section>
 
-      <div className="history-section-heading history-generations-heading">
+      <div className="history-section-heading history-generations-heading app-no-drag">
         <div><h2>Generations</h2><p>Previously rendered stacks remain available here.</p></div>
         <div className="history-generation-tools">
           <span
@@ -4291,7 +4312,7 @@ function HistoryView({
                     <span>{entry.keyName}</span>
                   </div>
                   <div className="history-actions">
-                    <HistoryPlayButton entry={entry} playing={playback.playing && playback.mode === "solo" && playback.soloId === historyLayerId(entry.id)} onToggle={() => void playback.toggleLayer(historyLayerId(entry.id))} />
+                    <HistoryPlayButton entry={entry} playing={playback.playing && playback.mode === "solo" && playback.soloId === historyLayerId(entry.id)} onToggle={() => onTogglePlayback(entry)} />
                     <Button variant="outline" size="sm" onClick={() => void window.stemSlicer?.revealPath(entry.generation.outputDirectory)}><FolderOpen aria-hidden="true" /> Open</Button>
                     <Button variant="outline" className="history-reload" size="sm" onClick={() => onReopen(entry)}><RefreshCw aria-hidden="true" /> Reload</Button>
                     <Button variant="outline" size="sm" draggable onClick={() => void window.stemSlicer?.revealPath(entry.generation.masterPath)} onDragStart={(event) => { event.preventDefault(); window.stemSlicer?.startFileDrag(entry.generation.masterPath) }}><Layers3 aria-hidden="true" /> Drag</Button>
@@ -4456,20 +4477,25 @@ export function App() {
   const [categoryCorrections, setCategoryCorrections] = useState<CategoryCorrection[]>([])
   const [studioSource, setStudioSource] = useState<SourceLoopStudioRequest | null>(null)
   const [currentGenerationResult, setCurrentGenerationResult] = useState<GenerateResult | null>(null)
+  const [playbackContext, setPlaybackContext] = useState<PlaybackContext>("generate")
+  const [pendingHistoryPlaybackId, setPendingHistoryPlaybackId] = useState<string | null>(null)
   const studioActive = activeView === "history" && studioSource !== null
   const quickPreviewActive = activeView === "quick-tools" && activeQuickTool === "extract" && quickPreviewLayers.length > 0
-  const stackPlayback = activeView === "generate" || quickPreviewActive
   const historyPlayerLayers = useMemo(() => history.map(historyEntryToLayer), [history])
-  const playerLayers = useMemo(() => activeView === "history" ? historyPlayerLayers : quickPreviewActive ? quickPreviewLayers : layers, [activeView, historyPlayerLayers, layers, quickPreviewActive, quickPreviewLayers])
+  const playerLayers = useMemo(() => playbackContext === "history" ? historyPlayerLayers : playbackContext === "quick-extract" ? quickPreviewLayers : layers, [historyPlayerLayers, layers, playbackContext, quickPreviewLayers])
+  const stackPlayback = playbackContext !== "history"
   const playback = usePlaybackClock(playerLayers, stackPlayback)
   const resetPlayback = playback.reset
   const mainRef = useRef<HTMLElement>(null)
   const initialViewRef = useRef(true)
+  const activeGenerationPathRef = useRef(currentGenerationResult?.outputDirectory ?? "")
+  const quickPreviewSignature = quickPreviewLayers.map((layer) => `${layer.id}:${layer.path ?? ""}`).join("|")
+  const quickPreviewSignatureRef = useRef(quickPreviewSignature)
   const nextGenerationNumber = Math.max(generationSequence, 0, ...history.map((entry) => entry.generationNumber)) + 1
   const currentGenerationDisplayName = currentGenerationResult
     ? displayNameForGeneration(currentGenerationResult, layers, Math.max(1, nextGenerationNumber - 1))
     : undefined
-  const historyPlaybackName = activeView === "history"
+  const historyPlaybackName = playbackContext === "history"
     ? history.find((entry) => historyLayerId(entry.id) === playback.soloId)?.displayName
     : undefined
 
@@ -4542,13 +4568,40 @@ export function App() {
   }, [generationSequence])
 
   useEffect(() => {
-    document.title = `${studioActive ? "Studio" : NAVIGATION.find((item) => item.id === activeView)?.label ?? "Stem Slicer"} · Stem Slicer Prototype`
+    document.title = `${studioActive ? "Studio" : NAVIGATION.find((item) => item.id === activeView)?.label ?? "Slicer"} · Slicer`
     if (initialViewRef.current) {
       initialViewRef.current = false
       return
     }
     mainRef.current?.focus()
   }, [activeView, studioActive])
+
+  useEffect(() => {
+    if (playback.playing) return
+    if (activeView === "generate") setPlaybackContext("generate")
+    else if (quickPreviewActive) setPlaybackContext("quick-extract")
+    else if (activeView === "history") setPlaybackContext("history")
+  }, [activeView, playback.playing, quickPreviewActive])
+
+  useEffect(() => {
+    if (!pendingHistoryPlaybackId || playbackContext !== "history") return
+    const targetId = pendingHistoryPlaybackId
+    setPendingHistoryPlaybackId(null)
+    void playback.toggleLayer(targetId)
+  }, [pendingHistoryPlaybackId, playback, playbackContext])
+
+  useEffect(() => {
+    const nextPath = currentGenerationResult?.outputDirectory ?? ""
+    if (!nextPath || nextPath === activeGenerationPathRef.current) return
+    activeGenerationPathRef.current = nextPath
+    setPlaybackContext("generate")
+  }, [currentGenerationResult])
+
+  useEffect(() => {
+    if (quickPreviewSignature === quickPreviewSignatureRef.current) return
+    quickPreviewSignatureRef.current = quickPreviewSignature
+    if (activeView === "quick-tools" && activeQuickTool === "extract") setPlaybackContext("quick-extract")
+  }, [activeQuickTool, activeView, quickPreviewSignature])
 
   useEffect(() => {
     if (studioActive) return
@@ -4565,9 +4618,8 @@ export function App() {
 
   const navigateToView = useCallback((view: ViewId) => {
     if (view === activeView) return
-    resetPlayback()
     setActiveView(view)
-  }, [activeView, resetPlayback])
+  }, [activeView])
 
   const openSourceLoopStudio = useCallback((request: SourceLoopStudioRequest) => {
     resetPlayback()
@@ -4577,6 +4629,17 @@ export function App() {
   const closeSourceLoopStudio = useCallback(() => {
     setStudioSource(null)
   }, [])
+
+  const toggleHistoryPlayback = useCallback((entry: HistoryEntry) => {
+    const targetId = historyLayerId(entry.id)
+    if (playbackContext === "history") {
+      void playback.toggleLayer(targetId)
+      return
+    }
+    playback.reset()
+    setPendingHistoryPlaybackId(targetId)
+    setPlaybackContext("history")
+  }, [playback, playbackContext])
 
   const reopenHistory = (entry: HistoryEntry) => {
     playback.reset()
@@ -4619,12 +4682,12 @@ export function App() {
           <div hidden={activeView !== "generate"}><GenerateView library={library} layers={layers} setLayers={setLayers} currentGenerationResult={currentGenerationResult} setCurrentGenerationResult={setCurrentGenerationResult} onAddHistory={addHistory} onUpdateHistory={updateHistory} keyIssues={keyIssues} onReportKeyIssue={reportKeyIssue} onSetKeyIssueActive={updateKeyIssueState} onLibraryRefresh={refreshLibrary} onCategoryCorrectionsRefresh={refreshCategoryCorrections} nextGenerationNumber={nextGenerationNumber} playback={playback} /></div>
           <div hidden={activeView !== "quick-tools"}><QuickToolsView previewLayers={quickPreviewLayers} setPreviewLayers={setQuickPreviewLayers} playback={playback} onActiveToolChange={setActiveQuickTool} /></div>
           <div hidden={activeView !== "history"} className={cn("history-workspace", studioActive && "is-studio")}>
-            <div hidden={studioActive}><HistoryView history={history} keyIssues={keyIssues} categoryCorrections={categoryCorrections} playback={playback} onReopen={reopenHistory} onTrashSelected={trashHistoryEntries} onSetKeyIssueActive={updateKeyIssueState} onDismissKeyIssue={dismissKeyIssue} onEditSourceLoop={openSourceLoopStudio} /></div>
+            <div hidden={studioActive}><HistoryView history={history} keyIssues={keyIssues} categoryCorrections={categoryCorrections} playback={playback} onReopen={reopenHistory} onTrashSelected={trashHistoryEntries} onSetKeyIssueActive={updateKeyIssueState} onDismissKeyIssue={dismissKeyIssue} onEditSourceLoop={openSourceLoopStudio} onTogglePlayback={toggleHistoryPlayback} /></div>
             {studioSource ? <SourceLoopStudio active={studioActive} {...studioSource} onSetKeyIssueActive={updateKeyIssueState} onSaved={async () => { await refreshLibrary(); await refreshCategoryCorrections() }} onClose={closeSourceLoopStudio} /> : null}
           </div>
           <div hidden={activeView !== "cloud"}><CloudView /></div>
         </main>
-        {!studioActive ? <GlobalPlayer layers={playerLayers} playback={playback} contextLabel={activeView === "history" ? "History generation" : quickPreviewActive ? "Extracted stack" : "Generated stack"} displayName={activeView === "generate" ? currentGenerationDisplayName : historyPlaybackName} /> : null}
+        {!studioActive ? <GlobalPlayer layers={playerLayers} playback={playback} contextLabel={playbackContext === "history" ? "History generation" : playbackContext === "quick-extract" ? "Extracted stack" : "Generated stack"} displayName={playbackContext === "generate" ? currentGenerationDisplayName : historyPlaybackName} /> : null}
       </div>
     </div>
   )

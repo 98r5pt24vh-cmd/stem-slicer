@@ -1,9 +1,9 @@
 {
   "name": "stem-slicer-electron-prototype",
-  "productName": "Stem Slicer Electron Prototype",
+  "productName": "Slicer",
   "version": "0.1.0",
   "private": true,
-  "description": "Evolving Electron, React and TypeScript prototype for Stem Slicer.",
+  "description": "Electron, React and TypeScript prototype for Slicer.",
   "main": ".vite/build/main.js",
   "scripts": {
     "dev": "electron-forge start",

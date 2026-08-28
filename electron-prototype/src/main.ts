@@ -114,10 +114,14 @@ async function createMediaResponse(request: Request, targetPath: string): Promis
   })
 }
 
-function createDragPreviewIcon() {
+function createApplicationIcon() {
   const iconPath = path.join(audioEngine.status().sourceRoot, "assets", "app-icon.png")
   if (!existsSync(iconPath)) return nativeImage.createEmpty()
-  const source = nativeImage.createFromPath(iconPath)
+  return nativeImage.createFromPath(iconPath)
+}
+
+function createDragPreviewIcon() {
+  const source = createApplicationIcon()
   if (source.isEmpty()) return source
   const size = source.getSize()
   const scale = Math.min(dragPreviewMaxSize / size.width, dragPreviewMaxSize / size.height, 1)
@@ -130,7 +134,7 @@ function createDragPreviewIcon() {
 }
 
 app.setPath("userData", path.join(prototypeCachePath, "electron-user-data"))
-app.setName("Stem Slicer Electron Prototype")
+app.setName("Slicer")
 protocol.registerSchemesAsPrivileged([
   {
     scheme: "stem-media",
@@ -141,6 +145,7 @@ protocol.registerSchemesAsPrivileged([
 const audioEngine = new AudioEngineService(app.getAppPath(), prototypeCachePath)
 
 function createWindow(): void {
+  const applicationIcon = createApplicationIcon()
   const mainWindow = new BrowserWindow({
     width: 1226,
     height: 786,
@@ -148,6 +153,7 @@ function createWindow(): void {
     minHeight: 700,
     autoHideMenuBar: true,
     backgroundColor: "#09090b",
+    icon: applicationIcon.isEmpty() ? undefined : applicationIcon,
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     trafficLightPosition: { x: 18, y: 18 },
     show: false,
@@ -289,6 +295,10 @@ function registerIpc(): void {
 
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null)
+  const applicationIcon = createApplicationIcon()
+  if (process.platform === "darwin" && !applicationIcon.isEmpty()) {
+    app.dock?.setIcon(applicationIcon)
+  }
   protocol.handle("stem-media", (request) => {
     const url = new URL(request.url)
     const targetPath = url.searchParams.get("path") ?? decodeURIComponent(url.pathname.replace(/^\//, ""))
