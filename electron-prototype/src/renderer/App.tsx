@@ -2155,8 +2155,10 @@ function LayerCard({
             <span className="wave-time tabular" aria-hidden="true">
               {(visibleProgress * layer.duration).toFixed(1)} / {layer.duration.toFixed(1)} s
             </span>
-            <span className="wave-bpm tabular"><MetronomeIcon /> {layer.bpm} BPM</span>
-            <span className="wave-key"><Music2 aria-hidden="true" /> {layer.keyName}</span>
+            <span className="wave-musical-info">
+              <span className="wave-bpm tabular"><MetronomeIcon /> {layer.bpm} BPM</span>
+              <span className="wave-key"><Music2 aria-hidden="true" /> {layer.keyName}</span>
+            </span>
           </div>
         </div>
 
@@ -4710,6 +4712,10 @@ function CloudView({ library }: { library: LibraryOverview }) {
   const [profileAliases, setProfileAliases] = useState("")
   const [profileOpenToCollaborate, setProfileOpenToCollaborate] = useState(false)
   const [profileAvatarFilePath, setProfileAvatarFilePath] = useState("")
+  const [sharedLibrarySortDirection, setSharedLibrarySortDirection] = useState<"asc" | "desc">("asc")
+  const [pinnedSharedLibraryIds, setPinnedSharedLibraryIds] = useState<Set<string>>(new Set())
+  const sharedSelectAllRef = useRef<HTMLInputElement>(null)
+  const cloudProfileId = cloud.profile?.id ?? ""
 
   const refresh = useCallback(async () => {
     const state = await window.stemSlicer?.getCloudState()
@@ -4750,6 +4756,25 @@ function CloudView({ library }: { library: LibraryOverview }) {
     setProfileOpenToCollaborate(cloud.profile.openToCollaborate)
     setProfileAvatarFilePath("")
   }, [cloud.profile])
+
+  useEffect(() => {
+    if (!notice) return
+    const timeout = window.setTimeout(() => setNotice(""), 3600)
+    return () => window.clearTimeout(timeout)
+  }, [notice])
+
+  useEffect(() => {
+    if (!cloudProfileId) {
+      setPinnedSharedLibraryIds(new Set())
+      return
+    }
+    try {
+      const storedIds = JSON.parse(window.localStorage.getItem(`slicer.cloud.pinned-libraries.${cloudProfileId}`) ?? "[]")
+      setPinnedSharedLibraryIds(new Set(Array.isArray(storedIds) ? storedIds.map(String) : []))
+    } catch {
+      setPinnedSharedLibraryIds(new Set())
+    }
+  }, [cloudProfileId])
 
   const perform = async (action: () => Promise<CloudState | undefined>) => {
     setBusy(true)
@@ -4835,6 +4860,18 @@ function CloudView({ library }: { library: LibraryOverview }) {
     }) ?? Promise.resolve(undefined))
   }
 
+  const toggleSharedLibraryPin = (libraryId: string) => {
+    setPinnedSharedLibraryIds((currentIds) => {
+      const nextIds = new Set(currentIds)
+      if (nextIds.has(libraryId)) nextIds.delete(libraryId)
+      else nextIds.add(libraryId)
+      if (cloudProfileId) {
+        window.localStorage.setItem(`slicer.cloud.pinned-libraries.${cloudProfileId}`, JSON.stringify([...nextIds]))
+      }
+      return nextIds
+    })
+  }
+
   const acceptedConnections = cloud.connections.filter((connection) => connection.status === "accepted")
   const pendingConnections = cloud.connections.filter((connection) => connection.status === "pending")
   const ownLibraries = cloud.libraries.filter((item) => item.own)
@@ -4842,6 +4879,31 @@ function CloudView({ library }: { library: LibraryOverview }) {
   const publishedLayerCount = ownLibraries.reduce((sum, item) => sum + item.layerCount, 0)
   const publishedLoopCount = ownLibraries.reduce((sum, item) => sum + item.loopCount, 0)
   const localAvatarPreview = profileAvatarFilePath ? window.stemSlicer?.mediaUrl(profileAvatarFilePath) : ""
+  const readySharedLibraries = sharedLibraries.filter((item) => item.status === "ready")
+  const enabledReadyLibraryCount = readySharedLibraries.filter((item) => item.enabledForGenerate).length
+  const allReadyLibrariesEnabled = readySharedLibraries.length > 0 && enabledReadyLibraryCount === readySharedLibraries.length
+  const someReadyLibrariesEnabled = enabledReadyLibraryCount > 0 && !allReadyLibrariesEnabled
+  const sortedSharedLibraries = [...sharedLibraries].sort((left, right) => {
+    const pinDifference = Number(pinnedSharedLibraryIds.has(right.id)) - Number(pinnedSharedLibraryIds.has(left.id))
+    if (pinDifference !== 0) return pinDifference
+    const nameOrder = left.name.localeCompare(right.name, undefined, { numeric: true, sensitivity: "base" })
+    return sharedLibrarySortDirection === "asc" ? nameOrder : -nameOrder
+  })
+
+  useEffect(() => {
+    if (sharedSelectAllRef.current) sharedSelectAllRef.current.indeterminate = someReadyLibrariesEnabled
+  }, [activeSection, someReadyLibrariesEnabled])
+
+  const setAllReadyLibrariesEnabled = (enabled: boolean) => {
+    void perform(async () => {
+      let state: CloudState | undefined
+      for (const item of readySharedLibraries) {
+        if (item.enabledForGenerate === enabled) continue
+        state = await window.stemSlicer?.cloudSetLibraryEnabled(item.id, enabled)
+      }
+      return state ?? cloud
+    })
+  }
 
   return (
     <div className="page-stack cloud-page">
@@ -4919,7 +4981,6 @@ function CloudView({ library }: { library: LibraryOverview }) {
       ) : (
         <>
           <section className="cloud-account-bar glass-panel">
-            <CloudProfileAvatar profile={cloud.profile} />
             <div><strong>{cloud.profile?.displayName}</strong><span>@{cloud.profile?.handle} · {cloud.userEmail}</span></div>
             <Badge variant="success">Private session</Badge>
             <Button variant="outline" size="sm" disabled={busy} onClick={() => void perform(() => window.stemSlicer?.cloudSignOut() ?? Promise.resolve(undefined))}><LogOut aria-hidden="true" /> Sign out</Button>
@@ -4979,7 +5040,7 @@ function CloudView({ library }: { library: LibraryOverview }) {
                 <CardContent>
                   <form className="cloud-form" onSubmit={saveProfile}>
                     <div className="cloud-avatar-editor">
-                      {cloud.profile ? <CloudProfileAvatar profile={{ ...cloud.profile, avatarUrl: localAvatarPreview || cloud.profile.avatarUrl }} /> : null}
+                      <span className="cloud-avatar-editor-icon" aria-hidden="true"><Camera /></span>
                       <span><strong>Profile photo</strong><small>Square PNG, JPEG, WebP or HEIC. Slicer prepares it before upload.</small></span>
                       <Button type="button" variant="outline" size="sm" onClick={() => void pickProfileAvatar()}><Camera aria-hidden="true" /> Choose photo</Button>
                     </div>
@@ -5067,16 +5128,56 @@ function CloudView({ library }: { library: LibraryOverview }) {
               </Card>
 
               <Card className="cloud-panel cloud-shared-panel">
-                <CardHeader><div><CardTitle>Libraries available to Generate</CardTitle><CardDescription>Metadata joins the randomizer first. Audio downloads only after a remote layer is selected.</CardDescription></div><Badge variant={sharedLibraries.some((item) => item.enabledForGenerate) ? "success" : "warning"}>{sharedLibraries.filter((item) => item.enabledForGenerate).length} enabled</Badge></CardHeader>
+                <CardHeader><div><CardTitle>Libraries available to Generate</CardTitle><CardDescription>Ready libraries can be enabled. Archived libraries remain visible but are unavailable to Generate.</CardDescription></div><Badge variant={sharedLibraries.some((item) => item.enabledForGenerate) ? "success" : "warning"}>{sharedLibraries.filter((item) => item.enabledForGenerate).length} enabled</Badge></CardHeader>
                 <CardContent>
-                  <div className="cloud-shared-grid">
-                    {sharedLibraries.map((item) => (
-                      <label className={cn("cloud-shared-library", item.enabledForGenerate && "is-enabled")} key={item.id}>
-                        <input type="checkbox" checked={item.enabledForGenerate} disabled={item.status !== "ready"} onChange={(event) => void perform(() => window.stemSlicer?.cloudSetLibraryEnabled(item.id, event.target.checked) ?? Promise.resolve(undefined))} />
-                        <CloudProfileAvatar profile={item.owner} />
-                        <span><strong>{item.name}</strong><small>{item.owner.displayName} · {formatCount(item.layerCount)} layers · {formatDecimalBytes(item.totalBytes)}</small></span>
-                        <Badge variant={item.status === "ready" ? "success" : "warning"}>{item.status}</Badge>
+                  {sharedLibraries.length > 0 ? (
+                    <div className="cloud-library-toolbar">
+                      <label>
+                        <input
+                          ref={sharedSelectAllRef}
+                          type="checkbox"
+                          checked={allReadyLibrariesEnabled}
+                          aria-checked={someReadyLibrariesEnabled ? "mixed" : allReadyLibrariesEnabled}
+                          disabled={readySharedLibraries.length === 0 || busy}
+                          onChange={(event) => setAllReadyLibrariesEnabled(event.target.checked)}
+                        />
+                        <span>{allReadyLibrariesEnabled ? "Clear all" : "Select all"}</span>
                       </label>
+                      <button
+                        type="button"
+                        aria-label={`Sort libraries by name ${sharedLibrarySortDirection === "asc" ? "descending" : "ascending"}`}
+                        onClick={() => setSharedLibrarySortDirection((direction) => direction === "asc" ? "desc" : "asc")}
+                      >
+                        {sharedLibrarySortDirection === "asc" ? <ArrowUpNarrowWide aria-hidden="true" /> : <ArrowDownWideNarrow aria-hidden="true" />}
+                        Name {sharedLibrarySortDirection === "asc" ? "A–Z" : "Z–A"}
+                      </button>
+                    </div>
+                  ) : null}
+                  <div className="cloud-shared-grid">
+                    {sortedSharedLibraries.map((item) => (
+                      <div className={cn("cloud-shared-library", item.enabledForGenerate && "is-enabled", pinnedSharedLibraryIds.has(item.id) && "is-pinned")} key={item.id}>
+                        <label className="cloud-shared-library-main">
+                          <input
+                            type="checkbox"
+                            checked={item.enabledForGenerate}
+                            disabled={item.status !== "ready" || busy}
+                            aria-label={`${item.enabledForGenerate ? "Disable" : "Enable"} ${item.name} for Generate`}
+                            onChange={(event) => void perform(() => window.stemSlicer?.cloudSetLibraryEnabled(item.id, event.target.checked) ?? Promise.resolve(undefined))}
+                          />
+                          <CloudProfileAvatar profile={item.owner} />
+                          <span><strong>{item.name}</strong><small>{item.owner.displayName} · {formatCount(item.loopCount)} loops · {formatCount(item.layerCount)} layers · {formatDecimalBytes(item.totalBytes)}</small></span>
+                          <Badge variant={item.status === "ready" ? "success" : "warning"} title={item.status === "ready" ? "Available to Generate" : item.status === "archived" ? "Unavailable to Generate" : undefined}>{item.status === "ready" ? "Ready" : item.status === "archived" ? "Archived" : item.status}</Badge>
+                        </label>
+                        <button
+                          type="button"
+                          className="cloud-library-pin"
+                          aria-pressed={pinnedSharedLibraryIds.has(item.id)}
+                          aria-label={`${pinnedSharedLibraryIds.has(item.id) ? "Unpin" : "Pin"} ${item.name}`}
+                          onClick={() => toggleSharedLibraryPin(item.id)}
+                        >
+                          <Pin aria-hidden="true" />
+                        </button>
+                      </div>
                     ))}
                   </div>
                   {sharedLibraries.length === 0 ? <p className="cloud-empty-copy">Accepted producers’ ready libraries will appear here.</p> : null}
