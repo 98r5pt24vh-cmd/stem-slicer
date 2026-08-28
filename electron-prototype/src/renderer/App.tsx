@@ -5148,9 +5148,12 @@ function CloudView({ library }: { library: LibraryOverview }) {
                       const statusLabel = sharing ? "Shared" : paused ? "Paused" : item.status === "uploading" ? "Publishing" : "Upload failed"
                       return (
                         <div className={cn("cloud-list-row cloud-library-row", paused && "is-paused")} key={item.id}>
-                          <span><strong>{item.name}</strong><small>{formatCount(item.loopCount)} loops · {formatCount(item.layerCount)} layers · {formatDecimalBytes(item.totalBytes)} stored</small></span>
+                          <span className="cloud-owner-library-copy">
+                            <strong title={item.name}>{item.name}</strong>
+                            <small>{formatCount(item.loopCount)} loops · {formatCount(item.layerCount)} layers · {formatDecimalBytes(item.totalBytes)} stored</small>
+                            <Badge className="cloud-library-status" variant={sharing ? "success" : paused ? "warning" : "secondary"}>{statusLabel}</Badge>
+                          </span>
                           <div className="cloud-owner-library-actions">
-                            <Badge variant={sharing ? "success" : paused ? "warning" : "secondary"}>{statusLabel}</Badge>
                             <div className="cloud-owner-library-buttons">
                               {sharing || paused ? (
                                 <Button

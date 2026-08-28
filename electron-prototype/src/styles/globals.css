@@ -5717,7 +5717,15 @@ td strong {
   grid-template-columns: minmax(0, 1fr) auto;
 }
 
-.cloud-library-row > span > strong {
+.cloud-list-row > .cloud-owner-library-copy {
+  display: grid;
+  min-width: 0;
+  align-content: center;
+  justify-items: start;
+  gap: 4px;
+}
+
+.cloud-owner-library-copy > strong {
   display: -webkit-box;
   line-height: 1.25;
   white-space: normal;
@@ -5725,16 +5733,22 @@ td strong {
   -webkit-line-clamp: 2;
 }
 
+.cloud-owner-library-copy > small {
+  margin-block-start: 0;
+  line-height: 1.4;
+}
+
+.cloud-owner-library-copy > .cloud-library-status {
+  margin-block-start: 2px;
+}
+
 .cloud-library-row.is-paused {
   background: rgb(225 213 0 / 0.025);
 }
 
 .cloud-owner-library-actions {
-  display: grid;
-  grid-template-columns: auto minmax(168px, max-content);
-  align-items: center;
-  justify-content: end;
-  gap: 10px;
+  min-width: 168px;
+  justify-self: end;
 }
 
 .cloud-owner-library-buttons {
@@ -6034,8 +6048,7 @@ td strong {
   }
 
   .cloud-owner-library-actions {
-    grid-template-columns: auto minmax(168px, max-content);
-    justify-content: start;
+    justify-self: start;
   }
 }
 
