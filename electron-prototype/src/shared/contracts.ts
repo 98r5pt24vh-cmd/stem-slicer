@@ -3,7 +3,9 @@ export type ViewId =
   | "generate"
   | "quick-tools"
   | "history"
+  | "library"
   | "cloud"
+  | "profile"
 
 export type KeyCoverage = "analyzed" | "unavailable"
 
@@ -284,6 +286,37 @@ export interface AudioArtifact {
   locked?: boolean
 }
 
+export interface ExtractionHistoryEntry {
+  id: string
+  mode: "single" | "folder"
+  sourcePath: string
+  outputFolder: string
+  createdAt: string
+  sourceFileCount: number
+  outputCount: number
+  outputs: string[]
+  elapsedSeconds?: number
+}
+
+export interface ConvertHistoryEntry {
+  id: string
+  sourcePath: string
+  outputFolder: string
+  createdAt: string
+  artifact: AudioArtifact
+  sourceBpm: number
+  sourceKey: string
+  targetBpm: number
+  targetKey: string
+  elapsedSeconds: number
+  recovered?: boolean
+}
+
+export interface QuickActivityHistorySnapshot {
+  extractions: ExtractionHistoryEntry[]
+  conversions: ConvertHistoryEntry[]
+}
+
 export interface KeyIssueAffectedLayer {
   identity: string
   path: string
@@ -481,6 +514,7 @@ export interface EngineStatus {
 export interface StemSlicerDesktopApi {
   getEnvironment: () => Promise<AppEnvironment>
   getGenerationStorageUsage: () => Promise<GenerationStorageUsage>
+  getQuickActivityHistory: () => Promise<QuickActivityHistorySnapshot>
   getLibraryOverview: () => Promise<LibraryOverview>
   getLibraryProducers: () => Promise<LibraryProducerSummary[]>
   removeLibraryRoot: (libraryRoot: string) => Promise<LibraryOverview>

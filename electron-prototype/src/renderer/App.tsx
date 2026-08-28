@@ -20,6 +20,7 @@ import {
   HardDrive,
   History,
   Instagram,
+  Library as LibraryIcon,
   Layers3,
   Lock,
   LogIn,
@@ -65,6 +66,13 @@ import {
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { basename, cn, formatCount, formatDecimalBytes } from "@/lib/utils"
+import {
+  parseConvertHistory,
+  parseExtractionHistory,
+  prependUniqueActivity,
+  type ConvertHistoryEntry,
+  type ExtractionHistoryEntry,
+} from "@/lib/activity-history"
 import { compactKeyFamilyLabel, keyFamilyForKey, keyFromFamily, randomKeyOutsidePreviousFamily, TARGET_KEY_FAMILIES } from "@/lib/random-key"
 import { studioLayerName } from "@/lib/source-loop-name"
 import { generationDisplayName, PRIMARY_PRODUCER, producerMonogram, producersForLayers, provenanceForLayer, stripAudioExtension, uniqueProducerCredits } from "@/lib/source-provenance"
@@ -183,6 +191,7 @@ const NAVIGATION: NavItem[] = [
   { id: "quick-tools", label: "Quick Tools", icon: Zap },
   { id: "generate", label: "Generate", icon: Sparkles },
   { id: "history", label: "History", icon: History },
+  { id: "library", label: "Library", icon: LibraryIcon },
   { id: "cloud", label: "Cloud", icon: Cloud, badge: "ALPHA" },
 ]
 
@@ -313,6 +322,8 @@ const FALLBACK_LIBRARY: LibraryOverview = {
 }
 
 const HISTORY_STORAGE_KEY = "stem-slicer-electron.generate-history.v1"
+const EXTRACTION_HISTORY_STORAGE_KEY = "stem-slicer-electron.extraction-history.v1"
+const CONVERT_HISTORY_STORAGE_KEY = "stem-slicer-electron.convert-history.v1"
 const GENERATION_SEQUENCE_STORAGE_KEY = "stem-slicer-electron.generation-sequence.v1"
 const COLLABORATOR_SETTINGS_STORAGE_KEY = "stem-slicer-electron.collaborator-settings.v1"
 const PRODUCER_PROFILES_CHANGED_EVENT = "stem-slicer-producer-profiles-changed"
@@ -438,6 +449,14 @@ function loadGenerateHistory(): HistoryEntry[] {
 function loadGenerationSequence(): number {
   const stored = Number(window.localStorage.getItem(GENERATION_SEQUENCE_STORAGE_KEY))
   return Number.isFinite(stored) ? Math.max(0, Math.round(stored)) : 0
+}
+
+function loadExtractionHistory(): ExtractionHistoryEntry[] {
+  return parseExtractionHistory(window.localStorage.getItem(EXTRACTION_HISTORY_STORAGE_KEY))
+}
+
+function loadConvertHistory(): ConvertHistoryEntry[] {
+  return parseConvertHistory(window.localStorage.getItem(CONVERT_HISTORY_STORAGE_KEY))
 }
 
 function displayNameForGeneration(result: GenerateResult, layers: GeneratedLayer[], fallbackNumber = 1): string {
@@ -1844,15 +1863,15 @@ function AppSidebar({
 
       <button
         type="button"
-        className="sidebar-profile app-no-drag"
-        onClick={() => onNavigate("cloud")}
-        aria-label={`Open ${primaryProfileName} Cloud profile`}
-        title={collapsed ? `${primaryProfileName} Cloud profile` : "Open Cloud profile"}
+        className={cn("sidebar-profile app-no-drag", activeView === "profile" && "is-active")}
+        onClick={() => onNavigate("profile")}
+        aria-current={activeView === "profile" ? "page" : undefined}
+        aria-label={`Open ${primaryProfileName} profile`}
+        title={collapsed ? `${primaryProfileName} profile` : "Open profile"}
       >
         <span className="sidebar-profile-avatar"><ProducerAvatar producer={primaryProfileName} profile={primaryProfile} /></span>
         <span className="sidebar-copy">
           <strong>{primaryProfileName}</strong>
-          <span>Cloud profile</span>
         </span>
         <Pencil aria-hidden="true" />
       </button>
@@ -3215,7 +3234,7 @@ function OperationSwitch({ checked, onChange, label, accent }: { checked: boolea
   )
 }
 
-function StemSlicerView() {
+function StemSlicerView({ onExtractionCompleted }: { onExtractionCompleted: (entry: ExtractionHistoryEntry) => void }) {
   const [sourceFolder, setSourceFolder] = useState("")
   const [outputFolder, setOutputFolder] = useState("/Users/nrgy/Documents/Stem Slicer/Extracted Layers/Loop Pack Name")
   const [layerExtraction, setLayerExtraction] = useState(true)
@@ -3241,6 +3260,20 @@ function StemSlicerView() {
     "Prod name": "+NRGY_L1",
   }
   const namePreview = `${nameTokens.map((token) => previewValues[token]).join(" ")}.mp3`
+
+  useEffect(() => {
+    if (!batchResult || !layerExtraction || !sourceFolder) return
+    onExtractionCompleted({
+      id: `folder:${batchResult.outputFolder}`,
+      mode: "folder",
+      sourcePath: sourceFolder,
+      outputFolder: batchResult.outputFolder,
+      createdAt: new Date().toISOString(),
+      sourceFileCount: batchResult.files,
+      outputCount: batchResult.outputs.length,
+      outputs: [],
+    })
+  }, [batchResult, layerExtraction, onExtractionCompleted, sourceFolder])
 
   const pickSourceFolder = async () => {
     const result = await window.stemSlicer?.pickLibraryFolder()
@@ -3456,11 +3489,15 @@ function QuickToolsView({
   setPreviewLayers,
   playback,
   onActiveToolChange,
+  onExtractionCompleted,
+  onConvertCompleted,
 }: {
   previewLayers: GeneratedLayer[]
   setPreviewLayers: React.Dispatch<React.SetStateAction<GeneratedLayer[]>>
   playback: PlaybackClock
   onActiveToolChange: (tool: QuickToolId) => void
+  onExtractionCompleted: (entry: ExtractionHistoryEntry) => void
+  onConvertCompleted: (entry: ConvertHistoryEntry) => void
 }) {
   const quickTools: Array<{ id: QuickToolId; label: string; description: string; icon: LucideIcon }> = [
     { id: "extract", label: "Quick Extract", description: "Split one loop into playable layers", icon: AudioLines },
@@ -3488,6 +3525,37 @@ function QuickToolsView({
   const convertResult = convertJob.result as QuickConvertResult | null
   const extractedLayers = extractResult?.layers ?? extractJob.artifacts
   const extractedMixActive = playback.mode === "mix"
+
+  useEffect(() => {
+    if (!extractResult || !extractFile) return
+    onExtractionCompleted({
+      id: `single:${extractResult.outputFolder}`,
+      mode: "single",
+      sourcePath: extractFile,
+      outputFolder: extractResult.outputFolder,
+      createdAt: new Date().toISOString(),
+      sourceFileCount: 1,
+      outputCount: extractResult.layers.length,
+      outputs: extractResult.layers.map((layer) => layer.path),
+      elapsedSeconds: extractResult.elapsedSeconds,
+    })
+  }, [extractFile, extractResult, onExtractionCompleted])
+
+  useEffect(() => {
+    if (!convertResult || !convertFile) return
+    onConvertCompleted({
+      id: `convert:${convertResult.artifact.path}`,
+      sourcePath: convertFile,
+      outputFolder: convertResult.outputFolder,
+      createdAt: new Date().toISOString(),
+      artifact: convertResult.artifact,
+      sourceBpm: convertResult.sourceBpm,
+      sourceKey: convertResult.sourceKey,
+      targetBpm: convertResult.targetBpm,
+      targetKey: convertResult.targetKey,
+      elapsedSeconds: convertResult.elapsedSeconds,
+    })
+  }, [convertFile, convertResult, onConvertCompleted])
 
   const selectTool = (tool: QuickToolId) => {
     if (tool === activeTool) return
@@ -4082,10 +4150,10 @@ function SourceLoopStudio({
     <section className="source-loop-studio" aria-labelledby="source-loop-studio-title">
       <header className="source-loop-editor-header app-drag-region">
         <button type="button" className="source-loop-studio-back app-no-drag" onClick={onClose}>
-          <ChevronLeft aria-hidden="true" /><span>History</span>
+          <ChevronLeft aria-hidden="true" /><span>Library</span>
         </button>
         <div className="source-loop-studio-title">
-          <p className="eyebrow">Workspace / History / Studio</p>
+          <p className="eyebrow">Workspace / Library / Studio</p>
           <h1 id="source-loop-studio-title">{sourceLoopId || "Source loop"}</h1>
           <p>Edit the indexed layers directly on the timeline. Source audio remains untouched.</p>
         </div>
@@ -4386,34 +4454,26 @@ function SourceLoopStudio({
 
 function HistoryView({
   history,
-  keyIssues,
-  categoryCorrections,
+  extractionHistory,
+  convertHistory,
   playback,
   onReopen,
   onTrashSelected,
-  onSetKeyIssueActive,
-  onDismissKeyIssue,
-  onEditSourceLoop,
   onTogglePlayback,
 }: {
   history: HistoryEntry[]
-  keyIssues: KeyIssueReport[]
-  categoryCorrections: CategoryCorrection[]
+  extractionHistory: ExtractionHistoryEntry[]
+  convertHistory: ConvertHistoryEntry[]
   playback: PlaybackClock
   onReopen: (entry: HistoryEntry) => void
   onTrashSelected: (entries: HistoryEntry[]) => Promise<void>
-  onSetKeyIssueActive: (issueId: string, active: boolean) => Promise<void>
-  onDismissKeyIssue: (issueId: string) => Promise<void>
-  onEditSourceLoop: (request: SourceLoopStudioRequest) => void
   onTogglePlayback: (entry: HistoryEntry) => void
 }) {
-  const activeIssueCount = keyIssues.filter((issue) => issue.active).length
+  const [activeSection, setActiveSection] = useState<"generate" | "extract" | "convert">("generate")
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState("")
-  const [dismissingIssueId, setDismissingIssueId] = useState<string | null>(null)
-  const [issueError, setIssueError] = useState("")
   const [storageUsage, setStorageUsage] = useState<GenerationStorageUsage | null>(null)
   const [storageError, setStorageError] = useState("")
   const selectedEntries = history.filter((entry) => selectedIds.has(entry.id))
@@ -4459,122 +4519,34 @@ function HistoryView({
     }
   }
 
-  const dismissIssue = async (issueId: string) => {
-    setDismissingIssueId(issueId)
-    setIssueError("")
-    try {
-      await onDismissKeyIssue(issueId)
-    } catch (reason) {
-      setIssueError(reason instanceof Error ? reason.message : "Unable to remove this report from the list.")
-    } finally {
-      setDismissingIssueId(null)
-    }
-  }
-
   return (
-    <div className="page-stack">
-      <PageHeader eyebrow="Workspace / History" title="Generation history" description="Reopen generated loops and review every correction saved to the local library." />
-      <section className="key-issues-section app-no-drag" aria-labelledby="key-issues-title">
-        <header className="history-section-heading">
-          <div>
-            <h2 id="key-issues-title">Library corrections</h2>
-            <p>Review source loops quarantined for key or slicing problems and category fixes already added to truth feedback.</p>
-          </div>
-          <Badge variant={activeIssueCount > 0 ? "warning" : "secondary"}>{activeIssueCount} loop issue{activeIssueCount === 1 ? "" : "s"} · {categoryCorrections.length} category fix{categoryCorrections.length === 1 ? "" : "es"}</Badge>
-        </header>
-        <div className="history-subsection-heading"><h3>Source loops to review</h3><span>{activeIssueCount} active</span></div>
-        {keyIssues.length > 0 ? (
-          <div className="key-issue-list">
-            {keyIssues.map((issue) => (
-              <Card key={issue.id} className={cn("key-issue-item", issue.active && "is-active")}>
-                <CardContent>
-                  <span className={cn("key-issue-icon", issue.issueType === "wrong-slice" && "is-wrong-slice")}>
-                    {issue.issueType === "wrong-slice" ? <Scissors aria-hidden="true" /> : <CircleAlert aria-hidden="true" />}
-                  </span>
-                  <div className="key-issue-copy">
-                    <strong title={issue.reportedPath}>{issue.reportedFile}</strong>
-                    <small title={issue.sourceLoopId}>Source loop · {issue.sourceLoopId}</small>
-                    <details>
-                      <summary>{issue.affectedLayers.length} associated layer{issue.affectedLayers.length === 1 ? "" : "s"}</summary>
-                      <ul>
-                        {issue.affectedLayers.map((layer) => (
-                          <li key={`${issue.id}-${layer.path}`}>
-                            <span title={layer.path}>{layer.file}</span>
-                            <b>{layer.detectedKey}</b>
-                          </li>
-                        ))}
-                      </ul>
-                    </details>
-                  </div>
-                  <div className="key-issue-spec">
-                    <Badge variant={issue.active ? "warning" : "secondary"}>{issue.active ? "Quarantined" : "Restored"}</Badge>
-                    <span>{issue.issueType === "wrong-slice" ? "Wrong slice" : `Detected · ${issue.detectedKey}`}</span>
-                    <span>{issue.issueType === "wrong-slice" ? "Extraction review" : `Generated in · ${issue.targetKey}`}</span>
-                  </div>
-                  <div className="key-issue-actions">
-                    <Button variant="outline" size="sm" onClick={() => void window.stemSlicer?.revealPath(issue.reportedPath)}><FolderOpen /> Reveal</Button>
-                    <Button variant="outline" size="sm" onClick={() => onEditSourceLoop({ libraryRoot: issue.libraryRoot, sourceLoopId: issue.sourceLoopId, issueId: issue.id, issueActive: issue.active })}>
-                      <Pencil aria-hidden="true" /> Studio
-                    </Button>
-                    <Button
-                      variant={issue.active ? "outline" : "ghost"}
-                      size="sm"
-                      onClick={() => void onSetKeyIssueActive(issue.id, !issue.active)}
-                    >
-                      {issue.active ? <Check aria-hidden="true" /> : <CircleX aria-hidden="true" />}
-                      {issue.active ? "Restore" : "Exclude again"}
-                    </Button>
-                    <button
-                      type="button"
-                      className="key-issue-dismiss"
-                      disabled={dismissingIssueId === issue.id}
-                      aria-label={`Remove ${issue.reportedFile} report from the list`}
-                      title="Remove report from list"
-                      onClick={() => void dismissIssue(issue.id)}
-                    >
-                      <X aria-hidden="true" />
-                    </button>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        ) : <p className="key-issues-empty">No source loop is awaiting review.</p>}
-        {issueError ? <p className="dialog-inline-error" role="alert">{issueError}</p> : null}
+    <div className="page-stack history-page">
+      <PageHeader eyebrow="Workspace / History" title="Activity history" description="Reopen generated loops and find completed extraction or conversion jobs without mixing them with library maintenance." />
 
-        <div className="category-corrections-block">
-          <div className="history-subsection-heading"><h3>Category corrections</h3><span>{categoryCorrections.length} saved</span></div>
-          {categoryCorrections.length > 0 ? (
-            <div className="category-correction-list">
-              {categoryCorrections.map((correction) => {
-                const provenance = provenanceForLayer({ sourceFile: correction.filename, sourceLoopId: correction.sourceLoopId })
-                const relatedIssue = keyIssues.find((issue) => sourceLoopKey(issue.libraryRoot, issue.sourceLoopId) === sourceLoopKey(correction.libraryRoot, correction.sourceLoopId))
-                return (
-                  <Card key={correction.identity} className="category-correction-item">
-                    <CardContent>
-                      <span className="category-correction-icon"><Check aria-hidden="true" /></span>
-                      <div className="category-correction-copy">
-                        <strong title={stripAudioExtension(correction.filename)}>{provenance.loopName}</strong>
-                        <small>{provenance.producers.join(", ")}</small>
-                      </div>
-                      <div className="category-correction-change">
-                        <span>{correction.previousCategory || "Unassigned"}</span><ChevronDown aria-hidden="true" /><b>{correction.correctedCategory}</b>
-                      </div>
-                      <time dateTime={correction.validatedAt}>{new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(correction.validatedAt))}</time>
-                      <div className="category-correction-actions">
-                        <Button variant="outline" size="sm" onClick={() => void window.stemSlicer?.revealPath(correction.path)}><FolderOpen aria-hidden="true" /> Reveal</Button>
-                        <Button variant="outline" size="sm" onClick={() => onEditSourceLoop({ libraryRoot: correction.libraryRoot, sourceLoopId: correction.sourceLoopId, issueId: relatedIssue?.id ?? "", issueActive: relatedIssue?.active ?? false })}><Pencil aria-hidden="true" /> Studio</Button>
-                      </div>
-                    </CardContent>
-                  </Card>
-                )
-              })}
-            </div>
-          ) : <p className="key-issues-empty">No category correction has been saved yet.</p>}
-        </div>
-      </section>
+      <div className="workspace-section-tabs" role="group" aria-label="History sections">
+        {([
+          { id: "generate" as const, label: "Generate history", description: "Rendered layer stacks", icon: Sparkles, count: history.length },
+          { id: "extract" as const, label: "Extraction history", description: "Single loops and folders", icon: Scissors, count: extractionHistory.length },
+          { id: "convert" as const, label: "Quick Convert history", description: "Retuned and stretched files", icon: Repeat2, count: convertHistory.length },
+        ]).map(({ id, label, description, icon: Icon, count }) => (
+          <button
+            key={id}
+            type="button"
+            aria-pressed={activeSection === id}
+            aria-controls={`history-panel-${id}`}
+            className="workspace-section-tab"
+            data-section={id}
+            onClick={() => setActiveSection(id)}
+          >
+            <span className="workspace-tab-icon"><Icon aria-hidden="true" /></span>
+            <span><strong>{label}</strong><small>{description}</small></span>
+            <Badge variant="secondary">{count}</Badge>
+          </button>
+        ))}
+      </div>
 
-      <div className="history-section-heading history-generations-heading app-no-drag">
+      {activeSection === "generate" ? <section id="history-panel-generate" role="tabpanel" className="history-panel">
+      <div className="history-section-heading app-no-drag">
         <div><h2>Generations</h2><p>Previously rendered stacks remain available here.</p></div>
         <div className="history-generation-tools">
           <span
@@ -4667,6 +4639,69 @@ function HistoryView({
       ) : (
         <EmptyState icon={History} title="No generation yet" description="Generated loops will appear here with their source attribution and producer credits." action={<span className="empty-hint">Open Generate to create the first entry.</span>} />
       )}
+      </section> : null}
+
+      {activeSection === "extract" ? <section id="history-panel-extract" role="tabpanel" className="history-panel">
+        <div className="history-section-heading">
+          <div><h2>Extractions</h2><p>Quick Extract jobs and full folder batches share one timeline with a distinct source type.</p></div>
+          <Badge variant="secondary">{extractionHistory.length} saved</Badge>
+        </div>
+        {extractionHistory.length > 0 ? <div className="activity-history-list">
+          {extractionHistory.map((entry) => (
+            <Card key={entry.id} className="activity-history-item">
+              <CardContent>
+                <span className={cn("activity-history-icon", entry.mode === "folder" && "is-folder")}>
+                  {entry.mode === "folder" ? <FolderOpen aria-hidden="true" /> : <Music2 aria-hidden="true" />}
+                </span>
+                <div className="activity-history-copy">
+                  <strong title={entry.sourcePath}>{basename(entry.sourcePath)}</strong>
+                  <small>{new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(entry.createdAt))} · {entry.mode === "folder" ? `${formatCount(entry.sourceFileCount)} source files` : "1 source loop"}</small>
+                </div>
+                <Badge variant={entry.mode === "folder" ? "warning" : "secondary"}>{entry.mode === "folder" ? "Folder extraction" : "Quick Extract"}</Badge>
+                <div className="activity-history-metrics">
+                  <span><b>{formatCount(entry.outputCount)}</b> outputs</span>
+                  {entry.elapsedSeconds != null ? <span><b>{entry.elapsedSeconds.toFixed(1)} s</b> elapsed</span> : null}
+                </div>
+                <div className="activity-history-actions">
+                  <Button variant="outline" size="sm" onClick={() => void window.stemSlicer?.revealPath(entry.outputFolder)}><FolderOpen aria-hidden="true" /> Open</Button>
+                  {entry.outputs.length > 0 ? <Button variant="outline" size="sm" onClick={() => window.stemSlicer?.startFilesDrag(entry.outputs)}><Layers3 aria-hidden="true" /> Drag outputs</Button> : null}
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div> : <EmptyState icon={Scissors} title="No extraction history yet" description="Quick Extract results and completed folder extractions will appear here automatically." action={<span className="empty-hint">Run an extraction to create the first entry.</span>} />}
+      </section> : null}
+
+      {activeSection === "convert" ? <section id="history-panel-convert" role="tabpanel" className="history-panel">
+        <div className="history-section-heading">
+          <div><h2>Quick Convert</h2><p>Completed one-file conversions remain easy to reveal or drag back into your workflow.</p></div>
+          <Badge variant="secondary">{convertHistory.length} saved</Badge>
+        </div>
+        {convertHistory.length > 0 ? <div className="activity-history-list">
+          {convertHistory.map((entry) => (
+            <Card key={entry.id} className="activity-history-item">
+              <CardContent>
+                <span className="activity-history-icon is-convert"><Repeat2 aria-hidden="true" /></span>
+                <div className="activity-history-copy">
+                  <strong title={entry.sourcePath}>{basename(entry.sourcePath)}</strong>
+                  <small>{new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(entry.createdAt))} · {entry.elapsedSeconds.toFixed(1)} s</small>
+                </div>
+                {entry.recovered ? <Badge variant="secondary">Existing output</Badge> : <div className="activity-convert-route">
+                  <span>{entry.sourceBpm} BPM · {entry.sourceKey || "—"}</span>
+                  <ChevronDown aria-hidden="true" />
+                  <b>{entry.targetBpm} BPM · {entry.targetKey}</b>
+                </div>}
+                <div className="activity-history-metrics">{entry.artifact.duration > 0 ? <span><b>{entry.artifact.duration.toFixed(1)} s</b> audio</span> : null}<span><b>{formatDecimalBytes(entry.artifact.bytes)}</b> file</span></div>
+                <div className="activity-history-actions">
+                  <Button variant="outline" size="sm" onClick={() => void window.stemSlicer?.revealPath(entry.artifact.path)}><FolderOpen aria-hidden="true" /> Reveal</Button>
+                  <Button variant="outline" size="sm" draggable onDragStart={(event) => { event.preventDefault(); window.stemSlicer?.startFileDrag(entry.artifact.path) }}><AudioLines aria-hidden="true" /> Drag audio</Button>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div> : <EmptyState icon={Repeat2} title="No conversion history yet" description="Completed Quick Convert files will appear here automatically." action={<span className="empty-hint">Open Quick Tools to convert the first loop.</span>} />}
+      </section> : null}
+
       <Dialog.Root open={deleteOpen} onOpenChange={(open) => { setDeleteOpen(open); if (!open) setDeleteError("") }}>
         <Dialog.Portal>
           <Dialog.Backdrop className="dialog-backdrop" />
@@ -4688,6 +4723,180 @@ function HistoryView({
           </Dialog.Viewport>
         </Dialog.Portal>
       </Dialog.Root>
+    </div>
+  )
+}
+
+function LibraryIssueList({
+  issues,
+  dismissingIssueId,
+  onSetKeyIssueActive,
+  onDismiss,
+  onEditSourceLoop,
+}: {
+  issues: KeyIssueReport[]
+  dismissingIssueId: string | null
+  onSetKeyIssueActive: (issueId: string, active: boolean) => Promise<void>
+  onDismiss: (issueId: string) => void
+  onEditSourceLoop: (request: SourceLoopStudioRequest) => void
+}) {
+  if (issues.length === 0) return <p className="key-issues-empty">No correction has been reported in this section yet.</p>
+
+  return (
+    <div className="key-issue-list">
+      {issues.map((issue) => (
+        <Card key={issue.id} className={cn("key-issue-item", issue.active && "is-active")}>
+          <CardContent>
+            <span className={cn("key-issue-icon", issue.issueType === "wrong-slice" && "is-wrong-slice")}>
+              {issue.issueType === "wrong-slice" ? <Scissors aria-hidden="true" /> : <CircleAlert aria-hidden="true" />}
+            </span>
+            <div className="key-issue-copy">
+              <strong title={issue.reportedPath}>{issue.reportedFile}</strong>
+              <small title={issue.sourceLoopId}>Source loop · {issue.sourceLoopId}</small>
+              <details>
+                <summary>{issue.affectedLayers.length} associated layer{issue.affectedLayers.length === 1 ? "" : "s"}</summary>
+                <ul>
+                  {issue.affectedLayers.map((layer) => (
+                    <li key={`${issue.id}-${layer.path}`}><span title={layer.path}>{layer.file}</span><b>{layer.detectedKey}</b></li>
+                  ))}
+                </ul>
+              </details>
+            </div>
+            <div className="key-issue-spec">
+              <Badge variant={issue.active ? "warning" : "secondary"}>{issue.active ? "Quarantined" : "Restored"}</Badge>
+              <span>{issue.issueType === "wrong-slice" ? "Wrong cut" : `Detected · ${issue.detectedKey}`}</span>
+              <span>{issue.issueType === "wrong-slice" ? "Extraction review" : `Generated in · ${issue.targetKey}`}</span>
+            </div>
+            <div className="key-issue-actions">
+              <Button variant="outline" size="sm" onClick={() => void window.stemSlicer?.revealPath(issue.reportedPath)}><FolderOpen aria-hidden="true" /> Reveal</Button>
+              <Button variant="outline" size="sm" onClick={() => onEditSourceLoop({ libraryRoot: issue.libraryRoot, sourceLoopId: issue.sourceLoopId, issueId: issue.id, issueActive: issue.active })}><Pencil aria-hidden="true" /> Studio</Button>
+              <Button variant={issue.active ? "outline" : "ghost"} size="sm" onClick={() => void onSetKeyIssueActive(issue.id, !issue.active)}>
+                {issue.active ? <Check aria-hidden="true" /> : <CircleX aria-hidden="true" />}
+                {issue.active ? "Restore" : "Exclude again"}
+              </Button>
+              <button
+                type="button"
+                className="key-issue-dismiss"
+                disabled={dismissingIssueId === issue.id}
+                aria-label={`Remove ${issue.reportedFile} report from the list`}
+                title="Remove report from list"
+                onClick={() => onDismiss(issue.id)}
+              >
+                <X aria-hidden="true" />
+              </button>
+            </div>
+          </CardContent>
+        </Card>
+      ))}
+    </div>
+  )
+}
+
+function LibraryView({
+  active,
+  library,
+  keyIssues,
+  categoryCorrections,
+  onSetKeyIssueActive,
+  onDismissKeyIssue,
+  onEditSourceLoop,
+}: {
+  active: boolean
+  library: LibraryOverview
+  keyIssues: KeyIssueReport[]
+  categoryCorrections: CategoryCorrection[]
+  onSetKeyIssueActive: (issueId: string, active: boolean) => Promise<void>
+  onDismissKeyIssue: (issueId: string) => Promise<void>
+  onEditSourceLoop: (request: SourceLoopStudioRequest) => void
+}) {
+  const [activeSection, setActiveSection] = useState<"wrong-key" | "wrong-category" | "wrong-cut" | "cloud">("wrong-key")
+  const [dismissingIssueId, setDismissingIssueId] = useState<string | null>(null)
+  const [issueError, setIssueError] = useState("")
+  const wrongKeyIssues = keyIssues.filter((issue) => issue.issueType === "wrong-key")
+  const wrongCutIssues = keyIssues.filter((issue) => issue.issueType === "wrong-slice")
+
+  const dismissIssue = async (issueId: string) => {
+    setDismissingIssueId(issueId)
+    setIssueError("")
+    try {
+      await onDismissKeyIssue(issueId)
+    } catch (reason) {
+      setIssueError(reason instanceof Error ? reason.message : "Unable to remove this report from the list.")
+    } finally {
+      setDismissingIssueId(null)
+    }
+  }
+
+  const correctionProps = {
+    dismissingIssueId,
+    onSetKeyIssueActive,
+    onDismiss: (issueId: string) => void dismissIssue(issueId),
+    onEditSourceLoop,
+  }
+
+  return (
+    <div className="page-stack library-page">
+      <PageHeader eyebrow="Workspace / Library" title="Library" description="Review catalogue corrections and manage which local or Cloud libraries stay available to Slicer." />
+
+      <div className="workspace-section-tabs library-section-tabs" role="group" aria-label="Library sections">
+        {([
+          { id: "wrong-key" as const, label: "Wrong key", description: "Key reports and quarantines", icon: CircleAlert, count: wrongKeyIssues.length },
+          { id: "wrong-category" as const, label: "Wrong category", description: "Saved category corrections", icon: Layers3, count: categoryCorrections.length },
+          { id: "wrong-cut" as const, label: "Wrong cut", description: "Loops awaiting a new slice", icon: Scissors, count: wrongCutIssues.length },
+          { id: "cloud" as const, label: "Cloud libraries", description: "Publish, pause and select", icon: Cloud, count: 0 },
+        ]).map(({ id, label, description, icon: Icon, count }) => (
+          <button
+            key={id}
+            type="button"
+            aria-pressed={activeSection === id}
+            aria-controls={`library-panel-${id}`}
+            className="workspace-section-tab"
+            data-section={id}
+            onClick={() => setActiveSection(id)}
+          >
+            <span className="workspace-tab-icon"><Icon aria-hidden="true" /></span>
+            <span><strong>{label}</strong><small>{description}</small></span>
+            {id === "cloud" ? <Badge variant="warning">Cloud</Badge> : <Badge variant="secondary">{count}</Badge>}
+          </button>
+        ))}
+      </div>
+
+      {activeSection === "wrong-key" ? <section id="library-panel-wrong-key" role="tabpanel" className="library-correction-panel">
+        <div className="history-section-heading"><div><h2>Wrong key history</h2><p>Review reported key mismatches without mixing them into activity history.</p></div><Badge variant={wrongKeyIssues.some((issue) => issue.active) ? "warning" : "secondary"}>{wrongKeyIssues.filter((issue) => issue.active).length} active</Badge></div>
+        <LibraryIssueList issues={wrongKeyIssues} {...correctionProps} />
+      </section> : null}
+
+      {activeSection === "wrong-cut" ? <section id="library-panel-wrong-cut" role="tabpanel" className="library-correction-panel">
+        <div className="history-section-heading"><div><h2>Wrong cut history</h2><p>Open quarantined source loops in Studio and repair their extraction timeline.</p></div><Badge variant={wrongCutIssues.some((issue) => issue.active) ? "warning" : "secondary"}>{wrongCutIssues.filter((issue) => issue.active).length} active</Badge></div>
+        <LibraryIssueList issues={wrongCutIssues} {...correctionProps} />
+      </section> : null}
+
+      {activeSection === "wrong-category" ? <section id="library-panel-wrong-category" role="tabpanel" className="library-correction-panel">
+        <div className="history-section-heading"><div><h2>Wrong category history</h2><p>Every validated manual category remains traceable and editable from its source loop.</p></div><Badge variant="secondary">{categoryCorrections.length} saved</Badge></div>
+        {categoryCorrections.length > 0 ? <div className="category-correction-list library-category-correction-list">
+          {categoryCorrections.map((correction) => {
+            const provenance = provenanceForLayer({ sourceFile: correction.filename, sourceLoopId: correction.sourceLoopId })
+            const relatedIssue = keyIssues.find((issue) => sourceLoopKey(issue.libraryRoot, issue.sourceLoopId) === sourceLoopKey(correction.libraryRoot, correction.sourceLoopId))
+            return (
+              <Card key={correction.identity} className="category-correction-item">
+                <CardContent>
+                  <span className="category-correction-icon"><Check aria-hidden="true" /></span>
+                  <div className="category-correction-copy"><strong title={stripAudioExtension(correction.filename)}>{provenance.loopName}</strong><small>{provenance.producers.join(", ")}</small></div>
+                  <div className="category-correction-change"><span>{correction.previousCategory || "Unassigned"}</span><ChevronDown aria-hidden="true" /><b>{correction.correctedCategory}</b></div>
+                  <time dateTime={correction.validatedAt}>{new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(correction.validatedAt))}</time>
+                  <div className="category-correction-actions">
+                    <Button variant="outline" size="sm" onClick={() => void window.stemSlicer?.revealPath(correction.path)}><FolderOpen aria-hidden="true" /> Reveal</Button>
+                    <Button variant="outline" size="sm" onClick={() => onEditSourceLoop({ libraryRoot: correction.libraryRoot, sourceLoopId: correction.sourceLoopId, issueId: relatedIssue?.id ?? "", issueActive: relatedIssue?.active ?? false })}><Pencil aria-hidden="true" /> Studio</Button>
+                  </div>
+                </CardContent>
+              </Card>
+            )
+          })}
+        </div> : <p className="key-issues-empty">No category correction has been saved yet.</p>}
+      </section> : null}
+
+      {issueError ? <p className="dialog-inline-error" role="alert">{issueError}</p> : null}
+      {activeSection === "cloud" && active ? <section id="library-panel-cloud" role="tabpanel" className="library-cloud-panel"><CloudView library={library} section="libraries" embedded /></section> : null}
     </div>
   )
 }
@@ -4720,7 +4929,7 @@ function CloudProfileAvatar({ profile, large = false }: { profile?: CloudProfile
   )
 }
 
-function CloudView({ library }: { library: LibraryOverview }) {
+function CloudView({ library, section, embedded = false }: { library: LibraryOverview; section: CloudSection; embedded?: boolean }) {
   const [cloud, setCloud] = useState<CloudState>(EMPTY_CLOUD_STATE)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
@@ -4735,7 +4944,6 @@ function CloudView({ library }: { library: LibraryOverview }) {
   const [displayName, setDisplayName] = useState("+NRGY")
   const [friendHandle, setFriendHandle] = useState("")
   const [publishEvent, setPublishEvent] = useState<CloudPublishEvent | null>(null)
-  const [activeSection, setActiveSection] = useState<CloudSection>("profile")
   const [profileHandle, setProfileHandle] = useState("")
   const [profileDisplayName, setProfileDisplayName] = useState("")
   const [profileBio, setProfileBio] = useState("")
@@ -4961,7 +5169,7 @@ function CloudView({ library }: { library: LibraryOverview }) {
 
   useEffect(() => {
     if (sharedSelectAllRef.current) sharedSelectAllRef.current.indeterminate = someReadyLibrariesEnabled
-  }, [activeSection, someReadyLibrariesEnabled])
+  }, [section, someReadyLibrariesEnabled])
 
   const setAllReadyLibrariesEnabled = (enabled: boolean) => {
     void perform(async () => {
@@ -4975,13 +5183,15 @@ function CloudView({ library }: { library: LibraryOverview }) {
   }
 
   return (
-    <div className="page-stack cloud-page">
-      <PageHeader
-        eyebrow="Workspace / Cloud"
-        title="Mix trusted producer libraries"
-        description="Share a private indexed catalogue with accepted collaborators. Generate downloads only the remote layers it actually selects."
+    <div className={cn("page-stack cloud-page", embedded && "is-embedded")}>
+      {!embedded ? <PageHeader
+        eyebrow={section === "profile" ? "Workspace / Profile" : "Workspace / Cloud"}
+        title={section === "profile" ? "Producer profile" : "Trusted producers"}
+        description={section === "profile"
+          ? "Edit the identity, credits and public details that follow your Cloud libraries."
+          : "Connect with producers you trust before exchanging private libraries and generation credits."}
         actions={<Badge variant={cloud.authenticated ? "success" : "warning"}>{cloud.authenticated ? "Connected alpha" : "Cloud alpha"}</Badge>}
-      />
+      /> : null}
 
       {error ? <p className="cloud-inline-message is-error" role="alert"><CircleAlert aria-hidden="true" />{error}</p> : null}
       {notice ? <p className="cloud-inline-message" role="status"><Check aria-hidden="true" />{notice}</p> : null}
@@ -5055,22 +5265,7 @@ function CloudView({ library }: { library: LibraryOverview }) {
             <Button variant="outline" size="sm" disabled={busy} onClick={() => void perform(() => window.stemSlicer?.cloudSignOut() ?? Promise.resolve(undefined))}><LogOut aria-hidden="true" /> Sign out</Button>
           </section>
 
-          <nav className="cloud-section-nav" aria-label="Cloud sections">
-            {([
-              { id: "profile" as const, label: "Profile", icon: UserRound },
-              { id: "producers" as const, label: "Producers", icon: UsersRound, count: acceptedConnections.length },
-              { id: "libraries" as const, label: "Libraries", icon: Layers3, count: ownLibraries.length + sharedLibraries.length },
-            ]).map((item) => {
-              const Icon = item.icon
-              return (
-                <button key={item.id} type="button" className={cn(activeSection === item.id && "is-active")} aria-pressed={activeSection === item.id} onClick={() => setActiveSection(item.id)}>
-                  <Icon aria-hidden="true" /><span>{item.label}</span>{item.count != null ? <small>{item.count}</small> : null}
-                </button>
-              )
-            })}
-          </nav>
-
-          {activeSection === "profile" ? (
+          {section === "profile" ? (
             <div className="cloud-profile-layout">
               <Card className="cloud-panel cloud-profile-card">
                 <section className="cloud-profile-preview" aria-labelledby="cloud-profile-preview-title">
@@ -5134,7 +5329,7 @@ function CloudView({ library }: { library: LibraryOverview }) {
             </div>
           ) : null}
 
-          {activeSection === "producers" ? (
+          {section === "producers" ? (
             <Card className="cloud-panel cloud-producers-panel">
               <CardHeader><div><CardTitle>Trusted producers</CardTitle><CardDescription>Connect by handle. Both producers must accept before private libraries become available.</CardDescription></div><Badge>{acceptedConnections.length} connected</Badge></CardHeader>
               <CardContent>
@@ -5170,7 +5365,7 @@ function CloudView({ library }: { library: LibraryOverview }) {
             </Card>
           ) : null}
 
-          {activeSection === "libraries" ? (
+          {section === "libraries" ? (
             <div className="cloud-grid">
               <Card className="cloud-panel">
                 <CardHeader><div><CardTitle>Your Cloud libraries</CardTitle><CardDescription>Pause sharing without reuploading, or remove Cloud files permanently. Local folders always stay untouched.</CardDescription></div><Badge>{sharedOwnLibraries.length} shared</Badge></CardHeader>
@@ -5486,6 +5681,8 @@ export function App() {
   const [quickPreviewLayers, setQuickPreviewLayers] = useState<GeneratedLayer[]>([])
   const [activeQuickTool, setActiveQuickTool] = useState<QuickToolId>("extract")
   const [history, setHistory] = useState<HistoryEntry[]>(loadGenerateHistory)
+  const [extractionHistory, setExtractionHistory] = useState<ExtractionHistoryEntry[]>(loadExtractionHistory)
+  const [convertHistory, setConvertHistory] = useState<ConvertHistoryEntry[]>(loadConvertHistory)
   const [generationSequence, setGenerationSequence] = useState(loadGenerationSequence)
   const [keyIssues, setKeyIssues] = useState<KeyIssueReport[]>([])
   const [categoryCorrections, setCategoryCorrections] = useState<CategoryCorrection[]>([])
@@ -5493,7 +5690,7 @@ export function App() {
   const [currentGenerationResult, setCurrentGenerationResult] = useState<GenerateResult | null>(null)
   const [playbackContext, setPlaybackContext] = useState<PlaybackContext>("generate")
   const [pendingHistoryPlaybackId, setPendingHistoryPlaybackId] = useState<string | null>(null)
-  const studioActive = activeView === "history" && studioSource !== null
+  const studioActive = activeView === "library" && studioSource !== null
   const quickPreviewActive = activeView === "quick-tools" && activeQuickTool === "extract" && quickPreviewLayers.length > 0
   const historyPlayerLayers = useMemo(() => history.map(historyEntryToLayer), [history])
   const playerLayers = useMemo(() => playbackContext === "history" ? historyPlayerLayers : playbackContext === "quick-extract" ? quickPreviewLayers : layers, [historyPlayerLayers, layers, playbackContext, quickPreviewLayers])
@@ -5524,6 +5721,14 @@ export function App() {
       : item))
   }, [])
 
+  const addExtractionHistory = useCallback((entry: ExtractionHistoryEntry) => {
+    setExtractionHistory((items) => prependUniqueActivity(items, entry, (item) => `${item.mode}:${item.outputFolder}`).slice(0, 100))
+  }, [])
+
+  const addConvertHistory = useCallback((entry: ConvertHistoryEntry) => {
+    setConvertHistory((items) => prependUniqueActivity(items, entry, (item) => item.artifact.path).slice(0, 100))
+  }, [])
+
   const refreshLibrary = useCallback(async () => {
     const overview = await window.stemSlicer?.getLibraryOverview()
     if (overview) setLibrary(overview)
@@ -5537,6 +5742,23 @@ export function App() {
   const refreshCategoryCorrections = useCallback(async () => {
     const corrections = await window.stemSlicer?.getCategoryCorrections()
     if (corrections) setCategoryCorrections(corrections)
+  }, [])
+
+  const refreshQuickActivityHistory = useCallback(async () => {
+    const snapshot = await window.stemSlicer?.getQuickActivityHistory()
+    if (!snapshot) return
+    setExtractionHistory((current) => {
+      const identities = new Set(current.map((entry) => `${entry.mode}:${entry.outputFolder}`))
+      return [...current, ...snapshot.extractions.filter((entry) => !identities.has(`${entry.mode}:${entry.outputFolder}`))]
+        .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+        .slice(0, 100)
+    })
+    setConvertHistory((current) => {
+      const identities = new Set(current.map((entry) => entry.artifact.path))
+      return [...current, ...snapshot.conversions.filter((entry) => !identities.has(entry.artifact.path))]
+        .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+        .slice(0, 100)
+    })
   }, [])
 
   const reportKeyIssue = useCallback(async (request: ReportKeyIssueRequest) => {
@@ -5563,7 +5785,8 @@ export function App() {
     void refreshLibrary()
     void refreshKeyIssues()
     void refreshCategoryCorrections()
-  }, [refreshCategoryCorrections, refreshKeyIssues, refreshLibrary])
+    void refreshQuickActivityHistory()
+  }, [refreshCategoryCorrections, refreshKeyIssues, refreshLibrary, refreshQuickActivityHistory])
 
   useEffect(() => {
     try {
@@ -5575,6 +5798,22 @@ export function App() {
 
   useEffect(() => {
     try {
+      window.localStorage.setItem(EXTRACTION_HISTORY_STORAGE_KEY, JSON.stringify(extractionHistory))
+    } catch {
+      // Completed files stay on disk even if renderer history cannot be persisted.
+    }
+  }, [extractionHistory])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(CONVERT_HISTORY_STORAGE_KEY, JSON.stringify(convertHistory))
+    } catch {
+      // Completed files stay on disk even if renderer history cannot be persisted.
+    }
+  }, [convertHistory])
+
+  useEffect(() => {
+    try {
       window.localStorage.setItem(GENERATION_SEQUENCE_STORAGE_KEY, String(generationSequence))
     } catch {
       // Rendered filenames still retain their generation number if local storage is unavailable.
@@ -5582,7 +5821,8 @@ export function App() {
   }, [generationSequence])
 
   useEffect(() => {
-    document.title = `${studioActive ? "Studio" : NAVIGATION.find((item) => item.id === activeView)?.label ?? "Slicer"} · Slicer`
+    const activeLabel = activeView === "profile" ? "Profile" : NAVIGATION.find((item) => item.id === activeView)?.label ?? "Slicer"
+    document.title = `${studioActive ? "Studio" : activeLabel} · Slicer`
     if (initialViewRef.current) {
       initialViewRef.current = false
       return
@@ -5632,6 +5872,7 @@ export function App() {
 
   const navigateToView = useCallback((view: ViewId) => {
     if (view === activeView) return
+    if (view !== "library") setStudioSource(null)
     setActiveView(view)
   }, [activeView])
 
@@ -5692,14 +5933,16 @@ export function App() {
       <AppSidebar activeView={activeView} collapsed={sidebarCollapsed} onNavigate={navigateToView} onToggle={() => setSidebarCollapsed((value) => !value)} />
       <div className="app-workspace">
         <main id="main-content" tabIndex={-1} ref={mainRef} className={cn(activeView === "generate" && "generate-main", activeView === "quick-tools" && "quick-tools-main", activeView === "stem-slicer" && "stem-slicer-main", studioActive && "studio-main")}>
-          <div hidden={activeView !== "stem-slicer"}><StemSlicerView /></div>
+          <div hidden={activeView !== "stem-slicer"}><StemSlicerView onExtractionCompleted={addExtractionHistory} /></div>
           <div hidden={activeView !== "generate"}><GenerateView library={library} layers={layers} setLayers={setLayers} currentGenerationResult={currentGenerationResult} setCurrentGenerationResult={setCurrentGenerationResult} onAddHistory={addHistory} onUpdateHistory={updateHistory} keyIssues={keyIssues} onReportKeyIssue={reportKeyIssue} onSetKeyIssueActive={updateKeyIssueState} onLibraryRefresh={refreshLibrary} onCategoryCorrectionsRefresh={refreshCategoryCorrections} nextGenerationNumber={nextGenerationNumber} playback={playback} /></div>
-          <div hidden={activeView !== "quick-tools"}><QuickToolsView previewLayers={quickPreviewLayers} setPreviewLayers={setQuickPreviewLayers} playback={playback} onActiveToolChange={setActiveQuickTool} /></div>
-          <div hidden={activeView !== "history"} className={cn("history-workspace", studioActive && "is-studio")}>
-            <div hidden={studioActive}><HistoryView history={history} keyIssues={keyIssues} categoryCorrections={categoryCorrections} playback={playback} onReopen={reopenHistory} onTrashSelected={trashHistoryEntries} onSetKeyIssueActive={updateKeyIssueState} onDismissKeyIssue={dismissKeyIssue} onEditSourceLoop={openSourceLoopStudio} onTogglePlayback={toggleHistoryPlayback} /></div>
+          <div hidden={activeView !== "quick-tools"}><QuickToolsView previewLayers={quickPreviewLayers} setPreviewLayers={setQuickPreviewLayers} playback={playback} onActiveToolChange={setActiveQuickTool} onExtractionCompleted={addExtractionHistory} onConvertCompleted={addConvertHistory} /></div>
+          <div hidden={activeView !== "history"}><HistoryView history={history} extractionHistory={extractionHistory} convertHistory={convertHistory} playback={playback} onReopen={reopenHistory} onTrashSelected={trashHistoryEntries} onTogglePlayback={toggleHistoryPlayback} /></div>
+          <div hidden={activeView !== "library"} className={cn("library-workspace", studioActive && "is-studio")}>
+            <div hidden={studioActive}><LibraryView active={activeView === "library" && !studioActive} library={library} keyIssues={keyIssues} categoryCorrections={categoryCorrections} onSetKeyIssueActive={updateKeyIssueState} onDismissKeyIssue={dismissKeyIssue} onEditSourceLoop={openSourceLoopStudio} /></div>
             {studioSource ? <SourceLoopStudio active={studioActive} {...studioSource} onSetKeyIssueActive={updateKeyIssueState} onSaved={async () => { await refreshLibrary(); await refreshCategoryCorrections() }} onClose={closeSourceLoopStudio} /> : null}
           </div>
-          <div hidden={activeView !== "cloud"}><CloudView library={library} /></div>
+          <div hidden={activeView !== "cloud"}>{activeView === "cloud" ? <CloudView library={library} section="producers" /> : null}</div>
+          <div hidden={activeView !== "profile"}>{activeView === "profile" ? <CloudView library={library} section="profile" /> : null}</div>
         </main>
         {!studioActive ? <GlobalPlayer layers={playerLayers} playback={playback} contextLabel={playbackContext === "history" ? "History generation" : playbackContext === "quick-extract" ? "Extracted stack" : "Generated stack"} displayName={playbackContext === "generate" ? currentGenerationDisplayName : historyPlaybackName} /> : null}
       </div>

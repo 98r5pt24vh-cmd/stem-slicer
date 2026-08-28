@@ -6,6 +6,7 @@ import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs"
 import { pathToFileURL } from "node:url"
 
 import { AudioEngineService } from "./main/audio-engine"
+import { readQuickActivityHistory } from "./main/activity-history"
 import { getSourceLoopEditor, listCategoryCorrections, saveSourceLoopEdit, setLayerCategory } from "./main/catalog-edits"
 import { CloudService } from "./main/cloud-service"
 import { dismissKeyIssueReport, listKeyIssueReports, reportKeyIssue, setKeyIssueActive } from "./main/key-feedback"
@@ -227,6 +228,7 @@ function registerIpc(): void {
     acceptedCacheAccess: "read-only" as const,
   }))
   ipcMain.handle("history:get-storage-usage", () => readGenerationStorageUsage(generatedOutputRoot))
+  ipcMain.handle("history:get-quick-activities", () => readQuickActivityHistory(path.join(homedir(), "Documents")))
   ipcMain.handle("library:get-overview", () =>
     readLibraryOverview(acceptedCachePath),
   )
