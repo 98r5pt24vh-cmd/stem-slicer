@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url"
 
 import { AudioEngineService } from "./main/audio-engine"
 import { getSourceLoopEditor, listCategoryCorrections, saveSourceLoopEdit, setLayerCategory } from "./main/catalog-edits"
+import { CloudService } from "./main/cloud-service"
 import { dismissKeyIssueReport, listKeyIssueReports, reportKeyIssue, setKeyIssueActive } from "./main/key-feedback"
 import { readLibraryOverview, readLibraryProducers, removeLibraryRoot } from "./main/library-cache"
 import { mediaMimeType, parseByteRange } from "./main/media-range"
@@ -16,6 +17,11 @@ import type {
   AudioJobKind,
   AudioJobRequest,
   AudioSelection,
+  CloudCredentialsRequest,
+  CloudProfileUpdateRequest,
+  CloudSignUpRequest,
+  ConfigureCloudRequest,
+  GenerateJobRequest,
   ReportKeyIssueRequest,
   SaveSourceLoopEditRequest,
   SetLayerCategoryRequest,
@@ -174,7 +180,8 @@ protocol.registerSchemesAsPrivileged([
   },
 ])
 
-const audioEngine = new AudioEngineService(app.getAppPath(), prototypeCachePath)
+const audioEngine = new AudioEngineService(app.getAppPath(), prototypeCachePath, process.resourcesPath, app.isPackaged)
+const cloudService = new CloudService(acceptedCachePath, prototypeCachePath)
 
 function createWindow(): void {
   const applicationIcon = createApplicationIcon()
@@ -256,10 +263,75 @@ function registerIpc(): void {
   )
   ipcMain.handle("migration:get-modules", () => migrationModules)
   ipcMain.handle("engine:get-status", () => audioEngine.status())
+  ipcMain.handle("cloud:get-state", () => cloudService.getState())
+  ipcMain.handle("cloud:configure", (_event: IpcMainInvokeEvent, request: ConfigureCloudRequest) => {
+    if (!request || typeof request.projectUrl !== "string" || typeof request.publishableKey !== "string") {
+      throw new Error("The Cloud project configuration is invalid.")
+    }
+    return cloudService.configure(request)
+  })
+  ipcMain.handle("cloud:sign-up", (_event: IpcMainInvokeEvent, request: CloudSignUpRequest) => {
+    if (!request || typeof request.email !== "string" || typeof request.password !== "string" || typeof request.handle !== "string" || typeof request.displayName !== "string") {
+      throw new Error("The Cloud account form is incomplete.")
+    }
+    return cloudService.signUp(request)
+  })
+  ipcMain.handle("cloud:sign-in", (_event: IpcMainInvokeEvent, request: CloudCredentialsRequest) => {
+    if (!request || typeof request.email !== "string" || typeof request.password !== "string") {
+      throw new Error("The Cloud sign-in form is incomplete.")
+    }
+    return cloudService.signIn(request)
+  })
+  ipcMain.handle("cloud:sign-in-test-account", (_event: IpcMainInvokeEvent, accountId: unknown) => {
+    if (typeof accountId !== "string") throw new Error("The alpha account is invalid.")
+    return cloudService.signInTestAccount(accountId)
+  })
+  ipcMain.handle("cloud:sign-out", () => cloudService.signOut())
+  ipcMain.handle("cloud:update-profile", (_event: IpcMainInvokeEvent, request: CloudProfileUpdateRequest) => {
+    if (
+      !request
+      || typeof request.handle !== "string"
+      || typeof request.displayName !== "string"
+      || typeof request.bio !== "string"
+      || typeof request.instagramHandle !== "string"
+      || !Array.isArray(request.aliases)
+      || request.aliases.some((alias) => typeof alias !== "string")
+      || typeof request.openToCollaborate !== "boolean"
+      || (request.avatarFilePath != null && typeof request.avatarFilePath !== "string")
+    ) {
+      throw new Error("The Cloud profile form is invalid.")
+    }
+    return cloudService.updateProfile(request)
+  })
+  ipcMain.handle("cloud:connect", (_event: IpcMainInvokeEvent, handle: unknown) => {
+    if (typeof handle !== "string") throw new Error("The producer handle is invalid.")
+    return cloudService.connect(handle)
+  })
+  ipcMain.handle("cloud:accept-connection", (_event: IpcMainInvokeEvent, connectionId: unknown) => {
+    if (typeof connectionId !== "string") throw new Error("The connection request is invalid.")
+    return cloudService.acceptConnection(connectionId)
+  })
+  ipcMain.handle("cloud:set-library-enabled", (_event: IpcMainInvokeEvent, libraryId: unknown, enabled: unknown) => {
+    if (typeof libraryId !== "string" || typeof enabled !== "boolean") {
+      throw new Error("The Cloud library selection is invalid.")
+    }
+    return cloudService.setLibraryEnabled(libraryId, enabled)
+  })
+  ipcMain.handle("cloud:publish-library", (event: IpcMainInvokeEvent, libraryRoot: unknown) => {
+    if (typeof libraryRoot !== "string") throw new Error("The local library path is invalid.")
+    const sender = event.sender
+    return cloudService.publishLibrary(libraryRoot, (payload) => {
+      if (!sender.isDestroyed()) sender.send("cloud:publish-event", payload)
+    })
+  })
   ipcMain.handle(
     "audio-job:start",
-    (event: IpcMainInvokeEvent, kind: AudioJobKind, request: AudioJobRequest) =>
-      audioEngine.startJob(kind, request, event.sender),
+    async (event: IpcMainInvokeEvent, kind: AudioJobKind, request: AudioJobRequest) => {
+      const payload = kind === "generate"
+        ? await cloudService.enrichGenerateRequest(request as GenerateJobRequest)
+        : request
+      return audioEngine.startJob(kind, payload as AudioJobRequest, event.sender)
+    },
   )
   ipcMain.handle("audio-job:cancel", (_event: IpcMainInvokeEvent, jobId: unknown) => {
     if (typeof jobId === "string") audioEngine.cancelJob(jobId)
@@ -292,6 +364,12 @@ function registerIpc(): void {
     })
     if (result.canceled || !result.filePaths[0]) return { canceled: true, paths: [] }
     return { canceled: false, paths: [importProfileImage(result.filePaths[0])] }
+  })
+  ipcMain.handle("shell:open-external", async (_event: IpcMainInvokeEvent, value: unknown) => {
+    if (typeof value !== "string") throw new Error("The external link is invalid.")
+    const target = new URL(value)
+    if (target.protocol !== "https:") throw new Error("Only secure external links can be opened.")
+    await shell.openExternal(target.toString())
   })
   ipcMain.handle("shell:reveal-path", (_event: IpcMainInvokeEvent, targetPath: unknown) => {
     if (typeof targetPath !== "string" || targetPath.length === 0) return

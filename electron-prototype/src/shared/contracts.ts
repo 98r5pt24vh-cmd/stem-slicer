@@ -23,6 +23,97 @@ export interface GenerationStorageUsage {
   files: number
 }
 
+export interface CloudProfile {
+  id: string
+  handle: string
+  displayName: string
+  avatarPath?: string
+  avatarUrl?: string
+  bio?: string
+  instagramHandle?: string
+  aliases: string[]
+  openToCollaborate: boolean
+}
+
+export interface CloudConnection {
+  id: string
+  status: "pending" | "accepted" | "declined"
+  direction: "incoming" | "outgoing"
+  profile: CloudProfile
+  createdAt: string
+}
+
+export interface CloudLibrarySummary {
+  id: string
+  name: string
+  owner: CloudProfile
+  status: "uploading" | "ready" | "failed" | "archived"
+  layerCount: number
+  loopCount: number
+  totalBytes: number
+  own: boolean
+  enabledForGenerate: boolean
+  updatedAt: string
+}
+
+export interface CloudTestAccount {
+  id: string
+  handle: string
+  displayName: string
+}
+
+export interface CloudState {
+  configured: boolean
+  projectUrl: string
+  authenticated: boolean
+  userEmail?: string
+  profile?: CloudProfile
+  connections: CloudConnection[]
+  libraries: CloudLibrarySummary[]
+  testAccounts?: CloudTestAccount[]
+  message?: string
+}
+
+export interface ConfigureCloudRequest {
+  projectUrl: string
+  publishableKey: string
+}
+
+export interface CloudCredentialsRequest {
+  email: string
+  password: string
+}
+
+export interface CloudSignUpRequest extends CloudCredentialsRequest {
+  handle: string
+  displayName: string
+}
+
+export interface CloudProfileUpdateRequest {
+  handle: string
+  displayName: string
+  bio: string
+  instagramHandle: string
+  aliases: string[]
+  openToCollaborate: boolean
+  avatarFilePath?: string
+}
+
+export interface CloudPublishStart {
+  jobId: string
+}
+
+export interface CloudPublishEvent {
+  jobId: string
+  type: "progress" | "completed" | "failed"
+  message: string
+  current?: number
+  total?: number
+  percent?: number
+  library?: CloudLibrarySummary
+  error?: string
+}
+
 export interface LibraryRootSummary {
   path: string
   name: string
@@ -53,6 +144,15 @@ export interface LibraryProducerSummary {
   loopCountsByCreditCount: Record<string, number>
   layerCountsByCreditCount: Record<string, number>
   libraryRoots: string[]
+  source?: "local" | "cloud" | "mixed"
+  localLayerCount?: number
+  localLoopCount?: number
+  localLoopCountsByCreditCount?: Record<string, number>
+  localLayerCountsByCreditCount?: Record<string, number>
+  cloudLayerCount?: number
+  cloudLoopCount?: number
+  cloudLoopCountsByCreditCount?: Record<string, number>
+  cloudLayerCountsByCreditCount?: Record<string, number>
 }
 
 export interface MigrationModule {
@@ -122,6 +222,7 @@ export interface GenerateJobRequest {
   seed: number
   generationNumber: number
   bars?: number
+  sourcePool?: "mixed" | "cloud-only" | "local-only"
   allowedProducers?: string[]
   allowedCreditCounts?: number[]
   requiredProducers?: string[]
@@ -175,6 +276,7 @@ export interface AudioArtifact {
   sourceLoopName?: string
   producers?: string[]
   libraryRoot?: string
+  sourceOrigin?: "local" | "cloud"
   sourceDetectedKey?: string
   identity?: string
   sourceKeyRank?: 1 | 2
@@ -388,9 +490,22 @@ export interface StemSlicerDesktopApi {
   setLayerCategory: (request: SetLayerCategoryRequest) => Promise<SourceLoopEditorLayer>
   getMigrationModules: () => Promise<MigrationModule[]>
   getEngineStatus: () => Promise<EngineStatus>
+  getCloudState: () => Promise<CloudState>
+  configureCloud: (request: ConfigureCloudRequest) => Promise<CloudState>
+  cloudSignUp: (request: CloudSignUpRequest) => Promise<CloudState>
+  cloudSignIn: (request: CloudCredentialsRequest) => Promise<CloudState>
+  cloudSignInTestAccount: (accountId: string) => Promise<CloudState>
+  cloudSignOut: () => Promise<CloudState>
+  cloudUpdateProfile: (request: CloudProfileUpdateRequest) => Promise<CloudState>
+  cloudConnect: (handle: string) => Promise<CloudState>
+  cloudAcceptConnection: (connectionId: string) => Promise<CloudState>
+  cloudPublishLibrary: (libraryRoot: string) => Promise<CloudPublishStart>
+  cloudSetLibraryEnabled: (libraryId: string, enabled: boolean) => Promise<CloudState>
+  onCloudPublishEvent: (listener: (event: CloudPublishEvent) => void) => () => void
   pickLibraryFolder: () => Promise<AudioSelection>
   pickAudioFiles: () => Promise<AudioSelection>
   pickImageFile: () => Promise<AudioSelection>
+  openExternalUrl: (url: string) => Promise<void>
   startAudioJob: (kind: AudioJobKind, request: AudioJobRequest) => Promise<AudioJobStart>
   cancelAudioJob: (jobId: string) => Promise<void>
   onAudioJobEvent: (listener: (event: AudioJobEvent) => void) => () => void

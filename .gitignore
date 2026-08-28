@@ -44,6 +44,8 @@ validation-output/
 # Electron development prototype
 electron-prototype/node_modules/
 electron-prototype/.vite/
+electron-prototype/.packaging/
+electron-prototype/out/
 electron-prototype/coverage/
 electron-prototype/test-results/
 electron-prototype/playwright-report/

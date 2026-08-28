@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from "electron"
 
-import type { AudioJobEvent, StemSlicerDesktopApi } from "./shared/contracts"
+import type { AudioJobEvent, CloudPublishEvent, StemSlicerDesktopApi } from "./shared/contracts"
 
 const api: StemSlicerDesktopApi = {
   getEnvironment: () => ipcRenderer.invoke("app:get-environment"),
@@ -18,9 +18,26 @@ const api: StemSlicerDesktopApi = {
   setLayerCategory: (request) => ipcRenderer.invoke("source-loop:set-layer-category", request),
   getMigrationModules: () => ipcRenderer.invoke("migration:get-modules"),
   getEngineStatus: () => ipcRenderer.invoke("engine:get-status"),
+  getCloudState: () => ipcRenderer.invoke("cloud:get-state"),
+  configureCloud: (request) => ipcRenderer.invoke("cloud:configure", request),
+  cloudSignUp: (request) => ipcRenderer.invoke("cloud:sign-up", request),
+  cloudSignIn: (request) => ipcRenderer.invoke("cloud:sign-in", request),
+  cloudSignInTestAccount: (accountId) => ipcRenderer.invoke("cloud:sign-in-test-account", accountId),
+  cloudSignOut: () => ipcRenderer.invoke("cloud:sign-out"),
+  cloudUpdateProfile: (request) => ipcRenderer.invoke("cloud:update-profile", request),
+  cloudConnect: (handle) => ipcRenderer.invoke("cloud:connect", handle),
+  cloudAcceptConnection: (connectionId) => ipcRenderer.invoke("cloud:accept-connection", connectionId),
+  cloudPublishLibrary: (libraryRoot) => ipcRenderer.invoke("cloud:publish-library", libraryRoot),
+  cloudSetLibraryEnabled: (libraryId, enabled) => ipcRenderer.invoke("cloud:set-library-enabled", libraryId, enabled),
+  onCloudPublishEvent: (listener) => {
+    const handler = (_event: IpcRendererEvent, payload: CloudPublishEvent) => listener(payload)
+    ipcRenderer.on("cloud:publish-event", handler)
+    return () => ipcRenderer.removeListener("cloud:publish-event", handler)
+  },
   pickLibraryFolder: () => ipcRenderer.invoke("dialog:pick-library-folder"),
   pickAudioFiles: () => ipcRenderer.invoke("dialog:pick-audio-files"),
   pickImageFile: () => ipcRenderer.invoke("dialog:pick-image-file"),
+  openExternalUrl: (url) => ipcRenderer.invoke("shell:open-external", url),
   startAudioJob: (kind, request) => ipcRenderer.invoke("audio-job:start", kind, request),
   cancelAudioJob: (jobId) => ipcRenderer.invoke("audio-job:cancel", jobId),
   onAudioJobEvent: (listener) => {

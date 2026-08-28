@@ -7,7 +7,9 @@ from array import array
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import redirect_stdout
 from dataclasses import asdict, replace
+from functools import lru_cache
 from itertools import combinations
+import hashlib
 import json
 import math
 import os
@@ -23,6 +25,8 @@ import tempfile
 import threading
 import time
 import traceback
+from urllib.parse import quote
+from urllib.request import Request, urlopen
 import uuid
 
 
@@ -41,6 +45,7 @@ _analyzer = None
 _classifier = None
 _midi_converter = None
 _generation_sessions: dict[str, dict] = {}
+_generation_catalog_cache: dict[tuple[str, tuple[str, ...], tuple[str, ...]], dict] = {}
 _PRIMARY_PRODUCER = "+NRGY"
 _COMPACT_KEY = re.compile(r"^[A-G](?:#|b|♯|♭)?(?:(?:m|min|minor|maj|major))?$", re.IGNORECASE)
 _MODE_TOKEN = re.compile(r"^(?:m|min|minor|maj|major)$", re.IGNORECASE)
@@ -74,6 +79,7 @@ def _unique_producers(values, *, include_primary: bool = False) -> list[str]:
     return credits
 
 
+@lru_cache(maxsize=65_536)
 def _source_provenance(filename: str) -> dict[str, object]:
     stem = Path(str(filename or "")).stem
     source = re.sub(r"(?:[_\s-])(?:layer\s*)?l?\d+$", "", stem, flags=re.IGNORECASE).strip()
@@ -108,6 +114,11 @@ def _source_provenance(filename: str) -> dict[str, object]:
 
 
 def _record_producers(record: dict) -> list[str]:
+    explicit = record.get("producers")
+    if isinstance(explicit, (list, tuple)):
+        producers = _unique_producers(explicit)
+        if producers:
+            return producers
     filename = str(record.get("filename") or "").strip()
     if not filename:
         filename = Path(str(record.get("path") or "")).name
@@ -141,12 +152,116 @@ def _filter_records_by_allowed_producers(
     return records
 
 
+def _records_for_source_pool(
+    local_records: list[dict],
+    cloud_records: list[dict],
+    source_pool: str,
+) -> tuple[list[dict], list[dict]]:
+    if source_pool == "cloud-only":
+        return list(cloud_records), list(cloud_records)
+    if source_pool == "local-only":
+        return list(local_records), []
+    return [*local_records, *cloud_records], list(cloud_records)
+
+
+def _catalog_snapshot(database: Path) -> tuple[tuple[int, int], tuple[int, int]]:
+    """Track both the SQLite file and its WAL without opening them for writes."""
+
+    def signature(path: Path) -> tuple[int, int]:
+        try:
+            stat = path.stat()
+        except FileNotFoundError:
+            return (0, 0)
+        return (int(stat.st_mtime_ns), int(stat.st_size))
+
+    return signature(database), signature(database.with_name(f"{database.name}-wal"))
+
+
+def _invalidate_generation_catalog(database: Path) -> None:
+    database_key = str(database)
+    for key in tuple(_generation_catalog_cache):
+        if key[0] == database_key:
+            _generation_catalog_cache.pop(key, None)
+
+
+def _load_generation_catalog(
+    database: Path,
+    roots: list[str],
+    candidate_type,
+    *,
+    allowed_producers=(),
+):
+    """Load and validate one catalogue snapshot once per persistent bridge.
+
+    Generate used to deserialize and stat every indexed path on every click.
+    SQLite/WAL changes invalidate this cache; selected files are checked again
+    immediately before rendering to cover external file removals.
+    """
+
+    allowed_key = tuple(
+        sorted(producer.casefold() for producer in _unique_producers(allowed_producers or ()))
+    )
+    cache_key = (str(database), tuple(sorted(roots)), allowed_key)
+    snapshot = _catalog_snapshot(database)
+    cached = _generation_catalog_cache.get(cache_key)
+    if cached is not None and cached["snapshot"] == snapshot:
+        return cached, True
+
+    with sqlite3.connect(f"file:{database}?mode=ro", uri=True) as connection:
+        connection.row_factory = sqlite3.Row
+        columns = {
+            str(row["name"])
+            for row in connection.execute("PRAGMA table_info(layer_cache)")
+        }
+        conditions: list[str] = []
+        parameters: list[str] = []
+        if "manual_excluded" in columns:
+            conditions.append("COALESCE(manual_excluded, 0) = 0")
+        if roots:
+            conditions.append(f"library_root IN ({','.join('?' for _ in roots)})")
+            parameters.extend(roots)
+        query = "SELECT * FROM layer_cache"
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+        records = [dict(row) for row in connection.execute(query, parameters)]
+    records = _filter_records_by_allowed_producers(
+        records,
+        allowed_producers=allowed_producers,
+    )
+
+    candidates_by_path = {}
+    for record in records:
+        raw_path = str(record.get("path") or "")
+        if not raw_path or not Path(raw_path).is_file():
+            continue
+        try:
+            candidates_by_path[raw_path] = candidate_type.from_record(record)
+        except Exception:
+            continue
+    source_metadata_by_path = {
+        str(Path(str(record.get("path") or "")).expanduser().resolve()): record
+        for record in records
+        if record.get("path")
+    }
+    entry = {
+        "snapshot": _catalog_snapshot(database),
+        "records": records,
+        "candidates_by_path": candidates_by_path,
+        "source_metadata_by_path": source_metadata_by_path,
+    }
+    _invalidate_generation_catalog(database)
+    _generation_catalog_cache[cache_key] = entry
+    return entry, False
+
+
 def _normalise_allowed_credit_counts(payload: dict) -> list[int]:
     counts = sorted({
         int(value)
         for value in payload.get("allowedCreditCounts") or ()
-        if str(value).strip().isdigit() and 1 <= int(value) <= 3
+        if str(value).strip().isdigit() and 0 <= int(value) <= 3
     })
+    if 0 in counts:
+        return [0]
     if counts:
         return counts
     legacy_count = max(0, int(payload.get("maxProducerCount") or 0))
@@ -155,11 +270,19 @@ def _normalise_allowed_credit_counts(payload: dict) -> list[int]:
     return [1, 2]
 
 
-def _candidate_external_producer_keys(candidate) -> frozenset[str]:
+def _candidate_producers(candidate, producer_overrides=None) -> list[str]:
+    overrides = producer_overrides or {}
+    explicit = overrides.get(candidate.identity)
+    if explicit:
+        return _unique_producers(explicit)
+    return list(_source_provenance(candidate.path.name)["producers"])
+
+
+def _candidate_external_producer_keys(candidate, producer_overrides=None) -> frozenset[str]:
     return frozenset(
         producer.casefold()
         for producer in _external_producers(
-            _source_provenance(candidate.path.name)["producers"]
+            _candidate_producers(candidate, producer_overrides)
         )
     )
 
@@ -171,6 +294,7 @@ def _collaborator_pool_specs(
     required_producers,
     locked_identities,
     seed: int,
+    producer_overrides=None,
 ):
     """Build final-credit groups while retaining solo layers inside mixed pools."""
 
@@ -178,7 +302,7 @@ def _collaborator_pool_specs(
     external_by_identity = {}
     for candidate in candidates:
         external_names = _external_producers(
-            _source_provenance(candidate.path.name)["producers"]
+            _candidate_producers(candidate, producer_overrides)
         )
         external_keys = frozenset(producer.casefold() for producer in external_names)
         external_by_identity[candidate.identity] = external_keys
@@ -207,6 +331,9 @@ def _collaborator_pool_specs(
     rng.shuffle(mode_order)
     specs = []
     for credit_count in mode_order:
+        if credit_count == 0:
+            specs.append((credit_count, fixed_keys, tuple(candidates), required_keys, display_names))
+            continue
         external_slots = credit_count - 1
         if len(fixed_keys) > external_slots:
             continue
@@ -230,9 +357,9 @@ def _collaborator_pool_specs(
     return specs
 
 
-def _selection_collaborator_state(plan, required_keys: set[str]):
+def _selection_collaborator_state(plan, required_keys: set[str], producer_overrides=None):
     external_by_selection = [
-        _candidate_external_producer_keys(selection.candidate)
+        _candidate_external_producer_keys(selection.candidate, producer_overrides)
         for selection in plan.selections
     ]
     present = set().union(*external_by_selection) if external_by_selection else set()
@@ -251,6 +378,7 @@ def _select_constrained_collaborator_plan(
     required_keys: set[str],
     required_contribution_percent: int,
     select_generation,
+    producer_overrides=None,
 ):
     """Select normally, then replace unlocked slots until credit rules match."""
 
@@ -272,6 +400,7 @@ def _select_constrained_collaborator_plan(
         present, required_layer_count = _selection_collaborator_state(
             candidate_plan,
             required_keys,
+            producer_overrides,
         )
         missing_count = len(target_external_keys - present)
         share_distance = (
@@ -288,25 +417,29 @@ def _select_constrained_collaborator_plan(
         current_score = score(plan)
         if current_score == (0, 0):
             return replace(plan, request=request)
-        present, current_required_layers = _selection_collaborator_state(plan, required_keys)
+        present, current_required_layers = _selection_collaborator_state(
+            plan,
+            required_keys,
+            producer_overrides,
+        )
         missing = target_external_keys - present
         if missing:
             target_candidates = tuple(
                 candidate
                 for candidate in candidates
-                if _candidate_external_producer_keys(candidate) & missing
+                if _candidate_external_producer_keys(candidate, producer_overrides) & missing
             )
         elif current_required_layers < required_layer_target:
             target_candidates = tuple(
                 candidate
                 for candidate in candidates
-                if _candidate_external_producer_keys(candidate) & required_keys
+                if _candidate_external_producer_keys(candidate, producer_overrides) & required_keys
             )
         else:
             target_candidates = tuple(
                 candidate
                 for candidate in candidates
-                if not (_candidate_external_producer_keys(candidate) & required_keys)
+                if not (_candidate_external_producer_keys(candidate, producer_overrides) & required_keys)
             )
 
         best_plan = None
@@ -348,12 +481,12 @@ def _select_constrained_collaborator_plan(
     )
 
 
-def _generation_producers(selections) -> list[str]:
+def _generation_producers(selections, producer_overrides=None) -> list[str]:
     return _unique_producers(
         (
             producer
             for selection in selections
-            for producer in _source_provenance(selection.candidate.path.name)["producers"]
+            for producer in _candidate_producers(selection.candidate, producer_overrides)
         ),
         include_primary=True,
     )
@@ -1193,6 +1326,12 @@ def generation_artifacts(
         source_path = str(selection.candidate.path.resolve())
         source_metadata = metadata_by_path.get(source_path, {})
         provenance = _source_provenance(selection.candidate.path.name)
+        explicit_producers = source_metadata.get("producers")
+        if isinstance(explicit_producers, (list, tuple)):
+            producers = _unique_producers(explicit_producers) or list(provenance["producers"])
+        else:
+            producers = list(provenance["producers"])
+        source_loop_name = str(source_metadata.get("source_loop_name") or provenance["loop_name"])
         alternate = selection.candidate.alternate_scanned_key
         alternate_mode = selection.candidate.alternate_scanned_mode or ""
         detected_key = selection.candidate.scanned_key or selection.candidate.source_key
@@ -1216,9 +1355,10 @@ def generation_artifacts(
                 "identity": selection.candidate.identity,
                 "sourceFile": selection.candidate.path.name,
                 "sourceLoopId": selection.candidate.source_loop_id,
-                "sourceLoopName": provenance["loop_name"],
-                "producers": provenance["producers"],
+                "sourceLoopName": source_loop_name,
+                "producers": producers,
                 "libraryRoot": source_metadata.get("library_root"),
+                "sourceOrigin": _source_origin(source_metadata),
                 "sourceDetectedKey": " ".join(
                     item for item in (detected_key, detected_mode) if item
                 ),
@@ -1237,6 +1377,142 @@ def generation_artifacts(
     return artifacts
 
 
+def _source_origin(source_metadata: dict) -> str:
+    library_root = str(source_metadata.get("library_root") or "")
+    return (
+        "cloud"
+        if source_metadata.get("cloud_object_path")
+        or source_metadata.get("cloud_layer_id")
+        or library_root.startswith("cloud://")
+        else "local"
+    )
+
+
+def _annotate_generation_manifest_origins(
+    manifest_path: Path,
+    source_metadata_by_path: dict[str, dict],
+) -> None:
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        layers = manifest.get("layers")
+        if not isinstance(layers, list):
+            return
+        for layer in layers:
+            if not isinstance(layer, dict):
+                continue
+            source_path = str(layer.get("source_path") or "")
+            if not source_path:
+                continue
+            metadata = source_metadata_by_path.get(str(Path(source_path).expanduser().resolve()), {})
+            layer["source_origin"] = _source_origin(metadata)
+            if metadata.get("cloud_layer_id"):
+                layer["cloud_layer_id"] = metadata["cloud_layer_id"]
+            if metadata.get("cloud_owner_id"):
+                layer["cloud_owner_id"] = metadata["cloud_owner_id"]
+        temporary = manifest_path.with_name(f".{manifest_path.name}.{uuid.uuid4().hex}.tmp")
+        temporary.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        os.replace(temporary, manifest_path)
+    except (OSError, TypeError, ValueError):
+        return
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _materialize_cloud_selections(
+    job_id: str,
+    selections,
+    source_metadata_by_path: dict[str, dict],
+    cloud_auth: dict,
+) -> None:
+    remote = []
+    for selection in selections:
+        destination = selection.candidate.path.expanduser().resolve()
+        record = source_metadata_by_path.get(str(destination), {})
+        object_path = str(record.get("cloud_object_path") or "").strip()
+        if object_path:
+            remote.append((selection, destination, record, object_path))
+    if not remote:
+        return
+
+    project_url = str(cloud_auth.get("projectUrl") or "").strip().rstrip("/")
+    publishable_key = str(cloud_auth.get("publishableKey") or "").strip()
+    access_token = str(cloud_auth.get("accessToken") or "").strip()
+    bucket = str(cloud_auth.get("bucket") or "cloud-layers").strip()
+    if not project_url.startswith(("https://", "http://localhost", "http://127.0.0.1")):
+        raise ValueError("The Cloud project URL is invalid.")
+    if not publishable_key or not access_token:
+        raise ValueError("The Cloud session expired before the selected layers could download.")
+
+    completed = 0
+    completed_lock = threading.Lock()
+
+    def download(item) -> None:
+        nonlocal completed
+        _selection, destination, record, object_path = item
+        expected_sha256 = str(record.get("sha256") or "").strip().lower()
+        expected_size = int(record.get("byte_size") or 0)
+        if destination.is_file():
+            size_matches = not expected_size or destination.stat().st_size == expected_size
+            if size_matches and (not expected_sha256 or _sha256_file(destination) == expected_sha256):
+                with completed_lock:
+                    completed += 1
+                    current = completed
+                progress_percent(
+                    job_id,
+                    f"Cloud layer {current}/{len(remote)} ready from local cache",
+                    12 + round((current / len(remote)) * 3),
+                    "cloud-download",
+                )
+                return
+
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        temporary = destination.with_name(f".{destination.name}.{uuid.uuid4().hex}.part")
+        url = (
+            f"{project_url}/storage/v1/object/authenticated/"
+            f"{quote(bucket, safe='')}/{quote(object_path, safe='/')}"
+        )
+        request = Request(
+            url,
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "apikey": publishable_key,
+            },
+        )
+        digest = hashlib.sha256()
+        byte_count = 0
+        with urlopen(request, timeout=90) as response, temporary.open("wb") as output:
+            for chunk in iter(lambda: response.read(1024 * 1024), b""):
+                output.write(chunk)
+                digest.update(chunk)
+                byte_count += len(chunk)
+        if expected_size and byte_count != expected_size:
+            raise ValueError(f"Cloud layer download is incomplete: {record.get('filename') or object_path}")
+        if expected_sha256 and digest.hexdigest() != expected_sha256:
+            raise ValueError(f"Cloud layer checksum mismatch: {record.get('filename') or object_path}")
+        os.replace(temporary, destination)
+        with completed_lock:
+            completed += 1
+            current = completed
+        progress_percent(
+            job_id,
+            f"Downloaded Cloud layer {current}/{len(remote)}",
+            12 + round((current / len(remote)) * 3),
+            "cloud-download",
+        )
+
+    progress_percent(job_id, f"Downloading {len(remote)} selected Cloud layers", 12, "cloud-download")
+    with ThreadPoolExecutor(max_workers=min(3, len(remote))) as executor:
+        futures = [executor.submit(download, item) for item in remote]
+        for future in as_completed(futures):
+            future.result()
+
+
 def generation(job_id: str, payload: dict) -> dict:
     from generation_policy import GenerationRequest, LayerCandidate, select_generation
     from generation_renderer import (
@@ -1251,23 +1527,28 @@ def generation(job_id: str, payload: dict) -> dict:
     if not database.is_file():
         raise ValueError("The Generate library cache is unavailable.")
     roots = [str(Path(item).expanduser().resolve()) for item in payload.get("libraryRoots") or []]
-    with sqlite3.connect(f"file:{database}?mode=ro", uri=True) as connection:
-        connection.row_factory = sqlite3.Row
-        columns = {
-            str(row["name"])
-            for row in connection.execute("PRAGMA table_info(layer_cache)")
-        }
-        conditions: list[str] = []
-        parameters: list[str] = []
-        if "manual_excluded" in columns:
-            conditions.append("COALESCE(manual_excluded, 0) = 0")
-        if roots:
-            conditions.append(f"library_root IN ({','.join('?' for _ in roots)})")
-            parameters.extend(roots)
-        query = "SELECT * FROM layer_cache"
-        if conditions:
-            query += " WHERE " + " AND ".join(conditions)
-        records = [dict(row) for row in connection.execute(query, parameters)]
+    catalog, catalog_cached = _load_generation_catalog(
+        database,
+        roots,
+        LayerCandidate,
+        allowed_producers=payload.get("allowedProducers"),
+    )
+    local_records = list(catalog["records"])
+    cloud_records = [
+        dict(record)
+        for record in payload.get("cloudLayers") or ()
+        if isinstance(record, dict)
+    ]
+    cloud_records = _filter_records_by_allowed_producers(
+        cloud_records,
+        allowed_producers=payload.get("allowedProducers"),
+    )
+    source_pool = str(payload.get("sourcePool") or "mixed")
+    records, cloud_records = _records_for_source_pool(
+        local_records,
+        cloud_records,
+        source_pool,
+    )
     excluded_source_loops = {
         (
             str(Path(str(item.get("libraryRoot") or "")).expanduser().resolve()),
@@ -1292,16 +1573,17 @@ def generation(job_id: str, payload: dict) -> dict:
                 eligible_records.append(record)
         records = eligible_records
     categories = tuple(str(item) for item in payload.get("categories") or ())
-    records = _filter_records_by_allowed_producers(
-        records,
-        allowed_producers=payload.get("allowedProducers"),
-    )
     if not records:
+        if source_pool == "cloud-only":
+            raise ValueError(
+                "Cloud only is active, but no enabled Cloud layer matches the current selection."
+            )
         raise ValueError("No indexed layer matches the current collaborator selection.")
     quarantine_label = f" · {quarantined_count} quarantined" if quarantined_count else ""
+    cache_label = " · warm cache" if catalog_cached else ""
     progress_percent(
         job_id,
-        f"Loaded {len(records)} allowed indexed layers{quarantine_label}",
+        f"Loaded {len(records)} allowed indexed layers{quarantine_label}{cache_label}",
         3,
         "selection",
     )
@@ -1315,21 +1597,30 @@ def generation(job_id: str, payload: dict) -> dict:
         locked_identities_by_slot=tuple(payload.get("lockedIdentitiesBySlot") or ()),
         excluded_identities=frozenset(str(item) for item in payload.get("excludedIdentities") or ()),
     )
-    candidates = []
-    skipped = 0
-    source_metadata_by_path = {
-        str(Path(str(record.get("path") or "")).expanduser().resolve()): record
-        for record in records
-        if record.get("path")
-    }
-    for record in records:
-        if not Path(str(record.get("path") or "")).is_file():
-            skipped += 1
+    candidates_by_path = dict(catalog["candidates_by_path"])
+    source_metadata_by_path = dict(catalog["source_metadata_by_path"])
+    for record in cloud_records:
+        raw_path = str(record.get("path") or "")
+        if not raw_path:
             continue
         try:
-            candidates.append(LayerCandidate.from_record(record))
+            candidate = LayerCandidate.from_record(record)
         except Exception:
-            skipped += 1
+            continue
+        candidates_by_path[raw_path] = candidate
+        source_metadata_by_path[str(Path(raw_path).expanduser().resolve())] = record
+    candidates = [
+        candidates_by_path[raw_path]
+        for record in records
+        if (raw_path := str(record.get("path") or "")) in candidates_by_path
+    ]
+    skipped = len(records) - len(candidates)
+    producer_overrides = {
+        candidate.identity: _record_producers(record)
+        for record in records
+        if (raw_path := str(record.get("path") or ""))
+        and (candidate := candidates_by_path.get(raw_path)) is not None
+    }
     if not candidates:
         raise ValueError("No scanned layer has enough BPM/key metadata to generate.")
     allowed_credit_counts = _normalise_allowed_credit_counts(payload)
@@ -1337,21 +1628,6 @@ def generation(job_id: str, payload: dict) -> dict:
         100,
         max(10, int(payload.get("requiredContributionPercent") or 20)),
     )
-    pool_specs = _collaborator_pool_specs(
-        candidates,
-        allowed_credit_counts=allowed_credit_counts,
-        required_producers=payload.get("requiredProducers"),
-        locked_identities=request.locked_identities_by_slot,
-        seed=request.seed,
-    )
-    if not pool_specs:
-        modes = ", ".join(
-            "Solo" if count == 1 else "Duo" if count == 2 else "Trio"
-            for count in allowed_credit_counts
-        )
-        raise ValueError(
-            f"No collaborator group can satisfy the enabled final-loop modes ({modes})."
-        )
     progress_percent(
         job_id,
         f"Selecting compatible layers ({skipped} metadata rows skipped)",
@@ -1359,31 +1635,75 @@ def generation(job_id: str, payload: dict) -> dict:
         "selection",
     )
     selection_started = time.perf_counter()
-    plan = None
-    selected_external_producers: list[str] = []
-    last_selection_error: Exception | None = None
-    for _credit_count, external_group, candidate_pool, required_keys, display_names in pool_specs:
-        try:
-            plan = _select_constrained_collaborator_plan(
-                candidate_pool,
-                request,
-                target_external_keys=external_group,
-                required_keys=required_keys,
-                required_contribution_percent=required_contribution_percent,
-                select_generation=select_generation,
+
+    def select_plan(active_candidates):
+        pool_specs = _collaborator_pool_specs(
+            active_candidates,
+            allowed_credit_counts=allowed_credit_counts,
+            required_producers=payload.get("requiredProducers"),
+            locked_identities=request.locked_identities_by_slot,
+            seed=request.seed,
+            producer_overrides=producer_overrides,
+        )
+        if not pool_specs:
+            modes = ", ".join(
+                "Any" if count == 0 else "Solo" if count == 1 else "Duo" if count == 2 else "Trio"
+                for count in allowed_credit_counts
             )
-        except ValueError as exc:
-            last_selection_error = exc
-            continue
-        selected_external_producers = [
-            display_names.get(key, key)
-            for key in sorted(external_group)
-        ]
-        break
-    if plan is None:
+            raise ValueError(
+                f"No collaborator group can satisfy the enabled final-loop modes ({modes})."
+            )
+        last_selection_error: Exception | None = None
+        for _credit_count, external_group, candidate_pool, required_keys, display_names in pool_specs:
+            try:
+                selected_plan = _select_constrained_collaborator_plan(
+                    candidate_pool,
+                    request,
+                    target_external_keys=external_group,
+                    required_keys=required_keys,
+                    required_contribution_percent=required_contribution_percent,
+                    select_generation=select_generation,
+                    producer_overrides=producer_overrides,
+                )
+            except ValueError as exc:
+                last_selection_error = exc
+                continue
+            present, _required_layer_count = _selection_collaborator_state(
+                selected_plan,
+                required_keys,
+                producer_overrides,
+            )
+            selected_producers = [
+                display_names.get(key, key)
+                for key in sorted(present)
+            ]
+            return selected_plan, selected_producers
         if last_selection_error is not None:
             raise last_selection_error
         raise ValueError("No compatible collaborator combination could fill this recipe.")
+
+    plan, selected_external_producers = select_plan(candidates)
+    _materialize_cloud_selections(
+        job_id,
+        plan.selections,
+        source_metadata_by_path,
+        dict(payload.get("cloudAuth") or {}),
+    )
+    missing_selected_paths = {
+        selection.candidate.path
+        for selection in plan.selections
+        if not selection.candidate.path.is_file()
+    }
+    if missing_selected_paths:
+        # External deletion without a catalogue rescan is rare.  Preserve the
+        # previous behavior by doing one full refresh and selecting an existing
+        # alternative instead of failing during the audio transform.
+        _invalidate_generation_catalog(database)
+        candidates = [candidate for candidate in candidates if candidate.path.is_file()]
+        skipped = len(records) - len(candidates)
+        if not candidates:
+            raise ValueError("No indexed source file is still available on disk.")
+        plan, selected_external_producers = select_plan(candidates)
     selection_seconds = time.perf_counter() - selection_started
     collaborator_label = (
         f" · +NRGY + {' + '.join(selected_external_producers)}"
@@ -1397,25 +1717,29 @@ def generation(job_id: str, payload: dict) -> dict:
         "selection",
     )
     generation_number = max(1, int(payload.get("generationNumber") or 1))
-    producers = _generation_producers(plan.selections)
+    producers = _generation_producers(plan.selections, producer_overrides)
     display_name = _generation_display_name(
         generation_number,
         request.target_bpm,
         request.target_key,
         producers,
     )
-
     class ReportingBackend:
         def __init__(self) -> None:
             self.backend = BungeePCMBackend()
+            self.started = 0
             self.completed = 0
             self.total = len(plan.selections)
+            self.lock = threading.Lock()
 
         def transform(self, selection, *, target_bpm: float, sample_rate: int, channels: int):
-            start = 15 + round((self.completed / max(1, self.total)) * 48)
+            with self.lock:
+                self.started += 1
+                item_number = self.started
+                start = 15 + round(((item_number - 1) / max(1, self.total)) * 48)
             progress_percent(
                 job_id,
-                f"Rendering layer {self.completed + 1}/{self.total}: {selection.category}",
+                f"Rendering layer {item_number}/{self.total}: {selection.category}",
                 start,
                 "render",
             )
@@ -1425,11 +1749,13 @@ def generation(job_id: str, payload: dict) -> dict:
                 sample_rate=sample_rate,
                 channels=channels,
             )
-            self.completed += 1
-            completed = 15 + round((self.completed / max(1, self.total)) * 48)
+            with self.lock:
+                self.completed += 1
+                completed_count = self.completed
+                completed = 15 + round((completed_count / max(1, self.total)) * 48)
             progress_percent(
                 job_id,
-                f"Rendered layer {self.completed}/{self.total}: {selection.category}",
+                f"Rendered layer {completed_count}/{self.total}: {selection.category}",
                 completed,
                 "render",
             )
@@ -1438,14 +1764,19 @@ def generation(job_id: str, payload: dict) -> dict:
     class ReportingEncoder:
         def __init__(self) -> None:
             self.encoder = FFmpegMP3Encoder()
+            self.started = 0
             self.completed = 0
             self.total = len(plan.selections) + 1
+            self.lock = threading.Lock()
 
         def encode(self, destination, audio, *, sample_rate: int, bitrate_bps: int) -> None:
-            start = 64 + round((self.completed / max(1, self.total)) * 15)
+            with self.lock:
+                self.started += 1
+                item_number = self.started
+                start = 64 + round(((item_number - 1) / max(1, self.total)) * 15)
             progress_percent(
                 job_id,
-                f"Encoding audio {self.completed + 1}/{self.total}: {destination.name}",
+                f"Encoding audio {item_number}/{self.total}: {destination.name}",
                 start,
                 "encode",
             )
@@ -1455,11 +1786,13 @@ def generation(job_id: str, payload: dict) -> dict:
                 sample_rate=sample_rate,
                 bitrate_bps=bitrate_bps,
             )
-            self.completed += 1
-            completed = 64 + round((self.completed / max(1, self.total)) * 15)
+            with self.lock:
+                self.completed += 1
+                completed_count = self.completed
+                completed = 64 + round((completed_count / max(1, self.total)) * 15)
             progress_percent(
                 job_id,
-                f"Encoded audio {self.completed}/{self.total}: {destination.name}",
+                f"Encoded audio {completed_count}/{self.total}: {destination.name}",
                 completed,
                 "encode",
             )
@@ -1473,6 +1806,8 @@ def generation(job_id: str, payload: dict) -> dict:
         render_request,
         backend=ReportingBackend(),
         encoder=ReportingEncoder(),
+        transform_workers=max(1, min(4, int(payload.get("transformWorkers") or 4))),
+        encode_workers=max(1, min(4, int(payload.get("encodeWorkers") or 4))),
     )
     rendered = _rename_generation_master(rendered, display_name)
     artifacts = generation_artifacts(
@@ -1480,6 +1815,7 @@ def generation(job_id: str, payload: dict) -> dict:
         render_request,
         source_metadata_by_path=source_metadata_by_path,
     )
+    _annotate_generation_manifest_origins(rendered.manifest_path, source_metadata_by_path)
     add_midi(job_id, artifacts, "midi", start_percent=80, end_percent=99)
     midi_by_identity = {
         str(artifact.get("identity")): str(artifact["midiPath"])

@@ -13,6 +13,7 @@ import type {
   AudioJobStart,
   EngineStatus,
 } from "../shared/contracts"
+import { resolveRuntimePaths } from "./runtime-paths"
 
 interface BridgeMessage {
   id?: string
@@ -61,6 +62,7 @@ export class AudioEngineService {
   private readonly bridgePath: string
   private readonly sourceRoot: string
   private readonly pythonPath: string
+  private readonly runtimeBin: string
   private process: ChildProcessWithoutNullStreams | null = null
   private stdoutBuffer = ""
   private startupPromise: Promise<void> | null = null
@@ -70,16 +72,14 @@ export class AudioEngineService {
   private lastError = ""
   private readonly activeJobs = new Map<string, ActiveJob>()
 
-  constructor(appRoot: string, prototypeCachePath: string) {
+  constructor(appRoot: string, prototypeCachePath: string, resourcesPath = appRoot, isPackaged = false) {
     this.appRoot = appRoot
     this.prototypeCachePath = prototypeCachePath
-    this.bridgePath = path.join(appRoot, "python", "engine_bridge.py")
-    this.sourceRoot = process.env.STEM_SLICER_SOURCE_ROOT?.trim()
-      || path.resolve(appRoot, "../../../..", "Stem Slicer Repository")
-    const runtimePython = path.join(appRoot, ".runtime", "python", "bin", "python3.12")
-    const runtimeFallback = path.join(appRoot, ".runtime", "python", "bin", "python3")
-    this.pythonPath = process.env.STEM_SLICER_PYTHON?.trim()
-      || (existsSync(runtimePython) ? runtimePython : existsSync(runtimeFallback) ? runtimeFallback : "python3.12")
+    const runtime = resolveRuntimePaths({ appRoot, resourcesPath, isPackaged })
+    this.bridgePath = runtime.bridgePath
+    this.sourceRoot = runtime.sourceRoot
+    this.pythonPath = runtime.pythonPath
+    this.runtimeBin = runtime.runtimeBin
   }
 
   status(): EngineStatus {
@@ -143,14 +143,13 @@ export class AudioEngineService {
       this.resolveStartup = resolve
       this.rejectStartup = reject
     })
-    const runtimeBin = path.join(this.appRoot, ".runtime", "bin")
     const environment = {
       ...process.env,
       PYTHONUNBUFFERED: "1",
       PYTHONDONTWRITEBYTECODE: "1",
       STEM_SLICER_SOURCE_ROOT: this.sourceRoot,
       STEM_SLICER_DIAGNOSTICS_DIR: path.join(this.prototypeCachePath, "diagnostics"),
-      PATH: `${runtimeBin}${path.delimiter}${process.env.PATH || ""}`,
+      PATH: `${this.runtimeBin}${path.delimiter}${process.env.PATH || ""}`,
     }
     const child = spawn(this.pythonPath, ["-u", this.bridgePath], {
       cwd: this.appRoot,

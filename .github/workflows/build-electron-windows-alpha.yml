@@ -1,0 +1,206 @@
+name: Build Slicer Electron Windows Cloud alpha
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-electron-windows-alpha:
+    runs-on: windows-2025
+    timeout-minutes: 240
+
+    env:
+      PYTHONUTF8: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      TOKENIZERS_PARALLELISM: "false"
+      SLICER_PACKAGE_RUNTIME: "1"
+
+    steps:
+      - name: Check out the recorded revision
+        uses: actions/checkout@v7
+
+      - name: Record and verify the clean revision
+        shell: pwsh
+        run: |
+          if (-not (git diff --quiet)) { throw "The checkout is not clean." }
+          git rev-parse HEAD | Set-Content electron-prototype/build-revision.txt
+
+      - name: Set up Node.js 24 and pnpm 11.19.0
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - uses: pnpm/action-setup@v6
+        with:
+          version: "11.19.0"
+
+      - name: Set up official CPython 3.12.10 x64
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12.10"
+          architecture: "x64"
+          check-latest: false
+
+      - name: Verify the Windows runtime
+        run: >-
+          python -c "import platform, sys;
+          assert sys.version_info[:3] == (3, 12, 10), sys.version;
+          assert platform.architecture()[0] == '64bit', platform.architecture()"
+
+      - name: Install Electron and test dependencies
+        working-directory: electron-prototype
+        run: pnpm install --frozen-lockfile
+
+      - name: Run Electron checks
+        working-directory: electron-prototype
+        run: |
+          pnpm run typecheck
+          pnpm run lint
+          pnpm test
+
+      - name: Install the headless engine runtime
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.5.1 torchaudio==2.5.1
+          Get-Content electron-prototype/python/requirements-runtime.txt |
+            Where-Object { $_ -notmatch '^\s*(torch|torchaudio)==' } |
+            Set-Content electron-prototype/python/requirements-windows-alpha.txt
+          python -m pip install -r electron-prototype/python/requirements-windows-alpha.txt
+          python -m pip check
+
+      - name: Validate complete Quick Extract MIDI
+        env:
+          QT_QPA_PLATFORM: windows
+          STEM_SLICER_DISABLE_ENGINE_AUTOSTART: "1"
+        run: >-
+          python scripts/diagnose_midi_startup.py
+          --source-root .
+          --mode quick-extract-midi
+          --timeout 30
+          --require-ready
+
+      - name: Build the validated OpenKeyScan analyzer
+        shell: pwsh
+        run: |
+          python -m venv analyzer/.venv-build
+          & "analyzer/.venv-build/Scripts/python.exe" -m pip install --upgrade pip
+          & "analyzer/.venv-build/Scripts/python.exe" -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.2.2+cpu torchaudio==2.2.2+cpu
+          & "analyzer/.venv-build/Scripts/python.exe" -m pip install -r analyzer/requirements-windows.txt
+          & "analyzer/.venv-build/Scripts/python.exe" -m pip install pyinstaller==6.21.0
+          & "analyzer/.venv-build/Scripts/python.exe" scripts/patch_openkeyscan_spec.py analyzer/openkeyscan_analyzer.spec
+          Push-Location analyzer
+          & ".venv-build/Scripts/python.exe" -m PyInstaller --clean --noconfirm openkeyscan_analyzer.spec
+          Pop-Location
+          New-Item -ItemType Directory -Force vendor-windows | Out-Null
+          Copy-Item -Recurse -Force analyzer/dist/openkeyscan-analyzer vendor-windows/openkeyscan-analyzer
+
+      - name: Set up MinGW and build pinned Bungee
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            git
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-ninja
+
+      - name: Fetch the pinned Bungee source
+        shell: pwsh
+        run: |
+          git init bungee-source
+          Push-Location bungee-source
+          git remote add origin https://github.com/bungee-audio-stretch/bungee.git
+          git fetch --depth 1 origin 746833f68a574d997ec50443e7cfd2d37b026302
+          git checkout --detach FETCH_HEAD
+          git submodule update --init --recursive
+          git apply ../patches/bungee-waveformatextensible.patch
+          if ((git rev-parse HEAD).Trim() -ne "746833f68a574d997ec50443e7cfd2d37b026302") { throw "Unexpected Bungee revision." }
+          Pop-Location
+
+      - name: Build static Bungee
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          cd bungee-source
+          cmake --preset windows-x86_64 -B ../bungee-build -DBUNGEE_BUILD_SHARED_LIBRARY=OFF -DBUNGEE_VERSION=2.4.24
+          cmake --build ../bungee-build --target bungee_executable --parallel 2
+          cd ..
+          mkdir -p bin
+          cp bungee-build/bungee.exe bin/bungee.exe
+          ./bin/bungee.exe --help
+
+      - name: Download and verify pinned FFmpeg
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force vendor-windows/ffmpeg-bin | Out-Null
+          Invoke-WebRequest -Uri "https://github.com/descriptinc/ffmpeg-ffprobe-static/releases/download/b6.1.2-rc.1/ffmpeg-win32-x64" -OutFile "vendor-windows/ffmpeg-bin/ffmpeg.exe"
+          $expected = "4b3a7a7c41a4064a8738536da6a304371c1fdc567c599ccb768bebd49ccdb9fb"
+          $actual = (Get-FileHash "vendor-windows/ffmpeg-bin/ffmpeg.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) { throw "Unexpected FFmpeg SHA-256: $actual" }
+          Copy-Item vendor-windows/ffmpeg-bin/ffmpeg.exe vendor-windows/ffmpeg-bin/ffprobe.exe
+
+      - name: Fetch and verify the pinned offline MERT payload
+        run: python scripts/fetch_mert_payload.py
+
+      - name: Assemble Electron sidecar resources
+        shell: pwsh
+        run: |
+          $packaging = "electron-prototype/.packaging"
+          $engine = "$packaging/engine"
+          $runtime = "$packaging/.runtime/python"
+          $bridge = "$packaging/python"
+          New-Item -ItemType Directory -Force $engine, $runtime, $bridge | Out-Null
+          Get-ChildItem -Path . -Filter *.py -File | Copy-Item -Destination $engine
+          foreach ($directory in @("analyzer", "assets", "basic_pitch", "bin", "licenses", "models", "vendor-windows")) {
+            Copy-Item -Recurse -Force $directory $engine
+          }
+          Copy-Item THIRD_PARTY_NOTICES.md $engine
+          Copy-Item electron-prototype/python/engine_bridge.py $bridge
+          $pythonRoot = python -c "import sys; print(sys.base_prefix)"
+          Copy-Item -Recurse -Force "$pythonRoot/*" $runtime
+
+      - name: Smoke-test the staged persistent bridge
+        shell: pwsh
+        env:
+          STEM_SLICER_SOURCE_ROOT: ${{ github.workspace }}\electron-prototype\.packaging\engine
+        run: |
+          '{"type":"shutdown"}' | & "electron-prototype/.packaging/.runtime/python/python.exe" -u "electron-prototype/.packaging/python/engine_bridge.py" | Tee-Object -FilePath bridge-smoke.log
+          if ($LASTEXITCODE -ne 0) { throw "The staged Electron engine bridge failed." }
+          if (-not (Select-String -Path bridge-smoke.log -Pattern '"type":\s*"ready"' -Quiet)) { throw "The bridge never became ready." }
+
+      - name: Make the unsigned Windows alpha ZIP
+        working-directory: electron-prototype
+        run: pnpm run make -- --platform=win32 --arch=x64
+
+      - name: Audit, extract and launch the exact ZIP
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem electron-prototype/out/make -Recurse -Filter *.zip | Select-Object -First 1
+          if (-not $zip) { throw "Electron Forge did not create a Windows ZIP." }
+          New-Item -ItemType Directory -Force validation-output | Out-Null
+          Expand-Archive -Path $zip.FullName -DestinationPath validation-output
+          $exe = Get-ChildItem validation-output -Recurse -Filter Slicer.exe | Select-Object -First 1
+          if (-not $exe) { throw "The extracted ZIP has no Slicer.exe." }
+          node electron-prototype/scripts/audit-electron-windows-bundle.mjs $exe.Directory.FullName
+          $process = Start-Process -FilePath $exe.FullName -PassThru
+          Start-Sleep -Seconds 15
+          if ($process.HasExited) { throw "The extracted Slicer.exe exited during startup with code $($process.ExitCode)." }
+          Stop-Process -Id $process.Id
+          Get-FileHash $zip.FullName -Algorithm SHA256 | Format-List
+          Copy-Item $zip.FullName "Slicer-Electron-Windows-Cloud-Alpha.zip"
+
+      - name: Upload the validated private alpha
+        uses: actions/upload-artifact@v7
+        with:
+          name: Slicer-Electron-Windows-Cloud-Alpha
+          path: |
+            Slicer-Electron-Windows-Cloud-Alpha.zip
+            electron-prototype/build-revision.txt
+            bridge-smoke.log
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14

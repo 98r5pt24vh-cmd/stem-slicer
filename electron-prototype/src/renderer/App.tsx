@@ -7,6 +7,7 @@ import {
   ArrowUpNarrowWide,
   Check,
   CheckSquare2,
+  Camera,
   ChevronDown,
   ChevronLeft,
   CircleAlert,
@@ -15,11 +16,15 @@ import {
   CloudCog,
   Dices,
   FolderOpen,
+  ExternalLink,
   GripVertical,
   HardDrive,
   History,
+  Instagram,
   Layers3,
   Lock,
+  LogIn,
+  LogOut,
   Music2,
   Pause,
   Pencil,
@@ -35,7 +40,9 @@ import {
   SlidersHorizontal,
   Sparkles,
   Trash2,
+  UploadCloud,
   Unlock,
+  UserRound,
   UsersRound,
   Volume2,
   WandSparkles,
@@ -69,6 +76,9 @@ import type {
   AudioJobResult,
   BatchJobResult,
   CategoryCorrection,
+  CloudPublishEvent,
+  CloudProfile,
+  CloudState,
   GenerateResult,
   GenerationStorageUsage,
   KeyIssueReport,
@@ -111,6 +121,7 @@ interface GeneratedLayer {
   sourceLoopName?: string
   producers?: string[]
   libraryRoot?: string
+  sourceOrigin?: "local" | "cloud"
   sourceDetectedKey?: string
   identity?: string
   sourceKeyRank?: 1 | 2
@@ -170,7 +181,7 @@ const NAVIGATION: NavItem[] = [
   { id: "quick-tools", label: "Quick Tools", icon: Zap },
   { id: "generate", label: "Generate", icon: Sparkles },
   { id: "history", label: "History", icon: History },
-  { id: "cloud", label: "Cloud", icon: Cloud, badge: "WIP" },
+  { id: "cloud", label: "Cloud", icon: Cloud, badge: "ALPHA" },
 ]
 
 const LAYER_CATEGORY_OPTIONS = [
@@ -303,20 +314,29 @@ const HISTORY_STORAGE_KEY = "stem-slicer-electron.generate-history.v1"
 const GENERATION_SEQUENCE_STORAGE_KEY = "stem-slicer-electron.generation-sequence.v1"
 const COLLABORATOR_SETTINGS_STORAGE_KEY = "stem-slicer-electron.collaborator-settings.v1"
 const PRODUCER_PROFILES_CHANGED_EVENT = "stem-slicer-producer-profiles-changed"
+const CLOUD_STATE_CHANGED_EVENT = "stem-slicer-cloud-state-changed"
 
 type ProducerSortDirection = "desc" | "asc"
-type CollaboratorCreditCount = 1 | 2 | 3
+type FiniteCollaboratorCreditCount = 1 | 2 | 3
+type CollaboratorCreditCount = 0 | FiniteCollaboratorCreditCount
+type GenerationSourcePool = "mixed" | "cloud-only" | "local-only"
 
 const DEFAULT_COLLABORATOR_CREDIT_COUNTS: CollaboratorCreditCount[] = [1, 2]
 
 function normalizedCreditCounts(values: unknown): CollaboratorCreditCount[] {
   if (!Array.isArray(values)) return []
-  return [...new Set(values.map(Number).filter((value): value is CollaboratorCreditCount => value === 1 || value === 2 || value === 3))]
+  const normalized = [...new Set(values.map(Number).filter((value): value is CollaboratorCreditCount => value === 0 || value === 1 || value === 2 || value === 3))]
     .sort((left, right) => left - right)
+  return normalized.includes(0) ? [0] : normalized
+}
+
+function creditCountsThrough(maximum: FiniteCollaboratorCreditCount): CollaboratorCreditCount[] {
+  return ([1, 2, 3] as CollaboratorCreditCount[]).filter((count) => count <= maximum)
 }
 
 interface ProducerProfileSettings {
   avatarPath?: string
+  avatarUrl?: string
   avatarRevision?: number
 }
 
@@ -325,6 +345,7 @@ interface CollaboratorSettings {
   allowedCreditCounts: CollaboratorCreditCount[]
   requiredProducers: string[]
   requiredContributionPercent: number
+  sourcePool: GenerationSourcePool
   pinnedProducers: string[]
   producerSortDirection: ProducerSortDirection
   profiles: Record<string, ProducerProfileSettings>
@@ -333,12 +354,17 @@ interface CollaboratorSettings {
 function loadCollaboratorSettings(): CollaboratorSettings {
   try {
     const raw = window.localStorage.getItem(COLLABORATOR_SETTINGS_STORAGE_KEY)
-    if (!raw) return { allowedProducers: null, allowedCreditCounts: DEFAULT_COLLABORATOR_CREDIT_COUNTS, requiredProducers: [], requiredContributionPercent: 20, pinnedProducers: [], producerSortDirection: "desc", profiles: {} }
+    if (!raw) return { allowedProducers: null, allowedCreditCounts: DEFAULT_COLLABORATOR_CREDIT_COUNTS, requiredProducers: [], requiredContributionPercent: 20, sourcePool: "mixed", pinnedProducers: [], producerSortDirection: "desc", profiles: {} }
     const parsed = JSON.parse(raw)
     const storedCreditCounts = normalizedCreditCounts(parsed.allowedCreditCounts)
+    const storedCreditRange = storedCreditCounts.length > 0
+      ? storedCreditCounts.includes(0)
+        ? [0] as CollaboratorCreditCount[]
+        : creditCountsThrough(Math.max(...storedCreditCounts) as FiniteCollaboratorCreditCount)
+      : []
     const legacyMaximum = [0, 1, 2, 3].includes(Number(parsed.maxProducerCount)) ? Number(parsed.maxProducerCount) : null
     const legacyCreditCounts = legacyMaximum === 0
-      ? [1, 2, 3] as CollaboratorCreditCount[]
+      ? [0] as CollaboratorCreditCount[]
       : legacyMaximum
         ? Array.from({ length: legacyMaximum }, (_, index) => index + 1) as CollaboratorCreditCount[]
         : DEFAULT_COLLABORATOR_CREDIT_COUNTS
@@ -346,13 +372,14 @@ function loadCollaboratorSettings(): CollaboratorSettings {
       allowedProducers: Array.isArray(parsed.allowedProducers)
         ? parsed.allowedProducers.filter((value: unknown): value is string => typeof value === "string")
         : null,
-      allowedCreditCounts: storedCreditCounts.length > 0 ? storedCreditCounts : legacyCreditCounts,
+      allowedCreditCounts: storedCreditRange.length > 0 ? storedCreditRange : legacyCreditCounts,
       requiredProducers: Array.isArray(parsed.requiredProducers)
         ? parsed.requiredProducers.filter((value: unknown): value is string => typeof value === "string")
         : [],
       requiredContributionPercent: Number.isFinite(Number(parsed.requiredContributionPercent))
         ? Math.min(100, Math.max(10, Math.round(Number(parsed.requiredContributionPercent) / 10) * 10))
         : Number(parsed.minimumLayersPerRequiredProducer) === 2 ? 40 : 20,
+      sourcePool: parsed.sourcePool === "cloud-only" || parsed.sourcePool === "local-only" ? parsed.sourcePool : "mixed",
       pinnedProducers: Array.isArray(parsed.pinnedProducers)
         ? parsed.pinnedProducers.filter((value: unknown): value is string => typeof value === "string")
         : [],
@@ -360,7 +387,7 @@ function loadCollaboratorSettings(): CollaboratorSettings {
       profiles: parsed.profiles && typeof parsed.profiles === "object" ? parsed.profiles : {},
     }
   } catch {
-    return { allowedProducers: null, allowedCreditCounts: DEFAULT_COLLABORATOR_CREDIT_COUNTS, requiredProducers: [], requiredContributionPercent: 20, pinnedProducers: [], producerSortDirection: "desc", profiles: {} }
+    return { allowedProducers: null, allowedCreditCounts: DEFAULT_COLLABORATOR_CREDIT_COUNTS, requiredProducers: [], requiredContributionPercent: 20, sourcePool: "mixed", pinnedProducers: [], producerSortDirection: "desc", profiles: {} }
   }
 }
 
@@ -378,7 +405,7 @@ function loadGenerateHistory(): HistoryEntry[] {
     return entries.map((item, index) => {
       const layers = item.layers.map((layer: GeneratedLayer) => {
         const provenance = provenanceForLayer(layer)
-        return { ...layer, sourceLoopName: provenance.loopName, producers: provenance.producers }
+        return { ...layer, sourceLoopName: provenance.loopName, producers: provenance.producers, sourceOrigin: sourceOriginForLayer(layer) }
       })
       const fallbackNumber = Math.max(1, entries.length - index)
       const generationNumber = Number(item.generationNumber ?? item.generation?.generationNumber) || fallbackNumber
@@ -420,12 +447,26 @@ function displayNameForGeneration(result: GenerateResult, layers: GeneratedLayer
   )
 }
 
+function sourceOriginForLayer(layer: Pick<GeneratedLayer, "sourceOrigin" | "sourcePath" | "sourceLoopId" | "libraryRoot">): "local" | "cloud" {
+  if (layer.sourceOrigin === "cloud") return "cloud"
+  if (layer.sourceLoopId?.startsWith("cloud:") || layer.libraryRoot?.startsWith("cloud://") || layer.sourcePath?.includes("/electron-prototype/cloud/audio/")) return "cloud"
+  return "local"
+}
+
+function sourceOriginSummary(layers: GeneratedLayer[]): string {
+  const cloud = layers.filter((layer) => sourceOriginForLayer(layer) === "cloud").length
+  const local = Math.max(0, layers.length - cloud)
+  if (cloud === 0) return `${local} local`
+  if (local === 0) return `${cloud} cloud`
+  return `${local} local + ${cloud} cloud`
+}
+
 function producerProfileFor(profiles: Record<string, ProducerProfileSettings>, producer: string): ProducerProfileSettings | undefined {
   return profiles[producer.toLowerCase()]
 }
 
 function ProducerAvatar({ producer, profile }: { producer: string; profile?: ProducerProfileSettings }) {
-  const baseAvatarUrl = profile?.avatarPath ? window.stemSlicer?.mediaUrl(profile.avatarPath) : ""
+  const baseAvatarUrl = profile?.avatarUrl || (profile?.avatarPath ? window.stemSlicer?.mediaUrl(profile.avatarPath) : "")
   const avatarUrl = baseAvatarUrl && profile?.avatarRevision
     ? `${baseAvatarUrl}&revision=${encodeURIComponent(profile.avatarRevision)}`
     : baseAvatarUrl
@@ -460,11 +501,13 @@ function ProducerAvatarStack({
 
 function CollaboratorsDialog({
   producers,
+  cloudSourceCount,
   generationLayerCount,
   allowedProducers,
   allowedCreditCounts,
   requiredProducers,
   requiredContributionPercent,
+  sourcePool,
   profiles,
   pinnedProducers,
   producerSortDirection,
@@ -473,16 +516,19 @@ function CollaboratorsDialog({
   onAllowedCreditCountsChange,
   onRequiredProducersChange,
   onRequiredContributionPercentChange,
+  onSourcePoolChange,
   onPinnedProducersChange,
   onProducerSortDirectionChange,
   disabled,
 }: {
   producers: LibraryProducerSummary[]
+  cloudSourceCount: number
   generationLayerCount: number
   allowedProducers: string[]
   allowedCreditCounts: CollaboratorCreditCount[]
   requiredProducers: string[]
   requiredContributionPercent: number
+  sourcePool: GenerationSourcePool
   profiles: Record<string, ProducerProfileSettings>
   pinnedProducers: string[]
   producerSortDirection: ProducerSortDirection
@@ -491,6 +537,7 @@ function CollaboratorsDialog({
   onAllowedCreditCountsChange: (counts: CollaboratorCreditCount[]) => void
   onRequiredProducersChange: (producers: string[]) => void
   onRequiredContributionPercentChange: (percent: number) => void
+  onSourcePoolChange: (sourcePool: GenerationSourcePool) => void
   onPinnedProducersChange: (producers: string[]) => void
   onProducerSortDirectionChange: (direction: ProducerSortDirection) => void
   disabled: boolean
@@ -498,7 +545,21 @@ function CollaboratorsDialog({
   const allowedSet = new Set(allowedProducers.map((producer) => producer.toLowerCase()))
   const requiredSet = new Set(requiredProducers.map((producer) => producer.toLowerCase()))
   const pinnedSet = new Set(pinnedProducers.map((producer) => producer.toLowerCase()))
+  const primaryProducer = producers.find((producer) => producer.name.toLowerCase() === PRIMARY_PRODUCER.toLowerCase())
   const selectableProducers = producers.filter((producer) => producer.name.toLowerCase() !== PRIMARY_PRODUCER.toLowerCase())
+  const anyCreditCount = allowedCreditCounts.includes(0)
+  const maximumCreditCount = anyCreditCount
+    ? null
+    : Math.max(1, ...allowedCreditCounts) as FiniteCollaboratorCreditCount
+  const selectedCreditOption: CollaboratorCreditCount = anyCreditCount ? 0 : maximumCreditCount ?? 1
+  const collaborationEnabled = anyCreditCount || (maximumCreditCount ?? 1) > 1
+  const maximumRequiredProducers = anyCreditCount ? Number.POSITIVE_INFINITY : Math.max(0, (maximumCreditCount ?? 1) - 1)
+  const collaboratorSlotsFilled = Number.isFinite(maximumRequiredProducers)
+    && requiredProducers.length >= maximumRequiredProducers
+  const allowedExternalCount = selectableProducers.filter((producer) => allowedSet.has(producer.name.toLowerCase())).length
+  const displayedProducers = collaboratorSlotsFilled
+    ? selectableProducers.filter((producer) => allowedSet.has(producer.name.toLowerCase()))
+    : selectableProducers
   const allSelectableAllowed = selectableProducers.length > 0
     && selectableProducers.every((producer) => allowedSet.has(producer.name.toLowerCase()))
   const toggleProducer = (producer: string, checked: boolean) => {
@@ -512,19 +573,29 @@ function CollaboratorsDialog({
   }
   const toggleRequired = (producer: string) => {
     const required = requiredSet.has(producer.toLowerCase())
-    if (!required) {
-      const collaborativeCounts = allowedCreditCounts.filter((count) => count > 1)
-      onAllowedCreditCountsChange(collaborativeCounts.length > 0 ? collaborativeCounts : [2])
+    if (!required && maximumCreditCount === 1) {
+      onAllowedCreditCountsChange(creditCountsThrough(2))
     }
-    onRequiredProducersChange(required
-      ? requiredProducers.filter((item) => item.toLowerCase() !== producer.toLowerCase())
-      : [...requiredProducers, producer])
+    if (required) {
+      onRequiredProducersChange(requiredProducers.filter((item) => item.toLowerCase() !== producer.toLowerCase()))
+      return
+    }
+    const availableSlots = maximumCreditCount === 1 ? 1 : maximumRequiredProducers
+    const nextRequired = [...requiredProducers.filter((item) => item.toLowerCase() !== producer.toLowerCase()), producer]
+    onRequiredProducersChange(Number.isFinite(availableSlots) ? nextRequired.slice(-availableSlots) : nextRequired)
   }
-  const toggleCreditCount = (count: CollaboratorCreditCount, checked: boolean) => {
-    const next = checked
-      ? [...allowedCreditCounts, count]
-      : allowedCreditCounts.filter((item) => item !== count)
-    if (next.length > 0) onAllowedCreditCountsChange(normalizedCreditCounts(next))
+  const setMaximumCreditCount = (count: CollaboratorCreditCount) => {
+    if (count === 1 && requiredProducers.length > 0) {
+      onRequiredProducersChange([])
+      onAllowedProducersChange([PRIMARY_PRODUCER])
+    }
+    if (count === 1 && sourcePool === "cloud-only") {
+      onSourcePoolChange("mixed")
+    }
+    if (count > 1 && requiredProducers.length > count - 1) {
+      onRequiredProducersChange(requiredProducers.slice(-(count - 1)))
+    }
+    onAllowedCreditCountsChange(count === 0 ? [0] : creditCountsThrough(count))
   }
   const togglePinned = (producer: string) => {
     const pinned = pinnedSet.has(producer.toLowerCase())
@@ -533,19 +604,59 @@ function CollaboratorsDialog({
       : [...pinnedProducers, producer])
   }
   const countOptions: Array<{ value: CollaboratorCreditCount; label: string; detail: string }> = [
-    { value: 1, label: "Solo", detail: "1 producer" },
-    { value: 2, label: "Duo", detail: "2 producers" },
-    { value: 3, label: "Trio", detail: "3 producers" },
+    { value: 1, label: "Only me", detail: "No collaborator" },
+    { value: 2, label: "+1 collaborator", detail: "Solo or duo" },
+    { value: 3, label: "+2 collaborators", detail: "Up to three people" },
+    { value: 0, label: "Any number", detail: "No credit limit" },
   ]
-  const maximumRequiredProducers = Math.max(...allowedCreditCounts) - 1
+  const sourceOptions: Array<{ value: GenerationSourcePool; label: string; detail: string }> = [
+    { value: "local-only", label: "This Mac", detail: "Selected local libraries" },
+    { value: "mixed", label: "Mac + Cloud", detail: cloudSourceCount > 0 ? "Mix all enabled libraries" : "Cloud when connected" },
+    { value: "cloud-only", label: "Cloud only", detail: cloudSourceCount > 0 ? `${cloudSourceCount} connected ${cloudSourceCount === 1 ? "friend" : "friends"}` : "Connect Cloud first" },
+  ]
   const requiredLayerTarget = Math.min(
     generationLayerCount,
     Math.max(requiredProducers.length, Math.round(generationLayerCount * requiredContributionPercent / 100)),
   )
+  const sourceSummary = sourcePool === "cloud-only"
+    ? "Cloud only"
+    : sourcePool === "local-only" || cloudSourceCount === 0
+      ? "This Mac"
+      : "Mac + Cloud"
+  const minimumCreditCount = maximumCreditCount == null
+    ? null
+    : Math.min(maximumCreditCount, 1 + requiredProducers.length) as FiniteCollaboratorCreditCount
+  const creditSummary = maximumCreditCount == null
+    ? "any number of collaborators"
+    : minimumCreditCount === maximumCreditCount
+      ? `${maximumCreditCount === 1 ? "solo" : maximumCreditCount === 2 ? "duo" : "trio"} loops`
+      : minimumCreditCount === 1 && maximumCreditCount === 3
+        ? "solo, duo or trio loops"
+        : `${minimumCreditCount === 1 ? "solo" : "duo"} or ${maximumCreditCount === 2 ? "duo" : "trio"} loops`
+  const collaboratorSummary = requiredProducers.length > 0
+    ? `${requiredProducers.length} always included`
+    : allowedExternalCount > 0
+      ? `${allowedExternalCount} optional ${allowedExternalCount === 1 ? "collaborator" : "collaborators"}`
+      : "no external collaborator"
+  const primaryLibrarySummary = primaryProducer
+    ? `${primaryProducer.source === "cloud" ? "Cloud" : primaryProducer.source === "mixed" ? "Mac + Cloud" : "Mac"} · ${formatCount(primaryProducer.loopCount)} loops · ${formatCount(primaryProducer.layerCount)} layers`
+    : sourcePool === "cloud-only"
+      ? "Cloud-only mode · your local library is not searched"
+      : "No eligible local layers in this selection"
+  const requiredNames = requiredProducers.join(", ")
+  const remainingCollaboratorSlots = maximumCreditCount == null
+    ? null
+    : Math.max(0, maximumCreditCount - 1 - requiredProducers.length)
+  const requiredPolicySummary = maximumCreditCount == null
+    ? `${requiredNames} must appear. Any other allowed collaborators may join.`
+    : maximumCreditCount === 2 && requiredProducers.length === 1
+    ? `${requiredNames} is the only collaborator used in duo generations. Your solo loops remain available.`
+    : remainingCollaboratorSlots === 0
+      ? `${requiredNames} fills every collaborator slot. Other collaborators are excluded.`
+      : `${requiredNames} must appear. ${remainingCollaboratorSlots} other allowed ${remainingCollaboratorSlots === 1 ? "collaborator" : "collaborators"} may join.`
   const toggleAllSelectable = () => {
     if (allSelectableAllowed) {
-      onAllowedProducersChange([PRIMARY_PRODUCER])
-      onRequiredProducersChange([])
+      onAllowedProducersChange(uniqueProducerCredits([PRIMARY_PRODUCER, ...requiredProducers]))
       return
     }
     onAllowAllProducers()
@@ -562,134 +673,184 @@ function CollaboratorsDialog({
           <Dialog.Popup className="library-manager-dialog collaborators-dialog">
             <header className="library-manager-header">
               <div>
-                <Dialog.Title>Collaborators</Dialog.Title>
-                <Dialog.Description>Choose who may appear in loops generated from your selected local libraries.</Dialog.Description>
+                <Dialog.Title>Generation collaborators</Dialog.Title>
+                <Dialog.Description>Choose where layers come from and who may be credited on the final loop.</Dialog.Description>
               </div>
               <Dialog.Close className="dialog-close" aria-label="Close collaborators"><X /></Dialog.Close>
             </header>
 
-            <div className="collaborator-limit" role="group" aria-labelledby="collaborator-limit-label">
-              <p id="collaborator-limit-label">Final loop may be</p>
-              <div>
-                {countOptions.map((option) => (
-                  <label className={cn(allowedCreditCounts.includes(option.value) && "is-selected")} key={option.label}>
-                    <input
-                      type="checkbox"
-                      value={option.value}
-                      checked={allowedCreditCounts.includes(option.value)}
-                      disabled={
-                        (allowedCreditCounts.length === 1 && allowedCreditCounts.includes(option.value))
-                        || (option.value === 1 && requiredProducers.length > 0)
-                      }
-                      onChange={(event) => toggleCreditCount(option.value, event.target.checked)}
-                    />
-                    <strong>{option.label}</strong>
-                    <small>{option.detail}</small>
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            <div className="collaborator-list-heading">
-              <div><strong>On this Mac</strong><small>{Math.max(0, allowedProducers.length - 1)} collaborators allowed · never forced</small></div>
-              <div className="collaborator-list-tools">
-                <button
-                  type="button"
-                  className="collaborator-sort-toggle"
-                  onClick={() => onProducerSortDirectionChange(producerSortDirection === "desc" ? "asc" : "desc")}
-                  aria-label={producerSortDirection === "desc" ? "Sort by fewest loops first" : "Sort by most loops first"}
-                  title="Reverse loop-count order"
-                >
-                  {producerSortDirection === "desc" ? <ArrowDownWideNarrow aria-hidden="true" /> : <ArrowUpNarrowWide aria-hidden="true" />}
-                  {producerSortDirection === "desc" ? "Most loops first" : "Fewest loops first"}
-                </button>
-                {selectableProducers.length > 0 ? (
-                  <button
-                    type="button"
-                    onClick={toggleAllSelectable}
-                  >
-                    {allSelectableAllowed ? "Disable all" : "Allow all"}
-                  </button>
-                ) : null}
-              </div>
-            </div>
-            <div className="collaborator-list" role="group" aria-label="Producers available to Generate">
-              {producers.map((producer) => {
-                const isPrimary = producer.name.toLowerCase() === PRIMARY_PRODUCER.toLowerCase()
-                const checked = isPrimary || allowedSet.has(producer.name.toLowerCase())
-                const required = !isPrimary && requiredSet.has(producer.name.toLowerCase())
-                const pinned = pinnedSet.has(producer.name.toLowerCase())
-                return (
-                  <div className={cn("collaborator-row", checked && "is-selected")} key={producer.name}>
-                    <label>
+            <div className="collaborators-content">
+              <section className="collaborator-step" aria-labelledby="collaborator-source-pool-label">
+                <div className="collaborator-step-heading">
+                  <span aria-hidden="true">1</span>
+                  <div>
+                    <h3 id="collaborator-source-pool-label">Use audio from</h3>
+                    <p>Choose the libraries Generate can search.</p>
+                  </div>
+                </div>
+                <div className="collaborator-choice-grid" role="radiogroup" aria-labelledby="collaborator-source-pool-label">
+                  {sourceOptions.map((option) => (
+                    <label className={cn(sourcePool === option.value && "is-selected")} key={option.value}>
                       <input
-                        type="checkbox"
-                        checked={checked}
-                        disabled={isPrimary}
-                        onChange={(event) => toggleProducer(producer.name, event.target.checked)}
+                        type="radio"
+                        name="generation-source-pool"
+                        value={option.value}
+                        checked={sourcePool === option.value}
+                        disabled={option.value === "cloud-only" && cloudSourceCount === 0}
+                        onChange={() => onSourcePoolChange(option.value)}
                       />
-                      <ProducerAvatar producer={producer.name} profile={producerProfileFor(profiles, producer.name)} />
-                      <span>
-                        <strong>{producer.name}{isPrimary ? <em>You</em> : null}</strong>
-                        <small>{formatCount(producer.loopCount)} loops · {formatCount(producer.layerCount)} layers</small>
-                      </span>
+                      <strong>{option.label}</strong>
+                      <small>{option.detail}</small>
                     </label>
-                    {!isPrimary ? (
+                  ))}
+                </div>
+              </section>
+
+              <section className="collaborator-step" aria-labelledby="collaborator-limit-label">
+                <div className="collaborator-step-heading">
+                    <span aria-hidden="true">2</span>
+                    <div>
+                      <h3 id="collaborator-limit-label">People on the final loop</h3>
+                      <p>Choose a limit; “Always include” sets the minimum.</p>
+                  </div>
+                </div>
+                <div className="collaborator-choice-grid is-team-size" role="radiogroup" aria-labelledby="collaborator-limit-label">
+                  {countOptions.map((option) => (
+                    <label className={cn(selectedCreditOption === option.value && "is-selected")} key={option.label}>
+                      <input
+                        type="radio"
+                        name="maximum-generation-credits"
+                        value={option.value}
+                        checked={selectedCreditOption === option.value}
+                        onChange={() => setMaximumCreditCount(option.value)}
+                      />
+                      <strong>{option.label}</strong>
+                      <small>{option.detail}</small>
+                    </label>
+                  ))}
+                </div>
+              </section>
+
+              <section className="collaborator-step collaborator-people" aria-labelledby="collaborator-people-label">
+                <div className="collaborator-list-heading">
+                  <div className="collaborator-step-heading">
+                    <span aria-hidden="true">3</span>
+                    <div>
+                      <h3 id="collaborator-people-label">Who may contribute</h3>
+                      <p>{collaborationEnabled ? `${allowedExternalCount} eligible · selected people may appear at random` : "Only me selected · no collaborator will be used"}</p>
+                    </div>
+                  </div>
+                  {collaborationEnabled && !collaboratorSlotsFilled ? <div className="collaborator-list-tools">
+                    {selectableProducers.length > 1 ? (
                       <button
                         type="button"
-                        className={cn("producer-required-button", required && "is-active")}
-                        disabled={
-                          !checked
-                          || (!required && maximumRequiredProducers > 0 && requiredProducers.length >= maximumRequiredProducers)
-                        }
-                        aria-pressed={required}
-                        onClick={() => toggleRequired(producer.name)}
-                        title={required ? `${producer.name} must appear` : `Require ${producer.name} in every generation`}
+                        className="collaborator-sort-toggle"
+                        onClick={() => onProducerSortDirectionChange(producerSortDirection === "desc" ? "asc" : "desc")}
+                        aria-label={producerSortDirection === "desc" ? "Sort by fewest loops first" : "Sort by most loops first"}
+                        title="Reverse loop-count order"
                       >
-                        {required ? "Required" : "Require"}
+                        {producerSortDirection === "desc" ? <ArrowDownWideNarrow aria-hidden="true" /> : <ArrowUpNarrowWide aria-hidden="true" />}
+                        {producerSortDirection === "desc" ? "Most first" : "Fewest first"}
                       </button>
                     ) : null}
-                    <button
-                      type="button"
-                      className={cn("producer-pin-button", pinned && "is-active")}
-                      aria-pressed={pinned}
-                      aria-label={pinned ? `Unpin ${producer.name}` : `Pin ${producer.name}`}
-                      title={pinned ? "Remove from pinned profiles" : "Keep at the top"}
-                      onClick={() => togglePinned(producer.name)}
-                    >
-                      <Pin aria-hidden="true" />
-                    </button>
+                    {selectableProducers.length > 0 ? (
+                      <button type="button" onClick={toggleAllSelectable}>
+                        {allSelectableAllowed ? (requiredProducers.length > 0 ? "Clear optional" : "Clear") : "Allow all"}
+                      </button>
+                    ) : null}
+                  </div> : null}
+                </div>
+
+                <div className="collaborator-owner-row">
+                  <ProducerAvatar producer={PRIMARY_PRODUCER} profile={producerProfileFor(profiles, PRIMARY_PRODUCER)} />
+                  <span>
+                    <strong>{PRIMARY_PRODUCER}</strong>
+                    <small>Primary producer · credited on every generated loop</small>
+                    <small className="collaborator-owner-stats">{primaryLibrarySummary}</small>
+                  </span>
+                  <em>You</em>
+                </div>
+
+                {collaborationEnabled && requiredProducers.length > 0 ? (
+                  <div className="collaborator-requirement">
+                    <span>
+                      <strong>Guaranteed share · {requiredNames}</strong>
+                      <small>{requiredPolicySummary}</small>
+                      <em>Target at least {requiredLayerTarget} of {generationLayerCount} layers</em>
+                    </span>
+                    <label>
+                      <span className="sr-only">Target share from collaborators who are always included</span>
+                      <input
+                        type="range"
+                        min="10"
+                        max="100"
+                        step="10"
+                        value={requiredContributionPercent}
+                        onChange={(event) => onRequiredContributionPercentChange(Number(event.target.value))}
+                      />
+                      <output>{requiredContributionPercent}%</output>
+                    </label>
                   </div>
-                )
-              })}
-            </div>
-            {requiredProducers.length > 0 ? (
-              <div className="collaborator-requirement">
-                <span>
-                  <strong>Collaborator share</strong>
-                  <small>{requiredProducers.length} required · target {requiredLayerTarget} of {generationLayerCount} layers</small>
-                </span>
-                <label>
-                  <span className="sr-only">Target share from required collaborators</span>
-                  <input
-                    type="range"
-                    min="10"
-                    max="100"
-                    step="10"
-                    value={requiredContributionPercent}
-                    onChange={(event) => onRequiredContributionPercentChange(Number(event.target.value))}
-                  />
-                  <output>{requiredContributionPercent}%</output>
-                </label>
-              </div>
-            ) : null}
-            <div className="collaborator-cloud-preview" aria-disabled="true">
-              <span className="cloud-symbol"><CloudCog aria-hidden="true" /></span>
-              <span><strong>Cloud friends</strong><small>Shared libraries will appear here when Cloud is connected.</small></span>
-              <em>Not connected</em>
+                ) : null}
+
+                {!collaborationEnabled ? (
+                  <p className="collaborator-empty">Choose “+1 collaborator” above to enable collaborators.</p>
+                ) : <div className="collaborator-list" role="group" aria-label="Collaborators who may contribute">
+                  {displayedProducers.map((producer) => {
+                    const checked = allowedSet.has(producer.name.toLowerCase())
+                    const required = requiredSet.has(producer.name.toLowerCase())
+                    const pinned = pinnedSet.has(producer.name.toLowerCase())
+                    return (
+                      <div className={cn("collaborator-row", checked && "is-selected")} key={producer.name}>
+                        <label>
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            disabled={!checked && collaboratorSlotsFilled}
+                            aria-label={`Allow ${producer.name} to contribute`}
+                            onChange={(event) => toggleProducer(producer.name, event.target.checked)}
+                          />
+                          <ProducerAvatar producer={producer.name} profile={producerProfileFor(profiles, producer.name)} />
+                          <span>
+                            <strong>{producer.name}</strong>
+                            <small>{producer.source === "cloud" ? "Cloud · " : producer.source === "mixed" ? "Mac + Cloud · " : "Mac · "}{formatCount(producer.loopCount)} loops · {formatCount(producer.layerCount)} layers</small>
+                          </span>
+                        </label>
+                        <button
+                          type="button"
+                          className={cn("producer-required-button", required && "is-active")}
+                          disabled={
+                            !checked
+                            || (!required && maximumRequiredProducers > 0 && requiredProducers.length >= maximumRequiredProducers)
+                          }
+                          aria-pressed={required}
+                          onClick={() => toggleRequired(producer.name)}
+                          title={required ? `${producer.name} will be included every time` : `Always include ${producer.name}`}
+                        >
+                          Always include
+                        </button>
+                        <button
+                          type="button"
+                          className={cn("producer-pin-button", pinned && "is-active")}
+                          aria-pressed={pinned}
+                          aria-label={pinned ? `Unpin ${producer.name}` : `Pin ${producer.name}`}
+                          title={pinned ? "Remove from pinned profiles" : "Keep at the top"}
+                          onClick={() => togglePinned(producer.name)}
+                        >
+                          <Pin aria-hidden="true" />
+                        </button>
+                      </div>
+                    )
+                  })}
+                  {displayedProducers.length === 0 ? (
+                    <p className="collaborator-empty">No collaborator has eligible layers in these audio sources.</p>
+                  ) : null}
+                </div>}
+
+              </section>
             </div>
             <footer className="library-manager-footer collaborator-footer">
-              <p>Checked profiles may appear at random. Only <strong>Required</strong> profiles are guaranteed to contribute.</p>
+              <p><Check aria-hidden="true" /><span><strong>{sourceSummary}</strong> · {creditSummary} · {collaboratorSummary}</span></p>
               <Dialog.Close className="dialog-done">Done</Dialog.Close>
             </footer>
           </Dialog.Popup>
@@ -1584,7 +1745,7 @@ function AppSidebar({
   const [primaryProfile, setPrimaryProfile] = useState<ProducerProfileSettings | undefined>(() => (
     producerProfileFor(loadCollaboratorSettings().profiles, PRIMARY_PRODUCER)
   ))
-  const [profileError, setProfileError] = useState("")
+  const [primaryProfileName, setPrimaryProfileName] = useState(PRIMARY_PRODUCER)
   const [applicationLogoUrl, setApplicationLogoUrl] = useState("")
 
   useEffect(() => {
@@ -1603,23 +1764,17 @@ function AppSidebar({
     }
   }, [])
 
-  const editPrimaryProfile = async () => {
-    setProfileError("")
-    try {
-      const result = await window.stemSlicer?.pickImageFile()
-      if (!result || result.canceled || !result.paths[0]) return
-      const settings = loadCollaboratorSettings()
-      const profiles = {
-        ...settings.profiles,
-        [PRIMARY_PRODUCER.toLowerCase()]: { avatarPath: result.paths[0], avatarRevision: Date.now() },
-      }
-      saveCollaboratorSettings({ ...settings, profiles })
-      setPrimaryProfile(profiles[PRIMARY_PRODUCER.toLowerCase()])
-      window.dispatchEvent(new CustomEvent(PRODUCER_PROFILES_CHANGED_EVENT, { detail: profiles }))
-    } catch (reason) {
-      setProfileError(reason instanceof Error ? reason.message : "Unable to use this profile image.")
+  useEffect(() => {
+    const updateCloudProfile = (state?: CloudState) => {
+      if (!state?.profile) return
+      setPrimaryProfileName(state.profile.displayName)
+      if (state.profile.avatarUrl) setPrimaryProfile({ avatarUrl: state.profile.avatarUrl })
     }
-  }
+    void window.stemSlicer?.getCloudState().then(updateCloudProfile).catch(() => undefined)
+    const listener = (event: Event) => updateCloudProfile((event as CustomEvent<CloudState>).detail)
+    window.addEventListener(CLOUD_STATE_CHANGED_EVENT, listener)
+    return () => window.removeEventListener(CLOUD_STATE_CHANGED_EVENT, listener)
+  }, [])
 
   return (
     <aside className={cn("app-sidebar", collapsed && "is-collapsed")} aria-label="Navigation principale">
@@ -1684,18 +1839,17 @@ function AppSidebar({
       <button
         type="button"
         className="sidebar-profile app-no-drag"
-        onClick={() => void editPrimaryProfile()}
-        aria-label="Edit +NRGY profile photo"
-        title={collapsed ? "+NRGY profile" : "Edit profile photo"}
+        onClick={() => onNavigate("cloud")}
+        aria-label={`Open ${primaryProfileName} Cloud profile`}
+        title={collapsed ? `${primaryProfileName} Cloud profile` : "Open Cloud profile"}
       >
-        <span className="sidebar-profile-avatar"><ProducerAvatar producer={PRIMARY_PRODUCER} profile={primaryProfile} /></span>
+        <span className="sidebar-profile-avatar"><ProducerAvatar producer={primaryProfileName} profile={primaryProfile} /></span>
         <span className="sidebar-copy">
-          <strong>{PRIMARY_PRODUCER}</strong>
-          <span>Edit profile</span>
+          <strong>{primaryProfileName}</strong>
+          <span>Cloud profile</span>
         </span>
         <Pencil aria-hidden="true" />
       </button>
-      {profileError ? <p className="sidebar-profile-error" role="alert">{profileError}</p> : null}
 
       <div className="sidebar-footer">
         <div className="connection-dot" aria-hidden="true" />
@@ -1886,6 +2040,7 @@ function LayerCard({
   const provenance = layer.identity
     ? provenanceForLayer(layer)
     : { loopName: "Ready to generate", producers: [PRIMARY_PRODUCER] }
+  const sourceOrigin = layer.identity || layer.sourcePath ? sourceOriginForLayer(layer) : null
   const visibleProgress = mixActive || isAudible ? progress : 0
   const seekWaveformFromPointer = (event: React.PointerEvent<HTMLDivElement>) => {
     const bounds = event.currentTarget.getBoundingClientRect()
@@ -1917,6 +2072,7 @@ function LayerCard({
               <span className="layer-producer-credit" aria-label={`Producers: ${provenance.producers.join(", ")}`}>
                 <ProducerAvatarStack producers={provenance.producers} />
                 <span className="truncate">{provenance.producers.join(", ")}</span>
+                {sourceOrigin ? <span className={cn("source-origin-badge", `is-${sourceOrigin}`)}>{sourceOrigin === "cloud" ? "Cloud" : "Local"}</span> : null}
               </span>
             </div>
           ) : (
@@ -2224,10 +2380,12 @@ function GenerateView({
   const [recipeDirty, setRecipeDirty] = useState(false)
   const [selectedLibraryPaths, setSelectedLibraryPaths] = useState<string[]>([])
   const [libraryProducers, setLibraryProducers] = useState<LibraryProducerSummary[]>([])
+  const [cloudState, setCloudState] = useState<CloudState>({ configured: false, projectUrl: "", authenticated: false, connections: [], libraries: [] })
   const [configuredAllowedProducers, setConfiguredAllowedProducers] = useState<string[] | null>(initialCollaboratorSettings.allowedProducers)
   const [allowedCreditCounts, setAllowedCreditCounts] = useState<CollaboratorCreditCount[]>(initialCollaboratorSettings.allowedCreditCounts)
   const [requiredProducers, setRequiredProducers] = useState(initialCollaboratorSettings.requiredProducers)
   const [requiredContributionPercent, setRequiredContributionPercent] = useState(initialCollaboratorSettings.requiredContributionPercent)
+  const [sourcePool, setSourcePool] = useState<GenerationSourcePool>(initialCollaboratorSettings.sourcePool)
   const [pinnedProducers, setPinnedProducers] = useState(initialCollaboratorSettings.pinnedProducers)
   const [producerSortDirection, setProducerSortDirection] = useState<ProducerSortDirection>(initialCollaboratorSettings.producerSortDirection)
   const [producerProfiles, setProducerProfiles] = useState<Record<string, ProducerProfileSettings>>(initialCollaboratorSettings.profiles)
@@ -2255,21 +2413,106 @@ function GenerateView({
     ? selectedRootCategories
     : allLibrariesSelected ? library.categories : []
   const largestCategoryCount = selectedCategories[0]?.count || 1
+  const enabledCloudLibraries = cloudState.libraries.filter((item) => !item.own && item.status === "ready" && item.enabledForGenerate)
+  const hasEnabledCloudLibrary = enabledCloudLibraries.length > 0
+  const cloudSourceCount = new Set(enabledCloudLibraries.map((item) => item.owner.displayName.toLowerCase())).size
+  const availableProducers = useMemo(() => {
+    const byName = new Map<string, LibraryProducerSummary>()
+    for (const producer of libraryProducers) {
+      byName.set(producer.name.toLowerCase(), {
+        ...producer,
+        loopCountsByCreditCount: { ...producer.loopCountsByCreditCount },
+        layerCountsByCreditCount: { ...producer.layerCountsByCreditCount },
+        libraryRoots: [...producer.libraryRoots],
+        source: producer.source ?? "local",
+        localLoopCount: producer.loopCount,
+        localLayerCount: producer.layerCount,
+        localLoopCountsByCreditCount: { ...producer.loopCountsByCreditCount },
+        localLayerCountsByCreditCount: { ...producer.layerCountsByCreditCount },
+        cloudLoopCount: 0,
+        cloudLayerCount: 0,
+        cloudLoopCountsByCreditCount: {},
+        cloudLayerCountsByCreditCount: {},
+      })
+    }
+    for (const item of cloudState.libraries.filter((library) => !library.own && library.status === "ready" && library.enabledForGenerate)) {
+      const key = item.owner.displayName.toLowerCase()
+      const existing = byName.get(key)
+      if (existing) {
+        existing.loopCount += item.loopCount
+        existing.layerCount += item.layerCount
+        existing.loopCountsByCreditCount["2"] = (existing.loopCountsByCreditCount["2"] ?? 0) + item.loopCount
+        existing.layerCountsByCreditCount["2"] = (existing.layerCountsByCreditCount["2"] ?? 0) + item.layerCount
+        existing.libraryRoots.push(`cloud://${item.id}`)
+        existing.source = existing.source === "cloud" ? "cloud" : "mixed"
+        existing.cloudLoopCount = (existing.cloudLoopCount ?? 0) + item.loopCount
+        existing.cloudLayerCount = (existing.cloudLayerCount ?? 0) + item.layerCount
+        existing.cloudLoopCountsByCreditCount = { ...(existing.cloudLoopCountsByCreditCount ?? {}), "2": (existing.cloudLoopCountsByCreditCount?.["2"] ?? 0) + item.loopCount }
+        existing.cloudLayerCountsByCreditCount = { ...(existing.cloudLayerCountsByCreditCount ?? {}), "2": (existing.cloudLayerCountsByCreditCount?.["2"] ?? 0) + item.layerCount }
+      } else {
+        byName.set(key, {
+          name: item.owner.displayName,
+          loopCount: item.loopCount,
+          layerCount: item.layerCount,
+          loopCountsByCreditCount: { "2": item.loopCount },
+          layerCountsByCreditCount: { "2": item.layerCount },
+          libraryRoots: [`cloud://${item.id}`],
+          source: "cloud",
+          localLoopCount: 0,
+          localLayerCount: 0,
+          localLoopCountsByCreditCount: {},
+          localLayerCountsByCreditCount: {},
+          cloudLoopCount: item.loopCount,
+          cloudLayerCount: item.layerCount,
+          cloudLoopCountsByCreditCount: { "2": item.loopCount },
+          cloudLayerCountsByCreditCount: { "2": item.layerCount },
+        })
+      }
+    }
+    return [...byName.values()]
+  }, [cloudState.libraries, libraryProducers])
   const producerOptions = useMemo(() => {
     const activeLibraryRoots = new Set(selectedLibraryPaths)
-    const relevant = libraryProducers.filter((producer) => (
-      selectedLibraryPaths.length === 0
-      || producer.libraryRoots.some((root) => activeLibraryRoots.has(root))
-    ))
-    const withPrimary = relevant.some((producer) => producer.name.toLowerCase() === PRIMARY_PRODUCER.toLowerCase())
+    const relevant = availableProducers.filter((producer) => {
+      if (producer.name.toLowerCase() === PRIMARY_PRODUCER.toLowerCase()) return sourcePool !== "cloud-only"
+      if (sourcePool === "cloud-only") return (producer.cloudLayerCount ?? 0) > 0
+      if (sourcePool === "local-only") {
+        return (producer.localLayerCount ?? 0) > 0 && (
+          selectedLibraryPaths.length === 0
+          || producer.libraryRoots.some((root) => !root.startsWith("cloud://") && activeLibraryRoots.has(root))
+        )
+      }
+      return selectedLibraryPaths.length === 0
+        || producer.libraryRoots.some((root) => root.startsWith("cloud://") || activeLibraryRoots.has(root))
+    })
+    const withPrimary = sourcePool === "cloud-only"
+      ? relevant
+      : relevant.some((producer) => producer.name.toLowerCase() === PRIMARY_PRODUCER.toLowerCase())
       ? relevant
       : [{ name: PRIMARY_PRODUCER, layerCount: 0, loopCount: 0, loopCountsByCreditCount: {}, layerCountsByCreditCount: {}, libraryRoots: selectedLibraryPaths }, ...relevant]
     const matchingMode = withPrimary
-      .map((producer) => ({
-        ...producer,
-        loopCount: allowedCreditCounts.reduce((sum, count) => sum + (producer.loopCountsByCreditCount[String(count)] ?? 0), 0),
-        layerCount: allowedCreditCounts.reduce((sum, count) => sum + (producer.layerCountsByCreditCount[String(count)] ?? 0), 0),
-      }))
+      .map((producer) => {
+        const loopCounts = sourcePool === "cloud-only"
+          ? producer.cloudLoopCountsByCreditCount ?? {}
+          : sourcePool === "local-only"
+            ? producer.localLoopCountsByCreditCount ?? {}
+            : producer.loopCountsByCreditCount
+        const layerCounts = sourcePool === "cloud-only"
+          ? producer.cloudLayerCountsByCreditCount ?? {}
+          : sourcePool === "local-only"
+            ? producer.localLayerCountsByCreditCount ?? {}
+            : producer.layerCountsByCreditCount
+        return {
+          ...producer,
+          source: sourcePool === "cloud-only" ? "cloud" as const : sourcePool === "local-only" ? "local" as const : producer.source,
+          loopCount: allowedCreditCounts.includes(0)
+            ? Object.values(loopCounts).reduce((sum, count) => sum + count, 0)
+            : allowedCreditCounts.reduce<number>((sum, count) => sum + (loopCounts[String(count)] ?? 0), 0),
+          layerCount: allowedCreditCounts.includes(0)
+            ? Object.values(layerCounts).reduce((sum, count) => sum + count, 0)
+            : allowedCreditCounts.reduce<number>((sum, count) => sum + (layerCounts[String(count)] ?? 0), 0),
+        }
+      })
       .filter((producer) => (
         producer.name.toLowerCase() === PRIMARY_PRODUCER.toLowerCase()
         || producer.loopCount > 0
@@ -2283,20 +2526,41 @@ function GenerateView({
         : left.loopCount - right.loopCount
       return rightPinned - leftPinned || countOrder || left.name.localeCompare(right.name)
     })
-  }, [allowedCreditCounts, libraryProducers, pinnedProducers, producerSortDirection, selectedLibraryPaths])
-  const allowedProducers = useMemo(() => {
+  }, [allowedCreditCounts, availableProducers, pinnedProducers, producerSortDirection, selectedLibraryPaths, sourcePool])
+  const configuredProducerPool = useMemo(() => {
     const configured = configuredAllowedProducers == null
       ? new Set(producerOptions.map((producer) => producer.name.toLowerCase()))
       : new Set(configuredAllowedProducers.map((producer) => producer.toLowerCase()))
     const allowed = producerOptions
       .map((producer) => producer.name)
       .filter((producer) => producer.toLowerCase() === PRIMARY_PRODUCER.toLowerCase() || configured.has(producer.toLowerCase()))
-    return uniqueProducerCredits(allowed)
+    return uniqueProducerCredits([PRIMARY_PRODUCER, ...allowed])
   }, [configuredAllowedProducers, producerOptions])
   const activeRequiredProducers = useMemo(() => {
-    const allowed = new Set(allowedProducers.map((producer) => producer.toLowerCase()))
-    return requiredProducers.filter((producer) => allowed.has(producer.toLowerCase()))
-  }, [allowedProducers, requiredProducers])
+    const available = new Set(producerOptions.map((producer) => producer.name.toLowerCase()))
+    return requiredProducers.filter((producer) => available.has(producer.toLowerCase()))
+  }, [producerOptions, requiredProducers])
+  const allowedProducers = useMemo(() => {
+    if (allowedCreditCounts.includes(0)) return configuredProducerPool
+    const maximumExternalSlots = Math.max(0, ...allowedCreditCounts) - 1
+    if (activeRequiredProducers.length < maximumExternalSlots) return configuredProducerPool
+    return uniqueProducerCredits([PRIMARY_PRODUCER, ...activeRequiredProducers.slice(0, maximumExternalSlots)])
+  }, [activeRequiredProducers, allowedCreditCounts, configuredProducerPool])
+  const producerProfilesWithCloud = useMemo(() => {
+    const merged = { ...producerProfiles }
+    const profiles = [
+      cloudState.profile,
+      ...cloudState.connections.map((connection) => connection.profile),
+      ...cloudState.libraries.map((item) => item.owner),
+    ].filter((profile): profile is CloudProfile => Boolean(profile))
+    for (const profile of profiles) {
+      if (!profile.avatarUrl) continue
+      const avatar = { avatarUrl: profile.avatarUrl }
+      merged[profile.displayName.toLowerCase()] = avatar
+      for (const alias of profile.aliases) merged[alias.toLowerCase()] = avatar
+    }
+    return merged
+  }, [cloudState.connections, cloudState.libraries, cloudState.profile, producerProfiles])
 
   useEffect(() => {
     let cancelled = false
@@ -2307,6 +2571,22 @@ function GenerateView({
     })
     return () => { cancelled = true }
   }, [library.databasePath, library.totalLayers])
+
+  useEffect(() => {
+    let cancelled = false
+    void window.stemSlicer?.getCloudState().then((state) => {
+      if (!cancelled && state) setCloudState(state)
+    }).catch(() => undefined)
+    const updateCloudState = (event: Event) => {
+      const state = (event as CustomEvent<CloudState>).detail
+      if (state) setCloudState(state)
+    }
+    window.addEventListener(CLOUD_STATE_CHANGED_EVENT, updateCloudState)
+    return () => {
+      cancelled = true
+      window.removeEventListener(CLOUD_STATE_CHANGED_EVENT, updateCloudState)
+    }
+  }, [])
 
   useEffect(() => {
     const updateProfiles = (event: Event) => {
@@ -2323,11 +2603,12 @@ function GenerateView({
       allowedCreditCounts,
       requiredProducers,
       requiredContributionPercent,
+      sourcePool,
       pinnedProducers,
       producerSortDirection,
       profiles: producerProfiles,
     })
-  }, [allowedCreditCounts, configuredAllowedProducers, pinnedProducers, producerProfiles, producerSortDirection, requiredContributionPercent, requiredProducers])
+  }, [allowedCreditCounts, configuredAllowedProducers, pinnedProducers, producerProfiles, producerSortDirection, requiredContributionPercent, requiredProducers, sourcePool])
 
   useEffect(() => {
     if (!currentGenerationResult) return
@@ -2378,6 +2659,7 @@ function GenerateView({
       sourceLoopName: artifact.sourceLoopName,
       producers: artifact.producers,
       libraryRoot: artifact.libraryRoot,
+      sourceOrigin: artifact.sourceOrigin ?? sourceOriginForLayer(artifact),
       sourceDetectedKey: artifact.sourceDetectedKey,
       identity: artifact.identity,
       sourceKeyRank: artifact.sourceKeyRank ?? 1,
@@ -2433,6 +2715,7 @@ function GenerateView({
         sourceLoopName: artifact.sourceLoopName ?? previous?.sourceLoopName,
         producers: artifact.producers ?? previous?.producers,
         libraryRoot: artifact.libraryRoot ?? previous?.libraryRoot,
+        sourceOrigin: artifact.sourceOrigin ?? previous?.sourceOrigin ?? sourceOriginForLayer(artifact),
         sourceDetectedKey: artifact.sourceDetectedKey ?? previous?.sourceDetectedKey,
         identity: artifact.identity,
         sourceKeyRank: artifact.sourceKeyRank ?? 1,
@@ -2483,7 +2766,11 @@ function GenerateView({
       generateJob.cancel()
       return
     }
-    if (selectedLibraryPaths.length === 0) {
+    if (sourcePool === "cloud-only" && !hasEnabledCloudLibrary) {
+      setStatus("Enable at least one shared Cloud library before Generate.")
+      return
+    }
+    if (sourcePool !== "cloud-only" && selectedLibraryPaths.length === 0) {
       setStatus("Select at least one indexed library before Generate.")
       return
     }
@@ -2521,6 +2808,7 @@ function GenerateView({
       seed,
       generationNumber: nextGenerationNumber,
       bars: 8,
+      sourcePool,
       allowedProducers,
       allowedCreditCounts,
       requiredProducers: activeRequiredProducers,
@@ -2708,17 +2996,19 @@ function GenerateView({
           </div>
           <div className="generate-action">
             <span className="sr-only" aria-live="polite">{generateJob.error || (generateJob.busy ? generateJob.message : status)}</span>
-            <ProducerAvatarStack producers={allowedProducers} profiles={producerProfiles} toolbar />
+            <ProducerAvatarStack producers={allowedProducers} profiles={producerProfilesWithCloud} toolbar />
             <CollaboratorsDialog
               producers={producerOptions}
+              cloudSourceCount={cloudSourceCount}
               generationLayerCount={Math.max(1, layers.length)}
               allowedProducers={allowedProducers}
               allowedCreditCounts={allowedCreditCounts}
               requiredProducers={activeRequiredProducers}
               requiredContributionPercent={requiredContributionPercent}
-              profiles={producerProfiles}
+              profiles={producerProfilesWithCloud}
               pinnedProducers={pinnedProducers}
               producerSortDirection={producerSortDirection}
+              sourcePool={sourcePool}
               disabled={generateJob.busy}
               onAllowedProducersChange={(nextProducers) => {
                 setConfiguredAllowedProducers(uniqueProducerCredits(nextProducers))
@@ -2736,11 +3026,13 @@ function GenerateView({
               }}
               onAllowedCreditCountsChange={(nextCounts) => {
                 setAllowedCreditCounts(nextCounts)
-                const maximumRequired = Math.max(...nextCounts) - 1
+                const maximumRequired = nextCounts.includes(0) ? Number.POSITIVE_INFINITY : Math.max(...nextCounts) - 1
                 setRequiredProducers((current) => current.slice(0, maximumRequired))
                 setLayers((current) => current.map((layer) => ({ ...layer, locked: false })))
                 setRecipeDirty(true)
-                setStatus(`${nextCounts.map((count) => count === 1 ? "Solo" : count === 2 ? "Duo" : "Trio").join(" + ")} generations enabled`)
+                setStatus(nextCounts.includes(0)
+                  ? "Any collaborator count enabled"
+                  : `${nextCounts.map((count) => count === 1 ? "Solo" : count === 2 ? "Duo" : "Trio").join(" + ")} generations enabled`)
               }}
               onRequiredProducersChange={(nextProducers) => {
                 setRequiredProducers(nextProducers)
@@ -2754,15 +3046,32 @@ function GenerateView({
                 setRecipeDirty(true)
                 setStatus(`Required collaborator share set to ${percent}%`)
               }}
+              onSourcePoolChange={(nextSourcePool) => {
+                setSourcePool(nextSourcePool)
+                if (nextSourcePool === "cloud-only") {
+                  setAllowedCreditCounts((current) => current.includes(0)
+                    ? [0]
+                    : creditCountsThrough(Math.max(2, ...current) as FiniteCollaboratorCreditCount))
+                  setConfiguredAllowedProducers(null)
+                }
+                setLayers((current) => current.map((layer) => ({ ...layer, locked: false })))
+                setRecipeDirty(true)
+                setStatus(nextSourcePool === "cloud-only"
+                  ? "Cloud-only source pool enabled"
+                  : nextSourcePool === "local-only"
+                    ? "Mac-only source pool enabled"
+                    : "Mac and Cloud source pool enabled")
+              }}
               onPinnedProducersChange={setPinnedProducers}
               onProducerSortDirectionChange={setProducerSortDirection}
             />
             <Button variant="outline" className="previous-seed-button" size="sm" disabled={generateJob.busy || previousSeed == null} onClick={() => previousSeed != null && handleGenerate(previousSeed)} title={previousSeed == null ? "No previous seed yet" : `Generate seed ${previousSeed}`}><RotateCcw /> Previous</Button>
-          <Button className="hardware-button generate-hardware" size="lg" onClick={() => handleGenerate()} disabled={!generateJob.busy && selectedLibraryPaths.length === 0}>
+          <Button className="hardware-button generate-hardware" size="lg" onClick={() => handleGenerate()} disabled={!generateJob.busy && (sourcePool === "cloud-only" ? !hasEnabledCloudLibrary : selectedLibraryPaths.length === 0)}>
               {generateJob.busy ? <X /> : <WandSparkles />}
               {generateJob.busy ? `${generateJob.percent}% · Cancel` : "Generate"}
             </Button>
           </div>
+          {generateJob.error ? <p className="generate-feedback is-error" role="alert">{generateJob.error}</p> : null}
         </CardContent>
       </Card>
 
@@ -4280,7 +4589,7 @@ function HistoryView({
                   <span className="history-icon"><History aria-hidden="true" /></span>
                   <details className="history-generation-details">
                     <summary>
-                      <span><strong>{entry.displayName}</strong><small>{entry.createdAt} · {entry.layerCount} layers</small></span>
+                      <span><strong>{entry.displayName}</strong><small>{entry.createdAt} · {entry.layerCount} layers · {sourceOriginSummary(entry.layers)}</small></span>
                       <ChevronDown aria-hidden="true" />
                     </summary>
                     <div className="history-source-breakdown">
@@ -4296,6 +4605,7 @@ function HistoryView({
                                 <strong title={stripAudioExtension(layer.sourceFile ?? layer.file)}>{provenance.loopName}</strong>
                                 <small>{provenance.producers.join(", ")}</small>
                               </span>
+                              <span className={cn("source-origin-badge", `is-${sourceOriginForLayer(layer)}`)}>{sourceOriginForLayer(layer) === "cloud" ? "Cloud" : "Local"}</span>
                               <Badge variant="secondary">{layer.category}</Badge>
                             </li>
                           )
@@ -4350,19 +4660,427 @@ function HistoryView({
   )
 }
 
-function CloudView() {
+const EMPTY_CLOUD_STATE: CloudState = {
+  configured: false,
+  projectUrl: "",
+  authenticated: false,
+  connections: [],
+  libraries: [],
+}
+
+type CloudSection = "profile" | "producers" | "libraries"
+
+function CloudProfileAvatar({ profile, large = false }: { profile?: CloudProfile; large?: boolean }) {
+  const [failedUrl, setFailedUrl] = useState("")
+  const avatarUrl = profile?.avatarUrl || ""
   return (
-    <div className="page-stack">
-      <PageHeader eyebrow="Workspace / Cloud" title="Mix trusted producer libraries" description="A future permission layer will let Generate combine your local catalogue with libraries explicitly shared by other producers." actions={<Badge variant="warning">WIP</Badge>} />
-      <Card className="cloud-hero">
-        <CardContent>
-          <span className="cloud-symbol"><CloudCog /></span>
-          <Badge variant="warning">Working in progress</Badge>
-          <h2>Cloud</h2>
-          <p>Permission, identity, remote indexing and revocation will live here. No cloud connection exists in this prototype yet.</p>
-          <Button variant="outline" disabled><Plus /> Invite a producer</Button>
-        </CardContent>
-      </Card>
+    <span className={cn("cloud-profile-mark", large && "is-large")} aria-hidden="true">
+      {avatarUrl && failedUrl !== avatarUrl
+        ? <img src={avatarUrl} alt="" onError={() => setFailedUrl(avatarUrl)} />
+        : producerMonogram(profile?.displayName ?? "Producer")}
+    </span>
+  )
+}
+
+function CloudView({ library }: { library: LibraryOverview }) {
+  const [cloud, setCloud] = useState<CloudState>(EMPTY_CLOUD_STATE)
+  const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState("")
+  const [notice, setNotice] = useState("")
+  const [authMode, setAuthMode] = useState<"sign-in" | "sign-up">("sign-in")
+  const [projectUrl, setProjectUrl] = useState("")
+  const [publishableKey, setPublishableKey] = useState("")
+  const [email, setEmail] = useState("")
+  const [password, setPassword] = useState("")
+  const [handle, setHandle] = useState("")
+  const [displayName, setDisplayName] = useState("+NRGY")
+  const [friendHandle, setFriendHandle] = useState("")
+  const [publishEvent, setPublishEvent] = useState<CloudPublishEvent | null>(null)
+  const [activeSection, setActiveSection] = useState<CloudSection>("profile")
+  const [profileHandle, setProfileHandle] = useState("")
+  const [profileDisplayName, setProfileDisplayName] = useState("")
+  const [profileBio, setProfileBio] = useState("")
+  const [profileInstagram, setProfileInstagram] = useState("")
+  const [profileAliases, setProfileAliases] = useState("")
+  const [profileOpenToCollaborate, setProfileOpenToCollaborate] = useState(false)
+  const [profileAvatarFilePath, setProfileAvatarFilePath] = useState("")
+
+  const refresh = useCallback(async () => {
+    const state = await window.stemSlicer?.getCloudState()
+    if (state) {
+      setCloud(state)
+      window.dispatchEvent(new CustomEvent(CLOUD_STATE_CHANGED_EVENT, { detail: state }))
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    void window.stemSlicer?.getCloudState()
+      .then((state) => { if (!cancelled && state) setCloud(state) })
+      .catch((reason) => { if (!cancelled) setError(reason instanceof Error ? reason.message : "Cloud is unavailable.") })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    const unsubscribe = window.stemSlicer?.onCloudPublishEvent((event) => {
+      setPublishEvent(event)
+      if (event.type === "completed") {
+        setNotice(event.message)
+        void refresh()
+      } else if (event.type === "failed") {
+        setError(event.error || event.message)
+      }
+    })
+    return () => {
+      cancelled = true
+      unsubscribe?.()
+    }
+  }, [refresh])
+
+  useEffect(() => {
+    if (!cloud.profile) return
+    setProfileHandle(cloud.profile.handle)
+    setProfileDisplayName(cloud.profile.displayName)
+    setProfileBio(cloud.profile.bio ?? "")
+    setProfileInstagram(cloud.profile.instagramHandle ?? "")
+    setProfileAliases(cloud.profile.aliases.join(", "))
+    setProfileOpenToCollaborate(cloud.profile.openToCollaborate)
+    setProfileAvatarFilePath("")
+  }, [cloud.profile])
+
+  const perform = async (action: () => Promise<CloudState | undefined>) => {
+    setBusy(true)
+    setError("")
+    setNotice("")
+    try {
+      const state = await action()
+      if (state) {
+        setCloud(state)
+        window.dispatchEvent(new CustomEvent(CLOUD_STATE_CHANGED_EVENT, { detail: state }))
+        if (state.message) setNotice(state.message)
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "The Cloud request failed.")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const configure = (event: React.FormEvent) => {
+    event.preventDefault()
+    void perform(() => window.stemSlicer?.configureCloud({ projectUrl, publishableKey }) ?? Promise.resolve(undefined))
+  }
+
+  const authenticate = (event: React.FormEvent) => {
+    event.preventDefault()
+    if (authMode === "sign-up") {
+      void perform(() => window.stemSlicer?.cloudSignUp({ email, password, handle, displayName }) ?? Promise.resolve(undefined))
+    } else {
+      void perform(() => window.stemSlicer?.cloudSignIn({ email, password }) ?? Promise.resolve(undefined))
+    }
+  }
+
+  const requestConnection = (event: React.FormEvent) => {
+    event.preventDefault()
+    void perform(async () => {
+      const state = await window.stemSlicer?.cloudConnect(friendHandle)
+      if (state) {
+        setFriendHandle("")
+        setNotice(`Connection request sent to @${friendHandle.trim().toLowerCase()}.`)
+      }
+      return state
+    })
+  }
+
+  const publishLibrary = async (root: string) => {
+    setError("")
+    setNotice("")
+    setPublishEvent({ jobId: "starting", type: "progress", message: "Preparing Cloud upload…", percent: 0 })
+    try {
+      await window.stemSlicer?.cloudPublishLibrary(root)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "The Cloud upload could not start.")
+      setPublishEvent(null)
+    }
+  }
+
+  const pickProfileAvatar = async () => {
+    setError("")
+    try {
+      const result = await window.stemSlicer?.pickImageFile()
+      if (!result || result.canceled || !result.paths[0]) return
+      setProfileAvatarFilePath(result.paths[0])
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to prepare this profile image.")
+    }
+  }
+
+  const saveProfile = (event: React.FormEvent) => {
+    event.preventDefault()
+    const aliases = profileAliases
+      .split(/[,\n]/)
+      .map((alias) => alias.trim())
+      .filter(Boolean)
+    void perform(() => window.stemSlicer?.cloudUpdateProfile({
+      handle: profileHandle,
+      displayName: profileDisplayName,
+      bio: profileBio,
+      instagramHandle: profileInstagram,
+      aliases,
+      openToCollaborate: profileOpenToCollaborate,
+      avatarFilePath: profileAvatarFilePath || undefined,
+    }) ?? Promise.resolve(undefined))
+  }
+
+  const acceptedConnections = cloud.connections.filter((connection) => connection.status === "accepted")
+  const pendingConnections = cloud.connections.filter((connection) => connection.status === "pending")
+  const ownLibraries = cloud.libraries.filter((item) => item.own)
+  const sharedLibraries = cloud.libraries.filter((item) => !item.own)
+  const publishedLayerCount = ownLibraries.reduce((sum, item) => sum + item.layerCount, 0)
+  const publishedLoopCount = ownLibraries.reduce((sum, item) => sum + item.loopCount, 0)
+  const localAvatarPreview = profileAvatarFilePath ? window.stemSlicer?.mediaUrl(profileAvatarFilePath) : ""
+
+  return (
+    <div className="page-stack cloud-page">
+      <PageHeader
+        eyebrow="Workspace / Cloud"
+        title="Mix trusted producer libraries"
+        description="Share a private indexed catalogue with accepted collaborators. Generate downloads only the remote layers it actually selects."
+        actions={<Badge variant={cloud.authenticated ? "success" : "warning"}>{cloud.authenticated ? "Connected alpha" : "Cloud alpha"}</Badge>}
+      />
+
+      {error ? <p className="cloud-inline-message is-error" role="alert"><CircleAlert aria-hidden="true" />{error}</p> : null}
+      {notice ? <p className="cloud-inline-message" role="status"><Check aria-hidden="true" />{notice}</p> : null}
+
+      {loading ? (
+        <Card className="cloud-hero"><CardContent><CloudCog aria-hidden="true" /><p>Loading Cloud configuration…</p></CardContent></Card>
+      ) : !cloud.configured ? (
+        <Card className="cloud-setup-card">
+          <CardHeader>
+            <span className="cloud-symbol"><CloudCog aria-hidden="true" /></span>
+            <div><CardTitle>Connect the test project</CardTitle><CardDescription>Use only the Project URL and publishable key from Supabase. Never paste a secret key here.</CardDescription></div>
+          </CardHeader>
+          <CardContent>
+            <form className="cloud-form cloud-config-form" onSubmit={configure}>
+              <label><span>Project URL</span><Input type="url" value={projectUrl} onChange={(event) => setProjectUrl(event.target.value)} placeholder="https://project-ref.supabase.co" required /></label>
+              <label><span>Publishable key</span><Input type="password" value={publishableKey} onChange={(event) => setPublishableKey(event.target.value)} placeholder="sb_publishable_…" required /></label>
+              <Button type="submit" disabled={busy}><Cloud aria-hidden="true" />{busy ? "Connecting…" : "Connect project"}</Button>
+            </form>
+          </CardContent>
+        </Card>
+      ) : !cloud.authenticated ? (
+        <Card className="cloud-setup-card cloud-auth-card">
+          <CardHeader>
+            <span className="cloud-symbol"><UsersRound aria-hidden="true" /></span>
+            <div><CardTitle>{authMode === "sign-in" ? "Sign in to Slicer Cloud" : "Create a test producer"}</CardTitle><CardDescription>{cloud.projectUrl.replace(/^https?:\/\//, "")} · encrypted local session</CardDescription></div>
+          </CardHeader>
+          <CardContent>
+            <div className="cloud-auth-switch" role="group" aria-label="Cloud account action">
+              <button type="button" className={cn(authMode === "sign-in" && "is-active")} onClick={() => setAuthMode("sign-in")}>Sign in</button>
+              <button type="button" className={cn(authMode === "sign-up" && "is-active")} onClick={() => setAuthMode("sign-up")}>Create account</button>
+            </div>
+            {cloud.testAccounts?.length ? (
+              <div className="cloud-alpha-accounts" aria-label="Local alpha accounts">
+                <span>Ready-to-test accounts</span>
+                <div>
+                  {cloud.testAccounts.map((account) => (
+                    <Button
+                      key={account.id}
+                      type="button"
+                      variant="outline"
+                      disabled={busy}
+                      onClick={() => void perform(() => window.stemSlicer?.cloudSignInTestAccount(account.id) ?? Promise.resolve(undefined))}
+                    >
+                      <UserRound aria-hidden="true" /> Use {account.displayName}
+                    </Button>
+                  ))}
+                </div>
+                <small>Passwords stay encrypted or protected in the local alpha cache and never reach the interface.</small>
+              </div>
+            ) : null}
+            <form className="cloud-form" onSubmit={authenticate}>
+              {authMode === "sign-up" ? (
+                <div className="cloud-form-pair">
+                  <label><span>Producer name</span><Input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="+NRGY" required /></label>
+                  <label><span>Handle</span><Input value={handle} onChange={(event) => setHandle(event.target.value)} placeholder="nrgy-test" minLength={3} required /></label>
+                </div>
+              ) : null}
+              <div className="cloud-form-pair">
+                <label><span>Email</span><Input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required /></label>
+                <label><span>Password</span><Input type="password" value={password} onChange={(event) => setPassword(event.target.value)} minLength={6} required /></label>
+              </div>
+              <Button type="submit" disabled={busy}>{authMode === "sign-in" ? <LogIn aria-hidden="true" /> : <Plus aria-hidden="true" />}{busy ? "Please wait…" : authMode === "sign-in" ? "Sign in" : "Create producer"}</Button>
+            </form>
+          </CardContent>
+        </Card>
+      ) : (
+        <>
+          <section className="cloud-account-bar glass-panel">
+            <CloudProfileAvatar profile={cloud.profile} />
+            <div><strong>{cloud.profile?.displayName}</strong><span>@{cloud.profile?.handle} · {cloud.userEmail}</span></div>
+            <Badge variant="success">Private session</Badge>
+            <Button variant="outline" size="sm" disabled={busy} onClick={() => void perform(() => window.stemSlicer?.cloudSignOut() ?? Promise.resolve(undefined))}><LogOut aria-hidden="true" /> Sign out</Button>
+          </section>
+
+          <nav className="cloud-section-nav" aria-label="Cloud sections">
+            {([
+              { id: "profile" as const, label: "Profile", icon: UserRound },
+              { id: "producers" as const, label: "Producers", icon: UsersRound, count: acceptedConnections.length },
+              { id: "libraries" as const, label: "Libraries", icon: Layers3, count: ownLibraries.length + sharedLibraries.length },
+            ]).map((item) => {
+              const Icon = item.icon
+              return (
+                <button key={item.id} type="button" className={cn(activeSection === item.id && "is-active")} aria-pressed={activeSection === item.id} onClick={() => setActiveSection(item.id)}>
+                  <Icon aria-hidden="true" /><span>{item.label}</span>{item.count != null ? <small>{item.count}</small> : null}
+                </button>
+              )
+            })}
+          </nav>
+
+          {activeSection === "profile" ? (
+            <div className="cloud-profile-layout">
+              <Card className="cloud-panel cloud-profile-preview">
+                <CardContent>
+                  <div className="cloud-profile-identity">
+                    {cloud.profile ? <CloudProfileAvatar large profile={{ ...cloud.profile, avatarUrl: localAvatarPreview || cloud.profile.avatarUrl }} /> : null}
+                    <div>
+                      <span className="cloud-profile-kicker">Slicer producer</span>
+                      <h2>{profileDisplayName || cloud.profile?.displayName}</h2>
+                      <p>@{profileHandle || cloud.profile?.handle}</p>
+                    </div>
+                    {profileOpenToCollaborate ? <Badge variant="success">Open to collaborate</Badge> : <Badge>Private profile</Badge>}
+                  </div>
+                  <p className={cn("cloud-profile-bio", !profileBio && "is-empty")}>{profileBio || "Add a short bio so trusted producers know your sound and what you are building."}</p>
+                  <div className="cloud-profile-links">
+                    {profileInstagram ? (
+                      <button type="button" onClick={() => void window.stemSlicer?.openExternalUrl(`https://instagram.com/${profileInstagram.replace(/^@/, "")}`)}>
+                        <Instagram aria-hidden="true" /> @{profileInstagram.replace(/^@/, "")} <ExternalLink aria-hidden="true" />
+                      </button>
+                    ) : <span><Instagram aria-hidden="true" /> No Instagram added</span>}
+                  </div>
+                  <div className="cloud-aliases" aria-label="Producer aliases">
+                    <span>Credited aliases</span>
+                    <div>{profileAliases.split(/[,\n]/).map((alias) => alias.trim()).filter(Boolean).map((alias) => <i key={alias}>{alias}</i>)}</div>
+                    {!profileAliases.trim() ? <small>Add aliases to consolidate credits such as XT and Tnex is R.</small> : null}
+                  </div>
+                  <dl className="cloud-profile-stats">
+                    <div><dt>Connections</dt><dd>{acceptedConnections.length}</dd></div>
+                    <div><dt>Published loops</dt><dd>{formatCount(publishedLoopCount)}</dd></div>
+                    <div><dt>Published layers</dt><dd>{formatCount(publishedLayerCount)}</dd></div>
+                  </dl>
+                </CardContent>
+              </Card>
+
+              <Card className="cloud-panel cloud-profile-editor">
+                <CardHeader><div><CardTitle>Edit Cloud profile</CardTitle><CardDescription>This identity follows your shared libraries and generation credits.</CardDescription></div></CardHeader>
+                <CardContent>
+                  <form className="cloud-form" onSubmit={saveProfile}>
+                    <div className="cloud-avatar-editor">
+                      {cloud.profile ? <CloudProfileAvatar profile={{ ...cloud.profile, avatarUrl: localAvatarPreview || cloud.profile.avatarUrl }} /> : null}
+                      <span><strong>Profile photo</strong><small>Square PNG, JPEG, WebP or HEIC. Slicer prepares it before upload.</small></span>
+                      <Button type="button" variant="outline" size="sm" onClick={() => void pickProfileAvatar()}><Camera aria-hidden="true" /> Choose photo</Button>
+                    </div>
+                    <div className="cloud-form-pair">
+                      <label><span>Producer name</span><Input value={profileDisplayName} onChange={(event) => setProfileDisplayName(event.target.value)} maxLength={64} required /></label>
+                      <label><span>Cloud handle</span><Input value={profileHandle} onChange={(event) => setProfileHandle(event.target.value)} minLength={3} maxLength={32} required /></label>
+                    </div>
+                    <label><span>Bio</span><textarea value={profileBio} onChange={(event) => setProfileBio(event.target.value)} maxLength={280} placeholder="Sound, placements, and the collaborators you want to meet." /><small>{profileBio.length}/280</small></label>
+                    <div className="cloud-form-pair">
+                      <label><span>Instagram</span><Input value={profileInstagram} onChange={(event) => setProfileInstagram(event.target.value)} placeholder="nrgyloops" maxLength={30} /></label>
+                      <label><span>Producer aliases</span><Input value={profileAliases} onChange={(event) => setProfileAliases(event.target.value)} placeholder="XT, Tnex is R" /><small>Separate aliases with commas.</small></label>
+                    </div>
+                    <label className="cloud-opportunity-toggle">
+                      <input type="checkbox" checked={profileOpenToCollaborate} onChange={(event) => setProfileOpenToCollaborate(event.target.checked)} />
+                      <span><strong>Open to collaborate</strong><small>Show trusted producers that you welcome loop and placement opportunities.</small></span>
+                    </label>
+                    <Button type="submit" disabled={busy}><Check aria-hidden="true" />{busy ? "Saving…" : "Save profile"}</Button>
+                  </form>
+                </CardContent>
+              </Card>
+            </div>
+          ) : null}
+
+          {activeSection === "producers" ? (
+            <Card className="cloud-panel cloud-producers-panel">
+              <CardHeader><div><CardTitle>Trusted producers</CardTitle><CardDescription>Connect by handle. Both producers must accept before private libraries become available.</CardDescription></div><Badge>{acceptedConnections.length} connected</Badge></CardHeader>
+              <CardContent>
+                <form className="cloud-connect-form" onSubmit={requestConnection}>
+                  <label htmlFor="cloud-friend-handle"><span>Producer handle</span><Input id="cloud-friend-handle" value={friendHandle} onChange={(event) => setFriendHandle(event.target.value)} placeholder="producer-handle" required /></label>
+                  <Button type="submit" variant="outline" disabled={busy}><UsersRound aria-hidden="true" /> Send request</Button>
+                </form>
+                <div className="cloud-connection-list">
+                  {pendingConnections.map((connection) => (
+                    <div className="cloud-list-row cloud-producer-row" key={connection.id}>
+                      <CloudProfileAvatar profile={connection.profile} />
+                      <span><strong>{connection.profile.displayName}</strong><small>@{connection.profile.handle} · {connection.direction === "incoming" ? "wants to connect" : "request sent"}</small></span>
+                      {connection.direction === "incoming" ? <Button size="sm" onClick={() => void perform(() => window.stemSlicer?.cloudAcceptConnection(connection.id) ?? Promise.resolve(undefined))}>Accept request</Button> : <Badge variant="warning">Pending</Badge>}
+                    </div>
+                  ))}
+                  {acceptedConnections.map((connection) => (
+                    <div className="cloud-list-row cloud-producer-row" key={connection.id}>
+                      <CloudProfileAvatar profile={connection.profile} />
+                      <span>
+                        <strong>{connection.profile.displayName}</strong>
+                        <small>@{connection.profile.handle}{connection.profile.aliases.length ? ` · ${connection.profile.aliases.join(", ")}` : ""}</small>
+                        {connection.profile.bio ? <em>{connection.profile.bio}</em> : null}
+                      </span>
+                      <div className="cloud-producer-actions">
+                        {connection.profile.instagramHandle ? <button type="button" aria-label={`Open ${connection.profile.displayName} on Instagram`} onClick={() => void window.stemSlicer?.openExternalUrl(`https://instagram.com/${connection.profile.instagramHandle}`)}><Instagram aria-hidden="true" /></button> : null}
+                        <Badge variant={connection.profile.openToCollaborate ? "success" : "default"}>{connection.profile.openToCollaborate ? "Open" : "Connected"}</Badge>
+                      </div>
+                    </div>
+                  ))}
+                  {cloud.connections.length === 0 ? <p className="cloud-empty-copy">Connect a trusted producer to share private libraries and preserve credits.</p> : null}
+                </div>
+              </CardContent>
+            </Card>
+          ) : null}
+
+          {activeSection === "libraries" ? (
+            <div className="cloud-grid">
+              <Card className="cloud-panel">
+                <CardHeader><div><CardTitle>Your published libraries</CardTitle><CardDescription>Only active indexed layers are uploaded. Source folders stay untouched.</CardDescription></div><Badge>{ownLibraries.length} online</Badge></CardHeader>
+                <CardContent>
+                  <div className="cloud-library-list">
+                    {library.roots.map((root) => {
+                      const published = ownLibraries.find((item) => item.name === root.name && item.status === "ready")
+                      return (
+                        <div className="cloud-list-row cloud-library-row" key={root.path}>
+                          <span><strong>{root.name}</strong><small>{formatCount(root.layerCount)} indexed layers</small></span>
+                          {published ? <Badge variant="success">Published</Badge> : <Button variant="outline" size="sm" disabled={Boolean(publishEvent && publishEvent.type === "progress")} onClick={() => void publishLibrary(root.path)}><UploadCloud aria-hidden="true" /> Publish</Button>}
+                        </div>
+                      )
+                    })}
+                    {library.roots.length === 0 ? <p className="cloud-empty-copy">Index a small test folder in Generate before publishing it.</p> : null}
+                  </div>
+                  {publishEvent ? (
+                    <div className={cn("cloud-upload-progress", publishEvent.type === "failed" && "is-error")}>
+                      <span><strong>{publishEvent.message}</strong><small>{publishEvent.current != null && publishEvent.total ? `${publishEvent.current}/${publishEvent.total} files` : "Private Cloud transfer"}</small></span>
+                      <output>{publishEvent.percent ?? 0}%</output>
+                      <i aria-hidden="true"><i style={{ width: `${publishEvent.percent ?? 0}%` }} /></i>
+                    </div>
+                  ) : null}
+                </CardContent>
+              </Card>
+
+              <Card className="cloud-panel cloud-shared-panel">
+                <CardHeader><div><CardTitle>Libraries available to Generate</CardTitle><CardDescription>Metadata joins the randomizer first. Audio downloads only after a remote layer is selected.</CardDescription></div><Badge variant={sharedLibraries.some((item) => item.enabledForGenerate) ? "success" : "warning"}>{sharedLibraries.filter((item) => item.enabledForGenerate).length} enabled</Badge></CardHeader>
+                <CardContent>
+                  <div className="cloud-shared-grid">
+                    {sharedLibraries.map((item) => (
+                      <label className={cn("cloud-shared-library", item.enabledForGenerate && "is-enabled")} key={item.id}>
+                        <input type="checkbox" checked={item.enabledForGenerate} disabled={item.status !== "ready"} onChange={(event) => void perform(() => window.stemSlicer?.cloudSetLibraryEnabled(item.id, event.target.checked) ?? Promise.resolve(undefined))} />
+                        <CloudProfileAvatar profile={item.owner} />
+                        <span><strong>{item.name}</strong><small>{item.owner.displayName} · {formatCount(item.layerCount)} layers · {formatDecimalBytes(item.totalBytes)}</small></span>
+                        <Badge variant={item.status === "ready" ? "success" : "warning"}>{item.status}</Badge>
+                      </label>
+                    ))}
+                  </div>
+                  {sharedLibraries.length === 0 ? <p className="cloud-empty-copy">Accepted producers’ ready libraries will appear here.</p> : null}
+                </CardContent>
+              </Card>
+            </div>
+          ) : null}
+        </>
+      )}
     </div>
   )
 }
@@ -4685,7 +5403,7 @@ export function App() {
             <div hidden={studioActive}><HistoryView history={history} keyIssues={keyIssues} categoryCorrections={categoryCorrections} playback={playback} onReopen={reopenHistory} onTrashSelected={trashHistoryEntries} onSetKeyIssueActive={updateKeyIssueState} onDismissKeyIssue={dismissKeyIssue} onEditSourceLoop={openSourceLoopStudio} onTogglePlayback={toggleHistoryPlayback} /></div>
             {studioSource ? <SourceLoopStudio active={studioActive} {...studioSource} onSetKeyIssueActive={updateKeyIssueState} onSaved={async () => { await refreshLibrary(); await refreshCategoryCorrections() }} onClose={closeSourceLoopStudio} /> : null}
           </div>
-          <div hidden={activeView !== "cloud"}><CloudView /></div>
+          <div hidden={activeView !== "cloud"}><CloudView library={library} /></div>
         </main>
         {!studioActive ? <GlobalPlayer layers={playerLayers} playback={playback} contextLabel={playbackContext === "history" ? "History generation" : playbackContext === "quick-extract" ? "Extracted stack" : "Generated stack"} displayName={playbackContext === "generate" ? currentGenerationDisplayName : historyPlaybackName} /> : null}
       </div>
