@@ -5,6 +5,7 @@ import {
   canonicalizeCloudProducerCredits,
   CloudService,
   normalizeAliases,
+  normalizeCloudHandle,
   normalizeInstagramHandle,
   profileAvatarCropRect,
 } from "./cloud-service"
@@ -61,6 +62,12 @@ describe("Cloud generation source isolation", () => {
 })
 
 describe("Cloud producer profiles", () => {
+  it("preserves a branded leading plus and transliterates accents in Cloud handles", () => {
+    expect(normalizeCloudHandle("+Énergie")).toBe("+energie")
+    expect(normalizeCloudHandle("+ NRGY")).toBe("+nrgy")
+    expect(normalizeCloudHandle("Tnex is R")).toBe("tnex-is-r")
+  })
+
   it("normalizes Instagram handles and profile links", () => {
     expect(normalizeInstagramHandle("@nrgy.loops")).toBe("nrgy.loops")
     expect(normalizeInstagramHandle("https://www.instagram.com/nrgy.loops/?hl=en")).toBe("nrgy.loops")

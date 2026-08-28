@@ -105,8 +105,22 @@ interface CloudGenerateJobRequest extends GenerateJobRequest {
 
 type PublishListener = (event: CloudPublishEvent) => void
 
-function normalizeHandle(value: string): string {
-  return value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "")
+export function normalizeCloudHandle(value: string): string {
+  const normalized = value.trim().toLocaleLowerCase().normalize("NFKD").replace(/\p{M}+/gu, "")
+  const leadingPlus = normalized.startsWith("+")
+  const body = normalized
+    .replace(/^\+/, "")
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+  return `${leadingPlus ? "+" : ""}${body}`
+}
+
+function assertValidCloudHandle(handle: string): void {
+  const body = handle.replace(/^\+/, "")
+  if (body.length < 3 || handle.length > 32 || !/^\+?[a-z0-9][a-z0-9_-]*$/.test(handle)) {
+    throw new Error("Use 3–32 letters or numbers, with an optional leading +, hyphens or underscores.")
+  }
 }
 
 function profileFromRow(row: ProfileRow, avatarUrl?: string): CloudProfile {
@@ -395,9 +409,9 @@ export class CloudService {
 
     const email = session.user.email?.toLowerCase() ?? ""
     const pending = requested ?? this.settings.pendingProfiles?.[email]
-    const fallbackHandle = normalizeHandle(email.split("@")[0] || `producer-${session.user.id.slice(0, 8)}`)
-    const handle = normalizeHandle(pending?.handle || fallbackHandle).slice(0, 32)
-    if (handle.length < 3) throw new Error("The Cloud profile handle must contain at least 3 characters.")
+    const fallbackHandle = normalizeCloudHandle(email.split("@")[0] || `producer-${session.user.id.slice(0, 8)}`)
+    const handle = normalizeCloudHandle(pending?.handle || fallbackHandle).slice(0, 32)
+    assertValidCloudHandle(handle)
     const displayName = (pending?.displayName || handle).trim().slice(0, 64)
     const inserted = await client
       .from("profiles")
@@ -410,9 +424,9 @@ export class CloudService {
 
   async signUp(request: CloudSignUpRequest): Promise<CloudState> {
     const email = request.email.trim().toLowerCase()
-    const handle = normalizeHandle(request.handle)
+    const handle = normalizeCloudHandle(request.handle)
     const displayName = request.displayName.trim()
-    if (handle.length < 3) throw new Error("Choose a Cloud handle with at least 3 characters.")
+    assertValidCloudHandle(handle)
     if (!displayName) throw new Error("Enter the producer name shown to collaborators.")
     this.settings.pendingProfiles = {
       ...(this.settings.pendingProfiles ?? {}),
@@ -461,14 +475,14 @@ export class CloudService {
 
   async updateProfile(request: CloudProfileUpdateRequest): Promise<CloudState> {
     const session = await this.currentSession()
-    const handle = normalizeHandle(request.handle)
+    const handle = normalizeCloudHandle(request.handle)
     const displayName = request.displayName.trim().replace(/\s+/g, " ")
     const bio = request.bio.trim().replace(/\s+/g, " ")
     const instagramHandle = normalizeInstagramHandle(request.instagramHandle)
     const aliases = normalizeAliases(request.aliases)
       .filter((alias) => alias.toLocaleLowerCase() !== displayName.toLocaleLowerCase())
 
-    if (handle.length < 3) throw new Error("Choose a Cloud handle with at least 3 characters.")
+    assertValidCloudHandle(handle)
     if (!displayName || displayName.length > 64) throw new Error("Use a producer name between 1 and 64 characters.")
     if (bio.length > 280) throw new Error("Keep the profile bio within 280 characters.")
 
@@ -525,7 +539,7 @@ export class CloudService {
 
   async connect(handleValue: string): Promise<CloudState> {
     const session = await this.currentSession()
-    const handle = normalizeHandle(handleValue)
+    const handle = normalizeCloudHandle(handleValue)
     const target = await this.supabase()
       .from("profiles")
       .select(PROFILE_COLUMNS)
