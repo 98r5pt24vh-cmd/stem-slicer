@@ -40,7 +40,6 @@ const CATEGORIES = new Set([
   "Arp",
   "Brass",
   "Synth",
-  "Percussion",
 ])
 
 interface LayerRow {

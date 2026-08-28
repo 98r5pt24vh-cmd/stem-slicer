@@ -6,11 +6,13 @@ import { DatabaseSync } from "node:sqlite"
 import type {
   KeyIssueAffectedLayer,
   KeyIssueReport,
+  LibraryIssueType,
   ReportKeyIssueRequest,
 } from "../shared/contracts"
 
 interface FeedbackRow {
   id: string
+  issue_type: LibraryIssueType
   library_root: string
   source_loop_id: string
   reported_identity: string
@@ -45,6 +47,7 @@ function ensureFeedbackSchema(database: DatabaseSync): void {
   database.exec(`
     CREATE TABLE IF NOT EXISTS key_issue_reports (
       id TEXT PRIMARY KEY,
+      issue_type TEXT NOT NULL DEFAULT 'wrong-key',
       library_root TEXT NOT NULL,
       source_loop_id TEXT NOT NULL,
       reported_identity TEXT NOT NULL,
@@ -58,6 +61,15 @@ function ensureFeedbackSchema(database: DatabaseSync): void {
       UNIQUE (library_root, source_loop_id)
     )
   `)
+  const columns = database.prepare("PRAGMA table_info(key_issue_reports)").all() as unknown as Array<{ name: string }>
+  if (!columns.some((column) => column.name === "issue_type")) {
+    database.exec("ALTER TABLE key_issue_reports ADD COLUMN issue_type TEXT NOT NULL DEFAULT 'wrong-key'")
+  }
+}
+
+function normalizedIssueType(value: unknown): LibraryIssueType {
+  if (value === "wrong-key" || value === "wrong-slice") return value
+  throw new Error("Library issue type must be wrong-key or wrong-slice.")
 }
 
 function issueId(libraryRoot: string, sourceLoopId: string): string {
@@ -137,6 +149,7 @@ export function listKeyIssueReports(acceptedCachePath: string): KeyIssueReport[]
     `).all() as unknown as FeedbackRow[]
     return rows.map((row) => ({
       id: row.id,
+      issueType: normalizedIssueType(row.issue_type),
       libraryRoot: row.library_root,
       sourceLoopId: row.source_loop_id,
       reportedIdentity: row.reported_identity,
@@ -165,6 +178,7 @@ export function reportKeyIssue(
   request: ReportKeyIssueRequest,
 ): KeyIssueReport[] {
   const libraryRoot = normalizedAbsolutePath(request.libraryRoot, "Library root")
+  const issueType = normalizedIssueType(request.issueType)
   const sourceLoopId = normalizedText(request.sourceLoopId, "Source loop id")
   const reportedPath = normalizedAbsolutePath(request.reportedPath, "Reported layer path")
   const reportedIdentity = normalizedText(request.reportedIdentity, "Reported layer identity")
@@ -204,6 +218,7 @@ export function reportKeyIssue(
     database.prepare(`
       INSERT INTO key_issue_reports (
         id,
+        issue_type,
         library_root,
         source_loop_id,
         reported_identity,
@@ -214,8 +229,9 @@ export function reportKeyIssue(
         generation_output_directory,
         created_at,
         resolved_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
       ON CONFLICT (library_root, source_loop_id) DO UPDATE SET
+        issue_type = excluded.issue_type,
         reported_identity = excluded.reported_identity,
         reported_path = excluded.reported_path,
         reported_file = excluded.reported_file,
@@ -226,6 +242,7 @@ export function reportKeyIssue(
         resolved_at = NULL
     `).run(
       issueId(libraryRoot, sourceLoopId),
+      issueType,
       libraryRoot,
       sourceLoopId,
       reportedIdentity,

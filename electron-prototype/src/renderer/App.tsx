@@ -34,6 +34,7 @@ import {
   Repeat2,
   RotateCcw,
   ScanLine,
+  Scissors,
   Square,
   SkipBack,
   SlidersHorizontal,
@@ -82,6 +83,7 @@ import type {
   GenerateResult,
   GenerationStorageUsage,
   KeyIssueReport,
+  LibraryIssueType,
   LibraryOverview,
   LibraryProducerSummary,
   QuickConvertResult,
@@ -187,7 +189,7 @@ const NAVIGATION: NavItem[] = [
 const LAYER_CATEGORY_OPTIONS = [
   "Bass", "Chords", "Counter", "Keys", "Piano", "Lead", "Pad", "Pluck",
   "Vocal Chop", "Bells", "Strings", "Texture", "Guitar Lead", "Guitar Chords",
-  "Vocal", "Arp", "Brass", "Synth", "Percussion",
+  "Vocal", "Arp", "Brass", "Synth",
 ]
 
 const SHARP_CAMELOT_KEYS: Record<string, string> = {
@@ -1892,22 +1894,24 @@ function PageHeader({
 function WrongLayerAction({
   layer,
   active,
+  activeIssueType,
   disabled,
-  onReportKey,
+  onReportIssue,
   onCorrectCategory,
   onRestore,
 }: {
   layer: GeneratedLayer
   active: boolean
+  activeIssueType?: LibraryIssueType
   disabled: boolean
-  onReportKey: () => void | Promise<void>
+  onReportIssue: (issueType: LibraryIssueType) => void | Promise<void>
   onCorrectCategory: (category: string) => void | Promise<void>
   onRestore: () => void | Promise<void>
 }) {
   const [open, setOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
-  const [wrongKey, setWrongKey] = useState(false)
+  const [quarantineReason, setQuarantineReason] = useState<LibraryIssueType | null>(null)
   const [wrongCategory, setWrongCategory] = useState(false)
   const [category, setCategory] = useState(layer.category)
 
@@ -1918,7 +1922,7 @@ function WrongLayerAction({
       if (active) await onRestore()
       else {
         if (wrongCategory) await onCorrectCategory(category)
-        if (wrongKey) await onReportKey()
+        if (quarantineReason) await onReportIssue(quarantineReason)
       }
       setOpen(false)
     } catch (reason) {
@@ -1935,7 +1939,7 @@ function WrongLayerAction({
         setOpen(nextOpen)
         setError("")
         if (nextOpen) {
-          setWrongKey(false)
+          setQuarantineReason(null)
           setWrongCategory(false)
           setCategory(layer.category)
         }
@@ -1946,7 +1950,9 @@ function WrongLayerAction({
         disabled={disabled}
         aria-pressed={active}
         aria-label={active ? `La loop source de ${layer.role} est exclue` : `Signaler une erreur sur ${layer.role}`}
-        title={active ? "Wrong — source loop quarantined" : "Wrong — report a key or category error"}
+        title={active
+          ? `${activeIssueType === "wrong-slice" ? "Wrong slice" : "Wrong key"} — source loop quarantined`
+          : "Wrong — report a slice, key or category error"}
       >
         <CircleAlert aria-hidden="true" /><span>Wrong</span>
       </Dialog.Trigger>
@@ -1957,32 +1963,44 @@ function WrongLayerAction({
             <span className="confirmation-dialog-icon"><CircleAlert aria-hidden="true" /></span>
             <Dialog.Title>{active ? "This source loop is quarantined" : "What is wrong with this layer?"}</Dialog.Title>
             <Dialog.Description>{active
-              ? `${layer.sourceFile ?? layer.file} is currently excluded from future generations.`
-              : "Select the incorrect information. Category corrections are saved immediately; a wrong key quarantines the complete source loop."}</Dialog.Description>
+              ? `${layer.sourceFile ?? layer.file} is currently excluded from future generations because of a ${activeIssueType === "wrong-slice" ? "slice" : "key"} issue.`
+              : "Select the incorrect information. Category corrections are saved immediately; a wrong slice or key quarantines the complete source loop."}</Dialog.Description>
             {!active ? (
               <div className="wrong-layer-options">
-                <label className={cn("wrong-layer-option", wrongKey && "is-selected")}>
-                  <input type="checkbox" checked={wrongKey} onChange={(event) => setWrongKey(event.target.checked)} />
+                <label className={cn("wrong-layer-option", quarantineReason === "wrong-key" && "is-selected")}>
+                  <input
+                    type="checkbox"
+                    checked={quarantineReason === "wrong-key"}
+                    onChange={(event) => setQuarantineReason(event.target.checked ? "wrong-key" : null)}
+                  />
                   <span><strong>Wrong key</strong><small>Exclude every indexed layer from this source loop.</small></span>
+                </label>
+                <label className={cn("wrong-layer-option", quarantineReason === "wrong-slice" && "is-selected")}>
+                  <input
+                    type="checkbox"
+                    checked={quarantineReason === "wrong-slice"}
+                    onChange={(event) => setQuarantineReason(event.target.checked ? "wrong-slice" : null)}
+                  />
+                  <span><strong>Wrong slice</strong><small>Quarantine the complete source loop and add it to extraction review.</small></span>
                 </label>
                 <label className={cn("wrong-layer-option", wrongCategory && "is-selected")}>
                   <input type="checkbox" checked={wrongCategory} onChange={(event) => setWrongCategory(event.target.checked)} />
                   <span><strong>Wrong category</strong><small>Choose the category that should drive future generations.</small></span>
                 </label>
                 {wrongCategory ? <Select id={`wrong-category-${layer.id}`} label="Correct category" value={category} onChange={setCategory} options={LAYER_CATEGORY_OPTIONS} forceBelow /> : null}
-                {wrongKey ? <p className="wrong-layer-warning"><AlertTriangle aria-hidden="true" /> Matching cards will stop and disappear after confirmation.</p> : null}
+                {quarantineReason ? <p className="wrong-layer-warning"><AlertTriangle aria-hidden="true" /> Every matching card from this source loop will stop and disappear after confirmation.</p> : null}
               </div>
             ) : null}
             {error ? <p className="dialog-inline-error" role="alert">{error}</p> : null}
             <footer>
               <Dialog.Close className="dialog-cancel" disabled={saving}>Cancel</Dialog.Close>
               <Button
-                variant={active || wrongKey ? "destructive" : "default"}
-                disabled={saving || (!active && !wrongKey && (!wrongCategory || category === layer.category))}
+                variant={active || quarantineReason ? "destructive" : "default"}
+                disabled={saving || (!active && !quarantineReason && (!wrongCategory || category === layer.category))}
                 onClick={() => void run()}
               >
                 {active ? <Check aria-hidden="true" /> : <CircleAlert aria-hidden="true" />}
-                {saving ? "Saving…" : active ? "Restore source loop" : wrongKey ? "Save and quarantine loop" : "Save category"}
+                {saving ? "Saving…" : active ? "Restore source loop" : quarantineReason ? "Save and quarantine loop" : "Save category"}
               </Button>
             </footer>
           </Dialog.Popup>
@@ -2006,14 +2024,15 @@ function LayerCard({
   onScrubStart,
   onScrubEnd,
   onChange,
-  onToggleKeyIssue,
+  onToggleLibraryIssue,
   onCorrectCategory,
   onToggleLock,
   onRemove,
   categoryOptions,
   canRemove,
   updating = false,
-  keyIssueActive = false,
+  libraryIssueActive = false,
+  libraryIssueType,
   variant = "generate",
 }: {
   layer: GeneratedLayer
@@ -2029,14 +2048,15 @@ function LayerCard({
   onScrubStart: () => void
   onScrubEnd: () => void | Promise<void>
   onChange: (layer: GeneratedLayer) => void
-  onToggleKeyIssue?: () => void | Promise<void>
+  onToggleLibraryIssue?: (issueType?: LibraryIssueType) => void | Promise<void>
   onCorrectCategory?: (category: string) => void | Promise<void>
   onToggleLock?: () => void
   onRemove?: () => void
   categoryOptions?: string[]
   canRemove?: boolean
   updating?: boolean
-  keyIssueActive?: boolean
+  libraryIssueActive?: boolean
+  libraryIssueType?: LibraryIssueType
   variant?: "generate" | "extract"
 }) {
   const waveformScrubberRef = useRef<HTMLInputElement>(null)
@@ -2058,7 +2078,7 @@ function LayerCard({
   }
 
   return (
-    <Card className={cn("layer-card", isGenerateCard ? "layer-tone-spectral" : "layer-tone-extract", !isGenerateCard && "is-extract", isAudible && "is-audible", isMuted && "is-muted", isSyncSolo && "is-sync-solo", keyIssueActive && "has-key-issue")} aria-label={`${layer.category}, ${provenance.loopName}, ${provenance.producers.join(", ")}`}>
+    <Card className={cn("layer-card", isGenerateCard ? "layer-tone-spectral" : "layer-tone-extract", !isGenerateCard && "is-extract", isAudible && "is-audible", isMuted && "is-muted", isSyncSolo && "is-sync-solo", libraryIssueActive && "has-key-issue")} aria-label={`${layer.category}, ${provenance.loopName}, ${provenance.producers.join(", ")}`}>
       <CardHeader>
         <div className="layer-heading">
           {isGenerateCard ? (
@@ -2086,11 +2106,12 @@ function LayerCard({
         {isGenerateCard ? <div className="layer-card-actions">
           <WrongLayerAction
             layer={layer}
-            active={keyIssueActive}
+            active={libraryIssueActive}
+            activeIssueType={libraryIssueType}
             disabled={!layer.identity || !layer.sourcePath || !layer.sourceLoopId || !layer.libraryRoot || updating}
-            onReportKey={() => onToggleKeyIssue?.()}
+            onReportIssue={(issueType) => onToggleLibraryIssue?.(issueType)}
             onCorrectCategory={(category) => onCorrectCategory?.(category)}
-            onRestore={() => onToggleKeyIssue?.()}
+            onRestore={() => onToggleLibraryIssue?.()}
           />
           <button type="button" className={cn("layer-mini-action layer-lock-action", layer.locked && "is-active")} disabled={!layer.identity || updating} aria-pressed={Boolean(layer.locked)} aria-label={`${layer.locked ? "Libérer" : "Garder"} ${layer.role} pour la prochaine génération`} onClick={onToggleLock}>{layer.locked ? <Lock aria-hidden="true" /> : <Unlock aria-hidden="true" />}<span>Lock</span></button>
           <button type="button" className="layer-mini-action layer-remove-action" disabled={!canRemove || updating} aria-label={`Supprimer la card ${layer.role}`} onClick={onRemove}><X aria-hidden="true" /></button>
@@ -2853,7 +2874,7 @@ function GenerateView({
     setLayers((current) => current.map((layer, index) => index === slotIndex ? { ...layer, locked: !layer.locked } : layer))
   }
 
-  const toggleKeyIssue = async (slotIndex: number) => {
+  const toggleLibraryIssue = async (slotIndex: number, issueType?: LibraryIssueType) => {
     const layer = layers[slotIndex]
     if (!layer) return
     const issue = activeKeyIssueBySource.get(sourceLoopKey(layer.libraryRoot, layer.sourceLoopId))
@@ -2871,10 +2892,12 @@ function GenerateView({
         || !layer.sourcePath
         || !currentGenerationResult?.outputDirectory
       ) {
-        setStatus("This card does not expose enough source metadata to report its key.")
+        setStatus("This card does not expose enough source metadata to report the source loop.")
         return
       }
+      if (!issueType) throw new Error("Choose whether the source loop has a key or slice issue.")
       await onReportKeyIssue({
+        issueType,
         libraryRoot: layer.libraryRoot,
         sourceLoopId: layer.sourceLoopId,
         reportedIdentity: layer.identity,
@@ -2891,9 +2914,9 @@ function GenerateView({
       setLayers(remainingLayers)
       onUpdateHistory(currentGenerationResult, remainingLayers)
       setRecipeDirty(true)
-      setStatus(`Wrong key reported · ${rejectedLayers.length} card${rejectedLayers.length === 1 ? "" : "s"} removed and the complete source loop quarantined`)
+      setStatus(`${issueType === "wrong-slice" ? "Wrong slice" : "Wrong key"} reported · ${rejectedLayers.length} card${rejectedLayers.length === 1 ? "" : "s"} removed and the complete source loop quarantined`)
     } catch (error) {
-      const message = error instanceof Error ? error.message : "The key issue could not be saved."
+      const message = error instanceof Error ? error.message : "The library issue could not be saved."
       setStatus(message)
       throw error
     }
@@ -3159,14 +3182,15 @@ function GenerateView({
                 onSeek={(nextProgress) => playback.previewScrub(layer.id, nextProgress)}
                 onScrubEnd={playback.endScrub}
                 onChange={(next) => updateGeneratedLayer(index, next)}
-                onToggleKeyIssue={() => toggleKeyIssue(index)}
+                onToggleLibraryIssue={(issueType) => toggleLibraryIssue(index, issueType)}
                 onCorrectCategory={(category) => correctLayerCategory(index, category)}
                 onToggleLock={() => toggleLayerLock(index)}
                 onRemove={() => removeLayerCard(index)}
                 categoryOptions={selectedCategories.map((category) => category.name)}
                 canRemove={layers.length > 1}
                 updating={generateUpdateJob.busy}
-                keyIssueActive={activeKeyIssueBySource.has(sourceLoopKey(layer.libraryRoot, layer.sourceLoopId))}
+                libraryIssueActive={activeKeyIssueBySource.has(sourceLoopKey(layer.libraryRoot, layer.sourceLoopId))}
+                libraryIssueType={activeKeyIssueBySource.get(sourceLoopKey(layer.libraryRoot, layer.sourceLoopId))?.issueType}
               />
             ))}
             <button type="button" className="add-layer-card" onClick={addLayerCard}>
@@ -4454,7 +4478,7 @@ function HistoryView({
         <header className="history-section-heading">
           <div>
             <h2 id="key-issues-title">Library corrections</h2>
-            <p>Review quarantined source loops and the category fixes already added to the truth feedback.</p>
+            <p>Review source loops quarantined for key or slicing problems and category fixes already added to truth feedback.</p>
           </div>
           <Badge variant={activeIssueCount > 0 ? "warning" : "secondary"}>{activeIssueCount} loop issue{activeIssueCount === 1 ? "" : "s"} · {categoryCorrections.length} category fix{categoryCorrections.length === 1 ? "" : "es"}</Badge>
         </header>
@@ -4464,7 +4488,9 @@ function HistoryView({
             {keyIssues.map((issue) => (
               <Card key={issue.id} className={cn("key-issue-item", issue.active && "is-active")}>
                 <CardContent>
-                  <span className="key-issue-icon"><CircleAlert aria-hidden="true" /></span>
+                  <span className={cn("key-issue-icon", issue.issueType === "wrong-slice" && "is-wrong-slice")}>
+                    {issue.issueType === "wrong-slice" ? <Scissors aria-hidden="true" /> : <CircleAlert aria-hidden="true" />}
+                  </span>
                   <div className="key-issue-copy">
                     <strong title={issue.reportedPath}>{issue.reportedFile}</strong>
                     <small title={issue.sourceLoopId}>Source loop · {issue.sourceLoopId}</small>
@@ -4482,8 +4508,8 @@ function HistoryView({
                   </div>
                   <div className="key-issue-spec">
                     <Badge variant={issue.active ? "warning" : "secondary"}>{issue.active ? "Quarantined" : "Restored"}</Badge>
-                    <span>Detected · {issue.detectedKey}</span>
-                    <span>Generated in · {issue.targetKey}</span>
+                    <span>{issue.issueType === "wrong-slice" ? "Wrong slice" : `Detected · ${issue.detectedKey}`}</span>
+                    <span>{issue.issueType === "wrong-slice" ? "Extraction review" : `Generated in · ${issue.targetKey}`}</span>
                   </div>
                   <div className="key-issue-actions">
                     <Button variant="outline" size="sm" onClick={() => void window.stemSlicer?.revealPath(issue.reportedPath)}><FolderOpen /> Reveal</Button>

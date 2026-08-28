@@ -3670,6 +3670,11 @@ td strong {
   height: 17px;
 }
 
+.key-issue-icon.is-wrong-slice {
+  background: rgb(235 188 0 / 0.12);
+  color: var(--signal-orange);
+}
+
 .key-issue-copy {
   min-width: 0;
 }

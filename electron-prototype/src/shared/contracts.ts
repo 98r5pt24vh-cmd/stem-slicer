@@ -291,8 +291,11 @@ export interface KeyIssueAffectedLayer {
   detectedKey: string
 }
 
+export type LibraryIssueType = "wrong-key" | "wrong-slice"
+
 export interface KeyIssueReport {
   id: string
+  issueType: LibraryIssueType
   libraryRoot: string
   sourceLoopId: string
   reportedIdentity: string
@@ -319,6 +322,7 @@ export interface CategoryCorrection {
 }
 
 export interface ReportKeyIssueRequest {
+  issueType: LibraryIssueType
   libraryRoot: string
   sourceLoopId: string
   reportedIdentity: string
