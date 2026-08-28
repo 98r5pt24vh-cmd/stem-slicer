@@ -7,6 +7,7 @@ from array import array
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import redirect_stdout
 from dataclasses import asdict, replace
+from itertools import combinations
 import json
 import math
 import os
@@ -113,66 +114,238 @@ def _record_producers(record: dict) -> list[str]:
     return list(_source_provenance(filename)["producers"])
 
 
-def _filter_records_by_collaborators(
+def _external_producers(values) -> list[str]:
+    return [
+        producer
+        for producer in _unique_producers(values)
+        if producer.casefold() != _PRIMARY_PRODUCER.casefold()
+    ]
+
+
+def _filter_records_by_allowed_producers(
     records: list[dict],
     *,
     allowed_producers,
-    max_producer_count: int,
-    categories: tuple[str, ...],
-    seed: int,
-) -> tuple[list[dict], list[str]]:
+) -> list[dict]:
+    """Keep solo material plus sources credited only to allowed collaborators."""
+
     allowed_names = _unique_producers(allowed_producers or ())
     if allowed_names:
         allowed_keys = {producer.casefold() for producer in allowed_names}
         allowed_keys.add(_PRIMARY_PRODUCER.casefold())
-        records = [
+        return [
             record
             for record in records
             if all(producer.casefold() in allowed_keys for producer in _record_producers(record))
         ]
+    return records
 
-    selected_external: list[str] = []
-    if max_producer_count > 0:
-        records_by_external_group: dict[tuple[str, ...], list[dict]] = {}
-        external_names_by_group: dict[tuple[str, ...], list[str]] = {}
-        for record in records:
-            credits = _unique_producers(_record_producers(record), include_primary=True)
-            if len(credits) != max_producer_count:
+
+def _normalise_allowed_credit_counts(payload: dict) -> list[int]:
+    counts = sorted({
+        int(value)
+        for value in payload.get("allowedCreditCounts") or ()
+        if str(value).strip().isdigit() and 1 <= int(value) <= 3
+    })
+    if counts:
+        return counts
+    legacy_count = max(0, int(payload.get("maxProducerCount") or 0))
+    if legacy_count in (1, 2, 3):
+        return [legacy_count]
+    return [1, 2]
+
+
+def _candidate_external_producer_keys(candidate) -> frozenset[str]:
+    return frozenset(
+        producer.casefold()
+        for producer in _external_producers(
+            _source_provenance(candidate.path.name)["producers"]
+        )
+    )
+
+
+def _collaborator_pool_specs(
+    candidates,
+    *,
+    allowed_credit_counts: list[int],
+    required_producers,
+    locked_identities,
+    seed: int,
+):
+    """Build final-credit groups while retaining solo layers inside mixed pools."""
+
+    display_names: dict[str, str] = {}
+    external_by_identity = {}
+    for candidate in candidates:
+        external_names = _external_producers(
+            _source_provenance(candidate.path.name)["producers"]
+        )
+        external_keys = frozenset(producer.casefold() for producer in external_names)
+        external_by_identity[candidate.identity] = external_keys
+        for producer in external_names:
+            display_names.setdefault(producer.casefold(), producer)
+
+    required_keys = {
+        producer.casefold()
+        for producer in _external_producers(required_producers or ())
+    }
+    available_keys = set(display_names)
+    unavailable_required = sorted(required_keys - available_keys)
+    if unavailable_required:
+        raise ValueError(
+            "Required collaborators have no eligible layers in the active libraries: "
+            + ", ".join(unavailable_required)
+        )
+
+    locked_keys: set[str] = set()
+    for identity in locked_identities or ():
+        if identity:
+            locked_keys.update(external_by_identity.get(str(identity), ()))
+    fixed_keys = required_keys | locked_keys
+    rng = random.Random(seed)
+    mode_order = list(allowed_credit_counts)
+    rng.shuffle(mode_order)
+    specs = []
+    for credit_count in mode_order:
+        external_slots = credit_count - 1
+        if len(fixed_keys) > external_slots:
+            continue
+        optional_keys = sorted(available_keys - fixed_keys)
+        groups = [
+            frozenset((*fixed_keys, *selection))
+            for selection in combinations(optional_keys, external_slots - len(fixed_keys))
+        ]
+        rng.shuffle(groups)
+        # A very large collaborator catalogue must not make one Generate click
+        # attempt thousands of complete policy selections before it can fail.
+        for group in groups[:128]:
+            pool = tuple(
+                candidate
+                for candidate in candidates
+                if external_by_identity[candidate.identity].issubset(group)
+            )
+            if not pool:
                 continue
-            external_names = [
-                producer
-                for producer in credits
-                if producer.casefold() != _PRIMARY_PRODUCER.casefold()
-            ]
-            group = tuple(sorted(producer.casefold() for producer in external_names))
-            records_by_external_group.setdefault(group, []).append(record)
-            external_names_by_group.setdefault(group, external_names)
+            specs.append((credit_count, group, pool, required_keys, display_names))
+    return specs
 
-        groups = list(records_by_external_group)
-        random.Random(seed).shuffle(groups)
-        tie_order = {group: index for index, group in enumerate(groups)}
-        requested_categories = {category.casefold() for category in categories}
 
-        def group_score(group: tuple[str, ...]) -> tuple[int, int, int]:
-            group_records = records_by_external_group[group]
-            covered_categories = {
-                str(
-                    record.get("manual_label")
-                    or record.get("predicted_label")
-                    or ""
-                ).casefold()
-                for record in group_records
-            }
-            requested_coverage = len(covered_categories & requested_categories)
-            return (-requested_coverage, -len(group_records), tie_order[group])
+def _selection_collaborator_state(plan, required_keys: set[str]):
+    external_by_selection = [
+        _candidate_external_producer_keys(selection.candidate)
+        for selection in plan.selections
+    ]
+    present = set().union(*external_by_selection) if external_by_selection else set()
+    required_layer_count = sum(
+        bool(external_keys & required_keys)
+        for external_keys in external_by_selection
+    )
+    return present, required_layer_count
 
-        if groups:
-            selected_group = min(groups, key=group_score)
-            records = records_by_external_group[selected_group]
-            selected_external = external_names_by_group[selected_group]
+
+def _select_constrained_collaborator_plan(
+    candidates,
+    request,
+    *,
+    target_external_keys: frozenset[str],
+    required_keys: set[str],
+    required_contribution_percent: int,
+    select_generation,
+):
+    """Select normally, then replace unlocked slots until credit rules match."""
+
+    plan = select_generation(candidates, request)
+    required_layer_target = 0
+    if required_keys:
+        required_layer_target = min(
+            len(request.categories),
+            max(
+                len(required_keys),
+                math.floor(
+                    len(request.categories) * required_contribution_percent / 100.0
+                    + 0.5
+                ),
+            ),
+        )
+
+    def score(candidate_plan):
+        present, required_layer_count = _selection_collaborator_state(
+            candidate_plan,
+            required_keys,
+        )
+        missing_count = len(target_external_keys - present)
+        share_distance = (
+            abs(required_layer_count - required_layer_target)
+            if required_keys
+            else 0
+        )
+        return missing_count, share_distance
+
+    original_locked = tuple(request.locked_identities_by_slot)
+    candidate_by_identity = {candidate.identity: candidate for candidate in candidates}
+    maximum_attempts = max(1, len(request.categories) * 4)
+    for _ in range(maximum_attempts):
+        current_score = score(plan)
+        if current_score == (0, 0):
+            return replace(plan, request=request)
+        present, current_required_layers = _selection_collaborator_state(plan, required_keys)
+        missing = target_external_keys - present
+        if missing:
+            target_candidates = tuple(
+                candidate
+                for candidate in candidates
+                if _candidate_external_producer_keys(candidate) & missing
+            )
+        elif current_required_layers < required_layer_target:
+            target_candidates = tuple(
+                candidate
+                for candidate in candidates
+                if _candidate_external_producer_keys(candidate) & required_keys
+            )
         else:
-            records = []
-    return records, selected_external
+            target_candidates = tuple(
+                candidate
+                for candidate in candidates
+                if not (_candidate_external_producer_keys(candidate) & required_keys)
+            )
+
+        best_plan = None
+        best_score = current_score
+        for slot_index in range(len(request.categories)):
+            if original_locked[slot_index] is not None:
+                continue
+            trial_locks = tuple(
+                None if index == slot_index else selection.candidate.identity
+                for index, selection in enumerate(plan.selections)
+            )
+            locked_candidates = tuple(
+                candidate_by_identity[identity]
+                for identity in trial_locks
+                if identity is not None and identity in candidate_by_identity
+            )
+            trial_pool = tuple({
+                candidate.identity: candidate
+                for candidate in (*locked_candidates, *target_candidates)
+            }.values())
+            try:
+                trial_plan = select_generation(
+                    trial_pool,
+                    replace(request, locked_identities_by_slot=trial_locks),
+                )
+            except ValueError:
+                continue
+            trial_score = score(trial_plan)
+            if trial_score < best_score:
+                best_plan = trial_plan
+                best_score = trial_score
+        if best_plan is None:
+            break
+        plan = best_plan
+
+    raise ValueError(
+        "No compatible layer combination can satisfy the selected collaborator credits "
+        "and contribution share."
+    )
 
 
 def _generation_producers(selections) -> list[str]:
@@ -1119,25 +1292,16 @@ def generation(job_id: str, payload: dict) -> dict:
                 eligible_records.append(record)
         records = eligible_records
     categories = tuple(str(item) for item in payload.get("categories") or ())
-    max_producer_count = max(0, int(payload.get("maxProducerCount") or 0))
-    records, selected_external_producers = _filter_records_by_collaborators(
+    records = _filter_records_by_allowed_producers(
         records,
         allowed_producers=payload.get("allowedProducers"),
-        max_producer_count=max_producer_count,
-        categories=categories,
-        seed=int(payload.get("seed") or 0),
     )
     if not records:
         raise ValueError("No indexed layer matches the current collaborator selection.")
     quarantine_label = f" · {quarantined_count} quarantined" if quarantined_count else ""
-    collaborator_label = ""
-    if max_producer_count == 1:
-        collaborator_label = " · solo"
-    elif selected_external_producers:
-        collaborator_label = f" · +NRGY + {' + '.join(selected_external_producers)}"
     progress_percent(
         job_id,
-        f"Loaded {len(records)} indexed layers{quarantine_label}{collaborator_label}",
+        f"Loaded {len(records)} allowed indexed layers{quarantine_label}",
         3,
         "selection",
     )
@@ -1168,6 +1332,26 @@ def generation(job_id: str, payload: dict) -> dict:
             skipped += 1
     if not candidates:
         raise ValueError("No scanned layer has enough BPM/key metadata to generate.")
+    allowed_credit_counts = _normalise_allowed_credit_counts(payload)
+    required_contribution_percent = min(
+        100,
+        max(10, int(payload.get("requiredContributionPercent") or 20)),
+    )
+    pool_specs = _collaborator_pool_specs(
+        candidates,
+        allowed_credit_counts=allowed_credit_counts,
+        required_producers=payload.get("requiredProducers"),
+        locked_identities=request.locked_identities_by_slot,
+        seed=request.seed,
+    )
+    if not pool_specs:
+        modes = ", ".join(
+            "Solo" if count == 1 else "Duo" if count == 2 else "Trio"
+            for count in allowed_credit_counts
+        )
+        raise ValueError(
+            f"No collaborator group can satisfy the enabled final-loop modes ({modes})."
+        )
     progress_percent(
         job_id,
         f"Selecting compatible layers ({skipped} metadata rows skipped)",
@@ -1175,11 +1359,40 @@ def generation(job_id: str, payload: dict) -> dict:
         "selection",
     )
     selection_started = time.perf_counter()
-    plan = select_generation(candidates, request)
+    plan = None
+    selected_external_producers: list[str] = []
+    last_selection_error: Exception | None = None
+    for _credit_count, external_group, candidate_pool, required_keys, display_names in pool_specs:
+        try:
+            plan = _select_constrained_collaborator_plan(
+                candidate_pool,
+                request,
+                target_external_keys=external_group,
+                required_keys=required_keys,
+                required_contribution_percent=required_contribution_percent,
+                select_generation=select_generation,
+            )
+        except ValueError as exc:
+            last_selection_error = exc
+            continue
+        selected_external_producers = [
+            display_names.get(key, key)
+            for key in sorted(external_group)
+        ]
+        break
+    if plan is None:
+        if last_selection_error is not None:
+            raise last_selection_error
+        raise ValueError("No compatible collaborator combination could fill this recipe.")
     selection_seconds = time.perf_counter() - selection_started
+    collaborator_label = (
+        f" · +NRGY + {' + '.join(selected_external_producers)}"
+        if selected_external_producers
+        else " · solo"
+    )
     progress_percent(
         job_id,
-        f"Selected {len(plan.selections)} compatible layers in {selection_seconds:.2f}s",
+        f"Selected {len(plan.selections)} compatible layers{collaborator_label} in {selection_seconds:.2f}s",
         12,
         "selection",
     )

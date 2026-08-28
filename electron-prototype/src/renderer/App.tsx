@@ -306,6 +306,15 @@ const COLLABORATOR_SETTINGS_STORAGE_KEY = "stem-slicer-electron.collaborator-set
 const PRODUCER_PROFILES_CHANGED_EVENT = "stem-slicer-producer-profiles-changed"
 
 type ProducerSortDirection = "desc" | "asc"
+type CollaboratorCreditCount = 1 | 2 | 3
+
+const DEFAULT_COLLABORATOR_CREDIT_COUNTS: CollaboratorCreditCount[] = [1, 2]
+
+function normalizedCreditCounts(values: unknown): CollaboratorCreditCount[] {
+  if (!Array.isArray(values)) return []
+  return [...new Set(values.map(Number).filter((value): value is CollaboratorCreditCount => value === 1 || value === 2 || value === 3))]
+    .sort((left, right) => left - right)
+}
 
 interface ProducerProfileSettings {
   avatarPath?: string
@@ -314,7 +323,9 @@ interface ProducerProfileSettings {
 
 interface CollaboratorSettings {
   allowedProducers: string[] | null
-  maxProducerCount: number
+  allowedCreditCounts: CollaboratorCreditCount[]
+  requiredProducers: string[]
+  requiredContributionPercent: number
   pinnedProducers: string[]
   producerSortDirection: ProducerSortDirection
   profiles: Record<string, ProducerProfileSettings>
@@ -323,13 +334,26 @@ interface CollaboratorSettings {
 function loadCollaboratorSettings(): CollaboratorSettings {
   try {
     const raw = window.localStorage.getItem(COLLABORATOR_SETTINGS_STORAGE_KEY)
-    if (!raw) return { allowedProducers: null, maxProducerCount: 0, pinnedProducers: [], producerSortDirection: "desc", profiles: {} }
+    if (!raw) return { allowedProducers: null, allowedCreditCounts: DEFAULT_COLLABORATOR_CREDIT_COUNTS, requiredProducers: [], requiredContributionPercent: 20, pinnedProducers: [], producerSortDirection: "desc", profiles: {} }
     const parsed = JSON.parse(raw)
+    const storedCreditCounts = normalizedCreditCounts(parsed.allowedCreditCounts)
+    const legacyMaximum = [0, 1, 2, 3].includes(Number(parsed.maxProducerCount)) ? Number(parsed.maxProducerCount) : null
+    const legacyCreditCounts = legacyMaximum === 0
+      ? [1, 2, 3] as CollaboratorCreditCount[]
+      : legacyMaximum
+        ? Array.from({ length: legacyMaximum }, (_, index) => index + 1) as CollaboratorCreditCount[]
+        : DEFAULT_COLLABORATOR_CREDIT_COUNTS
     return {
       allowedProducers: Array.isArray(parsed.allowedProducers)
         ? parsed.allowedProducers.filter((value: unknown): value is string => typeof value === "string")
         : null,
-      maxProducerCount: [0, 1, 2, 3].includes(Number(parsed.maxProducerCount)) ? Number(parsed.maxProducerCount) : 0,
+      allowedCreditCounts: storedCreditCounts.length > 0 ? storedCreditCounts : legacyCreditCounts,
+      requiredProducers: Array.isArray(parsed.requiredProducers)
+        ? parsed.requiredProducers.filter((value: unknown): value is string => typeof value === "string")
+        : [],
+      requiredContributionPercent: Number.isFinite(Number(parsed.requiredContributionPercent))
+        ? Math.min(100, Math.max(10, Math.round(Number(parsed.requiredContributionPercent) / 10) * 10))
+        : Number(parsed.minimumLayersPerRequiredProducer) === 2 ? 40 : 20,
       pinnedProducers: Array.isArray(parsed.pinnedProducers)
         ? parsed.pinnedProducers.filter((value: unknown): value is string => typeof value === "string")
         : [],
@@ -337,7 +361,7 @@ function loadCollaboratorSettings(): CollaboratorSettings {
       profiles: parsed.profiles && typeof parsed.profiles === "object" ? parsed.profiles : {},
     }
   } catch {
-    return { allowedProducers: null, maxProducerCount: 0, pinnedProducers: [], producerSortDirection: "desc", profiles: {} }
+    return { allowedProducers: null, allowedCreditCounts: DEFAULT_COLLABORATOR_CREDIT_COUNTS, requiredProducers: [], requiredContributionPercent: 20, pinnedProducers: [], producerSortDirection: "desc", profiles: {} }
   }
 }
 
@@ -437,41 +461,71 @@ function ProducerAvatarStack({
 
 function CollaboratorsDialog({
   producers,
+  generationLayerCount,
   allowedProducers,
-  maxProducerCount,
+  allowedCreditCounts,
+  requiredProducers,
+  requiredContributionPercent,
   profiles,
   pinnedProducers,
   producerSortDirection,
   onAllowedProducersChange,
   onAllowAllProducers,
-  onMaxProducerCountChange,
+  onAllowedCreditCountsChange,
+  onRequiredProducersChange,
+  onRequiredContributionPercentChange,
   onPinnedProducersChange,
   onProducerSortDirectionChange,
   disabled,
 }: {
   producers: LibraryProducerSummary[]
+  generationLayerCount: number
   allowedProducers: string[]
-  maxProducerCount: number
+  allowedCreditCounts: CollaboratorCreditCount[]
+  requiredProducers: string[]
+  requiredContributionPercent: number
   profiles: Record<string, ProducerProfileSettings>
   pinnedProducers: string[]
   producerSortDirection: ProducerSortDirection
   onAllowedProducersChange: (producers: string[]) => void
   onAllowAllProducers: () => void
-  onMaxProducerCountChange: (count: number) => void
+  onAllowedCreditCountsChange: (counts: CollaboratorCreditCount[]) => void
+  onRequiredProducersChange: (producers: string[]) => void
+  onRequiredContributionPercentChange: (percent: number) => void
   onPinnedProducersChange: (producers: string[]) => void
   onProducerSortDirectionChange: (direction: ProducerSortDirection) => void
   disabled: boolean
 }) {
   const allowedSet = new Set(allowedProducers.map((producer) => producer.toLowerCase()))
+  const requiredSet = new Set(requiredProducers.map((producer) => producer.toLowerCase()))
   const pinnedSet = new Set(pinnedProducers.map((producer) => producer.toLowerCase()))
   const selectableProducers = producers.filter((producer) => producer.name.toLowerCase() !== PRIMARY_PRODUCER.toLowerCase())
   const allSelectableAllowed = selectableProducers.length > 0
     && selectableProducers.every((producer) => allowedSet.has(producer.name.toLowerCase()))
   const toggleProducer = (producer: string, checked: boolean) => {
     if (producer.toLowerCase() === PRIMARY_PRODUCER.toLowerCase()) return
+    if (!checked && requiredSet.has(producer.toLowerCase())) {
+      onRequiredProducersChange(requiredProducers.filter((item) => item.toLowerCase() !== producer.toLowerCase()))
+    }
     onAllowedProducersChange(checked
       ? [...allowedProducers, producer]
       : allowedProducers.filter((item) => item.toLowerCase() !== producer.toLowerCase()))
+  }
+  const toggleRequired = (producer: string) => {
+    const required = requiredSet.has(producer.toLowerCase())
+    if (!required) {
+      const collaborativeCounts = allowedCreditCounts.filter((count) => count > 1)
+      onAllowedCreditCountsChange(collaborativeCounts.length > 0 ? collaborativeCounts : [2])
+    }
+    onRequiredProducersChange(required
+      ? requiredProducers.filter((item) => item.toLowerCase() !== producer.toLowerCase())
+      : [...requiredProducers, producer])
+  }
+  const toggleCreditCount = (count: CollaboratorCreditCount, checked: boolean) => {
+    const next = checked
+      ? [...allowedCreditCounts, count]
+      : allowedCreditCounts.filter((item) => item !== count)
+    if (next.length > 0) onAllowedCreditCountsChange(normalizedCreditCounts(next))
   }
   const togglePinned = (producer: string) => {
     const pinned = pinnedSet.has(producer.toLowerCase())
@@ -479,12 +533,24 @@ function CollaboratorsDialog({
       ? pinnedProducers.filter((item) => item.toLowerCase() !== producer.toLowerCase())
       : [...pinnedProducers, producer])
   }
-  const countOptions = [
-    { value: 1, label: "Solo", detail: "Only you" },
-    { value: 2, label: "Duo", detail: "Exactly 2" },
-    { value: 3, label: "Trio", detail: "Exactly 3" },
-    { value: 0, label: "Any", detail: "Any count" },
+  const countOptions: Array<{ value: CollaboratorCreditCount; label: string; detail: string }> = [
+    { value: 1, label: "Solo", detail: "1 producer" },
+    { value: 2, label: "Duo", detail: "2 producers" },
+    { value: 3, label: "Trio", detail: "3 producers" },
   ]
+  const maximumRequiredProducers = Math.max(...allowedCreditCounts) - 1
+  const requiredLayerTarget = Math.min(
+    generationLayerCount,
+    Math.max(requiredProducers.length, Math.round(generationLayerCount * requiredContributionPercent / 100)),
+  )
+  const toggleAllSelectable = () => {
+    if (allSelectableAllowed) {
+      onAllowedProducersChange([PRIMARY_PRODUCER])
+      onRequiredProducersChange([])
+      return
+    }
+    onAllowAllProducers()
+  }
 
   return (
     <Dialog.Root>
@@ -503,17 +569,20 @@ function CollaboratorsDialog({
               <Dialog.Close className="dialog-close" aria-label="Close collaborators"><X /></Dialog.Close>
             </header>
 
-            <div className="collaborator-limit" role="radiogroup" aria-labelledby="collaborator-limit-label">
-              <p id="collaborator-limit-label">People credited on the final loop</p>
+            <div className="collaborator-limit" role="group" aria-labelledby="collaborator-limit-label">
+              <p id="collaborator-limit-label">Final loop may be</p>
               <div>
                 {countOptions.map((option) => (
-                  <label className={cn(maxProducerCount === option.value && "is-selected")} key={option.label}>
+                  <label className={cn(allowedCreditCounts.includes(option.value) && "is-selected")} key={option.label}>
                     <input
-                      type="radio"
-                      name="collaborator-limit"
+                      type="checkbox"
                       value={option.value}
-                      checked={maxProducerCount === option.value}
-                      onChange={() => onMaxProducerCountChange(option.value)}
+                      checked={allowedCreditCounts.includes(option.value)}
+                      disabled={
+                        (allowedCreditCounts.length === 1 && allowedCreditCounts.includes(option.value))
+                        || (option.value === 1 && requiredProducers.length > 0)
+                      }
+                      onChange={(event) => toggleCreditCount(option.value, event.target.checked)}
                     />
                     <strong>{option.label}</strong>
                     <small>{option.detail}</small>
@@ -523,7 +592,7 @@ function CollaboratorsDialog({
             </div>
 
             <div className="collaborator-list-heading">
-              <div><strong>Local profiles</strong><small>{allowedProducers.length} allowed</small></div>
+              <div><strong>On this Mac</strong><small>{Math.max(0, allowedProducers.length - 1)} collaborators allowed · never forced</small></div>
               <div className="collaborator-list-tools">
                 <button
                   type="button"
@@ -538,9 +607,7 @@ function CollaboratorsDialog({
                 {selectableProducers.length > 0 ? (
                   <button
                     type="button"
-                    onClick={() => allSelectableAllowed
-                      ? onAllowedProducersChange([PRIMARY_PRODUCER])
-                      : onAllowAllProducers()}
+                    onClick={toggleAllSelectable}
                   >
                     {allSelectableAllowed ? "Disable all" : "Allow all"}
                   </button>
@@ -551,6 +618,7 @@ function CollaboratorsDialog({
               {producers.map((producer) => {
                 const isPrimary = producer.name.toLowerCase() === PRIMARY_PRODUCER.toLowerCase()
                 const checked = isPrimary || allowedSet.has(producer.name.toLowerCase())
+                const required = !isPrimary && requiredSet.has(producer.name.toLowerCase())
                 const pinned = pinnedSet.has(producer.name.toLowerCase())
                 return (
                   <div className={cn("collaborator-row", checked && "is-selected")} key={producer.name}>
@@ -564,9 +632,24 @@ function CollaboratorsDialog({
                       <ProducerAvatar producer={producer.name} profile={producerProfileFor(profiles, producer.name)} />
                       <span>
                         <strong>{producer.name}{isPrimary ? <em>You</em> : null}</strong>
-                        <small>{formatCount(producer.loopCount)} loops</small>
+                        <small>{formatCount(producer.loopCount)} loops · {formatCount(producer.layerCount)} layers</small>
                       </span>
                     </label>
+                    {!isPrimary ? (
+                      <button
+                        type="button"
+                        className={cn("producer-required-button", required && "is-active")}
+                        disabled={
+                          !checked
+                          || (!required && maximumRequiredProducers > 0 && requiredProducers.length >= maximumRequiredProducers)
+                        }
+                        aria-pressed={required}
+                        onClick={() => toggleRequired(producer.name)}
+                        title={required ? `${producer.name} must appear` : `Require ${producer.name} in every generation`}
+                      >
+                        {required ? "Required" : "Require"}
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       className={cn("producer-pin-button", pinned && "is-active")}
@@ -581,8 +664,33 @@ function CollaboratorsDialog({
                 )
               })}
             </div>
+            {requiredProducers.length > 0 ? (
+              <div className="collaborator-requirement">
+                <span>
+                  <strong>Collaborator share</strong>
+                  <small>{requiredProducers.length} required · target {requiredLayerTarget} of {generationLayerCount} layers</small>
+                </span>
+                <label>
+                  <span className="sr-only">Target share from required collaborators</span>
+                  <input
+                    type="range"
+                    min="10"
+                    max="100"
+                    step="10"
+                    value={requiredContributionPercent}
+                    onChange={(event) => onRequiredContributionPercentChange(Number(event.target.value))}
+                  />
+                  <output>{requiredContributionPercent}%</output>
+                </label>
+              </div>
+            ) : null}
+            <div className="collaborator-cloud-preview" aria-disabled="true">
+              <span className="cloud-symbol"><CloudCog aria-hidden="true" /></span>
+              <span><strong>Cloud friends</strong><small>Shared libraries will appear here when Cloud is connected.</small></span>
+              <em>Not connected</em>
+            </div>
             <footer className="library-manager-footer collaborator-footer">
-              <p>Source credits are preserved. <strong>+NRGY</strong> remains the creator of the generated loop.</p>
+              <p>Checked profiles may appear at random. Only <strong>Required</strong> profiles are guaranteed to contribute.</p>
               <Dialog.Close className="dialog-done">Done</Dialog.Close>
             </footer>
           </Dialog.Popup>
@@ -2097,7 +2205,9 @@ function GenerateView({
   const [selectedLibraryPaths, setSelectedLibraryPaths] = useState<string[]>([])
   const [libraryProducers, setLibraryProducers] = useState<LibraryProducerSummary[]>([])
   const [configuredAllowedProducers, setConfiguredAllowedProducers] = useState<string[] | null>(initialCollaboratorSettings.allowedProducers)
-  const [maxProducerCount, setMaxProducerCount] = useState(initialCollaboratorSettings.maxProducerCount)
+  const [allowedCreditCounts, setAllowedCreditCounts] = useState<CollaboratorCreditCount[]>(initialCollaboratorSettings.allowedCreditCounts)
+  const [requiredProducers, setRequiredProducers] = useState(initialCollaboratorSettings.requiredProducers)
+  const [requiredContributionPercent, setRequiredContributionPercent] = useState(initialCollaboratorSettings.requiredContributionPercent)
   const [pinnedProducers, setPinnedProducers] = useState(initialCollaboratorSettings.pinnedProducers)
   const [producerSortDirection, setProducerSortDirection] = useState<ProducerSortDirection>(initialCollaboratorSettings.producerSortDirection)
   const [producerProfiles, setProducerProfiles] = useState<Record<string, ProducerProfileSettings>>(initialCollaboratorSettings.profiles)
@@ -2133,13 +2243,12 @@ function GenerateView({
     ))
     const withPrimary = relevant.some((producer) => producer.name.toLowerCase() === PRIMARY_PRODUCER.toLowerCase())
       ? relevant
-      : [{ name: PRIMARY_PRODUCER, layerCount: 0, loopCount: 0, loopCountsByCreditCount: {}, libraryRoots: selectedLibraryPaths }, ...relevant]
+      : [{ name: PRIMARY_PRODUCER, layerCount: 0, loopCount: 0, loopCountsByCreditCount: {}, layerCountsByCreditCount: {}, libraryRoots: selectedLibraryPaths }, ...relevant]
     const matchingMode = withPrimary
       .map((producer) => ({
         ...producer,
-        loopCount: maxProducerCount === 0
-          ? producer.loopCount
-          : producer.loopCountsByCreditCount[String(maxProducerCount)] ?? 0,
+        loopCount: allowedCreditCounts.reduce((sum, count) => sum + (producer.loopCountsByCreditCount[String(count)] ?? 0), 0),
+        layerCount: allowedCreditCounts.reduce((sum, count) => sum + (producer.layerCountsByCreditCount[String(count)] ?? 0), 0),
       }))
       .filter((producer) => (
         producer.name.toLowerCase() === PRIMARY_PRODUCER.toLowerCase()
@@ -2154,7 +2263,7 @@ function GenerateView({
         : left.loopCount - right.loopCount
       return rightPinned - leftPinned || countOrder || left.name.localeCompare(right.name)
     })
-  }, [libraryProducers, maxProducerCount, pinnedProducers, producerSortDirection, selectedLibraryPaths])
+  }, [allowedCreditCounts, libraryProducers, pinnedProducers, producerSortDirection, selectedLibraryPaths])
   const allowedProducers = useMemo(() => {
     const configured = configuredAllowedProducers == null
       ? new Set(producerOptions.map((producer) => producer.name.toLowerCase()))
@@ -2164,6 +2273,10 @@ function GenerateView({
       .filter((producer) => producer.toLowerCase() === PRIMARY_PRODUCER.toLowerCase() || configured.has(producer.toLowerCase()))
     return uniqueProducerCredits(allowed)
   }, [configuredAllowedProducers, producerOptions])
+  const activeRequiredProducers = useMemo(() => {
+    const allowed = new Set(allowedProducers.map((producer) => producer.toLowerCase()))
+    return requiredProducers.filter((producer) => allowed.has(producer.toLowerCase()))
+  }, [allowedProducers, requiredProducers])
 
   useEffect(() => {
     let cancelled = false
@@ -2187,12 +2300,14 @@ function GenerateView({
   useEffect(() => {
     saveCollaboratorSettings({
       allowedProducers: configuredAllowedProducers,
-      maxProducerCount,
+      allowedCreditCounts,
+      requiredProducers,
+      requiredContributionPercent,
       pinnedProducers,
       producerSortDirection,
       profiles: producerProfiles,
     })
-  }, [configuredAllowedProducers, maxProducerCount, pinnedProducers, producerProfiles, producerSortDirection])
+  }, [allowedCreditCounts, configuredAllowedProducers, pinnedProducers, producerProfiles, producerSortDirection, requiredContributionPercent, requiredProducers])
 
   useEffect(() => {
     if (!currentGenerationResult) return
@@ -2387,7 +2502,9 @@ function GenerateView({
       generationNumber: nextGenerationNumber,
       bars: 8,
       allowedProducers,
-      maxProducerCount,
+      allowedCreditCounts,
+      requiredProducers: activeRequiredProducers,
+      requiredContributionPercent,
       lockedIdentitiesBySlot: layers.map((layer) => layer.locked && layer.identity ? layer.identity : null),
       excludedIdentities: seedOverride == null
         ? layers.filter((layer) => !layer.locked && layer.identity).map((layer) => layer.identity as string)
@@ -2574,14 +2691,19 @@ function GenerateView({
             <ProducerAvatarStack producers={allowedProducers} profiles={producerProfiles} toolbar />
             <CollaboratorsDialog
               producers={producerOptions}
+              generationLayerCount={Math.max(1, layers.length)}
               allowedProducers={allowedProducers}
-              maxProducerCount={maxProducerCount}
+              allowedCreditCounts={allowedCreditCounts}
+              requiredProducers={activeRequiredProducers}
+              requiredContributionPercent={requiredContributionPercent}
               profiles={producerProfiles}
               pinnedProducers={pinnedProducers}
               producerSortDirection={producerSortDirection}
               disabled={generateJob.busy}
               onAllowedProducersChange={(nextProducers) => {
                 setConfiguredAllowedProducers(uniqueProducerCredits(nextProducers))
+                const allowed = new Set(nextProducers.map((producer) => producer.toLowerCase()))
+                setRequiredProducers((current) => current.filter((producer) => allowed.has(producer.toLowerCase())))
                 setLayers((current) => current.map((layer) => ({ ...layer, locked: false })))
                 setRecipeDirty(true)
                 setStatus("Collaborator pool updated")
@@ -2592,11 +2714,25 @@ function GenerateView({
                 setRecipeDirty(true)
                 setStatus("All matching collaborators enabled")
               }}
-              onMaxProducerCountChange={(nextCount) => {
-                setMaxProducerCount(nextCount)
+              onAllowedCreditCountsChange={(nextCounts) => {
+                setAllowedCreditCounts(nextCounts)
+                const maximumRequired = Math.max(...nextCounts) - 1
+                setRequiredProducers((current) => current.slice(0, maximumRequired))
                 setLayers((current) => current.map((layer) => ({ ...layer, locked: false })))
                 setRecipeDirty(true)
-                setStatus(nextCount === 0 ? "Any collaborator count allowed" : nextCount === 1 ? "Solo generations enabled" : `Exactly ${nextCount} credited producers`)
+                setStatus(`${nextCounts.map((count) => count === 1 ? "Solo" : count === 2 ? "Duo" : "Trio").join(" + ")} generations enabled`)
+              }}
+              onRequiredProducersChange={(nextProducers) => {
+                setRequiredProducers(nextProducers)
+                setLayers((current) => current.map((layer) => ({ ...layer, locked: false })))
+                setRecipeDirty(true)
+                setStatus(nextProducers.length > 0 ? "Required collaborator rule updated" : "Collaborators are allowed but not forced")
+              }}
+              onRequiredContributionPercentChange={(percent) => {
+                setRequiredContributionPercent(percent)
+                setLayers((current) => current.map((layer) => ({ ...layer, locked: false })))
+                setRecipeDirty(true)
+                setStatus(`Required collaborator share set to ${percent}%`)
               }}
               onPinnedProducersChange={setPinnedProducers}
               onProducerSortDirectionChange={setProducerSortDirection}

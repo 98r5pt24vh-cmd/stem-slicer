@@ -12,9 +12,9 @@ describe("library producer summaries", () => {
     ])
 
     expect(summaries).toEqual([
-      { name: "+NRGY", layerCount: 4, loopCount: 3, loopCountsByCreditCount: { "1": 1, "2": 2 }, libraryRoots: ["/library"] },
-      { name: "Liv", layerCount: 1, loopCount: 1, loopCountsByCreditCount: { "2": 1 }, libraryRoots: ["/library"] },
-      { name: "TEENX", layerCount: 2, loopCount: 1, loopCountsByCreditCount: { "2": 1 }, libraryRoots: ["/library"] },
+      { name: "+NRGY", layerCount: 4, loopCount: 3, loopCountsByCreditCount: { "1": 1, "2": 2 }, layerCountsByCreditCount: { "1": 1, "2": 3 }, libraryRoots: ["/library"] },
+      { name: "Liv", layerCount: 1, loopCount: 1, loopCountsByCreditCount: { "2": 1 }, layerCountsByCreditCount: { "2": 1 }, libraryRoots: ["/library"] },
+      { name: "TEENX", layerCount: 2, loopCount: 1, loopCountsByCreditCount: { "2": 1 }, layerCountsByCreditCount: { "2": 2 }, libraryRoots: ["/library"] },
     ])
   })
 })

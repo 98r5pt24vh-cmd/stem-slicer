@@ -174,6 +174,7 @@ export function summarizeLibraryProducers(rows: ProducerSourceRow[]): LibraryPro
     loopIds: Set<string>
     libraryRoots: Set<string>
     loopCountsByCreditCount: Record<string, number>
+    layerCountsByCreditCount: Record<string, number>
   }>()
   for (const [loopIdentity, loop] of loops) {
     const credits = uniqueProducerCredits(loop.producers)
@@ -186,11 +187,13 @@ export function summarizeLibraryProducers(rows: ProducerSourceRow[]): LibraryPro
         loopIds: new Set<string>(),
         libraryRoots: new Set<string>(),
         loopCountsByCreditCount: {},
+        layerCountsByCreditCount: {},
       }
       summary.layerCount += loop.layerCount
       summary.loopIds.add(loopIdentity)
       summary.libraryRoots.add(loop.libraryRoot)
       summary.loopCountsByCreditCount[creditCount] = (summary.loopCountsByCreditCount[creditCount] ?? 0) + 1
+      summary.layerCountsByCreditCount[creditCount] = (summary.layerCountsByCreditCount[creditCount] ?? 0) + loop.layerCount
       summaries.set(key, summary)
     }
   }
@@ -200,6 +203,7 @@ export function summarizeLibraryProducers(rows: ProducerSourceRow[]): LibraryPro
       layerCount: summary.layerCount,
       loopCount: summary.loopIds.size,
       loopCountsByCreditCount: summary.loopCountsByCreditCount,
+      layerCountsByCreditCount: summary.layerCountsByCreditCount,
       libraryRoots: [...summary.libraryRoots].sort((left, right) => left.localeCompare(right)),
     }))
     .sort((left, right) => {

@@ -51,6 +51,7 @@ export interface LibraryProducerSummary {
   layerCount: number
   loopCount: number
   loopCountsByCreditCount: Record<string, number>
+  layerCountsByCreditCount: Record<string, number>
   libraryRoots: string[]
 }
 
@@ -122,7 +123,9 @@ export interface GenerateJobRequest {
   generationNumber: number
   bars?: number
   allowedProducers?: string[]
-  maxProducerCount?: number
+  allowedCreditCounts?: number[]
+  requiredProducers?: string[]
+  requiredContributionPercent?: number
   lockedIdentitiesBySlot?: Array<string | null>
   excludedIdentities?: string[]
   excludedSourceLoops?: Array<{
