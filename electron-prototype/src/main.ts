@@ -120,6 +120,38 @@ function createApplicationIcon() {
   return nativeImage.createFromPath(iconPath)
 }
 
+function createRoundedDockIcon() {
+  const source = createApplicationIcon()
+  if (source.isEmpty()) return source
+  const image = source.resize({ width: 512, height: 512, quality: "best" })
+  const { width, height } = image.getSize()
+  const bitmap = image.toBitmap()
+  if (bitmap.length < width * height * 4) return image
+
+  const inset = width * 0.045
+  const radius = width * 0.22
+  const centerX = width / 2
+  const centerY = height / 2
+  const halfWidth = width / 2 - inset
+  const halfHeight = height / 2 - inset
+  const feather = 1.25
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const offsetX = Math.abs(x + 0.5 - centerX) - (halfWidth - radius)
+      const offsetY = Math.abs(y + 0.5 - centerY) - (halfHeight - radius)
+      const outsideDistance = Math.hypot(Math.max(offsetX, 0), Math.max(offsetY, 0))
+      const insideDistance = Math.min(Math.max(offsetX, offsetY), 0)
+      const signedDistance = outsideDistance + insideDistance - radius
+      const coverage = Math.max(0, Math.min(1, 0.5 - signedDistance / feather))
+      const alphaIndex = (y * width + x) * 4 + 3
+      bitmap[alphaIndex] = Math.round(bitmap[alphaIndex] * coverage)
+    }
+  }
+
+  return nativeImage.createFromBitmap(bitmap, { width, height, scaleFactor: 1 })
+}
+
 function createDragPreviewIcon() {
   const source = createApplicationIcon()
   if (source.isEmpty()) return source
@@ -295,9 +327,9 @@ function registerIpc(): void {
 
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null)
-  const applicationIcon = createApplicationIcon()
-  if (process.platform === "darwin" && !applicationIcon.isEmpty()) {
-    app.dock?.setIcon(applicationIcon)
+  const dockIcon = createRoundedDockIcon()
+  if (process.platform === "darwin" && !dockIcon.isEmpty()) {
+    app.dock?.setIcon(dockIcon)
   }
   protocol.handle("stem-media", (request) => {
     const url = new URL(request.url)
