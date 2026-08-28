@@ -6,6 +6,7 @@ import {
   sourceProvenance,
   stripAudioExtension,
   uniqueProducerCredits,
+  uniqueProducerNames,
 } from "./source-provenance"
 
 describe("source provenance", () => {
@@ -19,8 +20,13 @@ describe("source provenance", () => {
   it("reads the alternate Liv catalogue format", () => {
     expect(sourceProvenance("638 TAKE ME OUT 197 Fmin Liv_L3.mp3")).toEqual({
       loopName: "TAKE ME OUT",
-      producers: ["+NRGY", "Liv"],
+      producers: ["Liv"],
     })
+  })
+
+  it("keeps source credits separate from final generated-loop credits", () => {
+    expect(uniqueProducerNames(["Liv", "liv", "+nrgy"])).toEqual(["Liv", "+NRGY"])
+    expect(uniqueProducerCredits(["Liv"])).toEqual(["+NRGY", "Liv"])
   })
 
   it("keeps the primary producer first and removes duplicate credits", () => {

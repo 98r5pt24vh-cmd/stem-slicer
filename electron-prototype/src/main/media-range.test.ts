@@ -19,6 +19,7 @@ describe("media byte ranges", () => {
   it("returns audio MIME types used by the prototype", () => {
     expect(mediaMimeType(".mp3")).toBe("audio/mpeg")
     expect(mediaMimeType(".WAV")).toBe("audio/wav")
+    expect(mediaMimeType(".PNG")).toBe("image/png")
     expect(mediaMimeType(".unknown")).toBe("application/octet-stream")
   })
 })

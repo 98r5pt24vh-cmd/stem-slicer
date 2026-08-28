@@ -36,9 +36,9 @@ function canonicalProducer(value: string): string {
   return value.toLowerCase() === PRIMARY_PRODUCER.toLowerCase() ? PRIMARY_PRODUCER : value
 }
 
-export function uniqueProducerCredits(values: Iterable<string>): string[] {
-  const credits = [PRIMARY_PRODUCER]
-  const seen = new Set([PRIMARY_PRODUCER.toLowerCase()])
+export function uniqueProducerNames(values: Iterable<string>): string[] {
+  const credits: string[] = []
+  const seen = new Set<string>()
   for (const rawValue of values) {
     const value = canonicalProducer(rawValue.trim())
     if (!value || seen.has(value.toLowerCase())) continue
@@ -46,6 +46,10 @@ export function uniqueProducerCredits(values: Iterable<string>): string[] {
     credits.push(value)
   }
   return credits
+}
+
+export function uniqueProducerCredits(values: Iterable<string>): string[] {
+  return uniqueProducerNames([PRIMARY_PRODUCER, ...values])
 }
 
 export function sourceProvenance(file: string, sourceLoopId = ""): SourceProvenance {
@@ -73,18 +77,19 @@ export function sourceProvenance(file: string, sourceLoopId = ""): SourceProvena
 
   const loopTokens = tokens.slice(leadingIndex + leadingKeyTokens, bpmIndex)
   const producerStart = bpmIndex + 1 + (leadingKeyTokens > 0 ? 0 : keyTokenCount(tokens, bpmIndex + 1))
-  const producers = uniqueProducerCredits(tokens.slice(producerStart))
+  const producers = uniqueProducerNames(tokens.slice(producerStart))
   return {
     loopName: loopTokens.join(" ").trim() || "Source loop",
-    producers,
+    producers: producers.length > 0 ? producers : [PRIMARY_PRODUCER],
   }
 }
 
 export function provenanceForLayer(layer: ProvenanceLayer): SourceProvenance {
   const parsed = sourceProvenance(layer.sourceFile ?? layer.sourceLoopId ?? "", layer.sourceLoopId)
+  const producers = uniqueProducerNames(layer.producers?.length ? layer.producers : parsed.producers)
   return {
     loopName: layer.sourceLoopName?.trim() || parsed.loopName,
-    producers: uniqueProducerCredits(layer.producers?.length ? layer.producers : parsed.producers),
+    producers: producers.length > 0 ? producers : [PRIMARY_PRODUCER],
   }
 }
 

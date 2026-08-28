@@ -8,7 +8,7 @@ import { pathToFileURL } from "node:url"
 import { AudioEngineService } from "./main/audio-engine"
 import { getSourceLoopEditor, listCategoryCorrections, saveSourceLoopEdit, setLayerCategory } from "./main/catalog-edits"
 import { dismissKeyIssueReport, listKeyIssueReports, reportKeyIssue, setKeyIssueActive } from "./main/key-feedback"
-import { readLibraryOverview, removeLibraryRoot } from "./main/library-cache"
+import { readLibraryOverview, readLibraryProducers, removeLibraryRoot } from "./main/library-cache"
 import { mediaMimeType, parseByteRange } from "./main/media-range"
 import { migrationModules } from "./main/migration-modules"
 import { readGenerationStorageUsage } from "./main/storage-usage"
@@ -160,6 +160,7 @@ function registerIpc(): void {
   ipcMain.handle("library:get-overview", () =>
     readLibraryOverview(acceptedCachePath),
   )
+  ipcMain.handle("library:get-producers", () => readLibraryProducers(acceptedCachePath))
   ipcMain.handle("library:remove-root", (_event: IpcMainInvokeEvent, libraryRoot: unknown) => {
     if (typeof libraryRoot !== "string") {
       throw new Error("The indexed library path is invalid.")
@@ -217,6 +218,14 @@ function registerIpc(): void {
           extensions: ["wav", "aif", "aiff", "flac", "mp3", "m4a"],
         },
       ],
+    })
+    return { canceled: result.canceled, paths: result.filePaths }
+  })
+  ipcMain.handle("dialog:pick-image-file", async (): Promise<AudioSelection> => {
+    const result = await dialog.showOpenDialog({
+      title: "Choose a producer profile image",
+      properties: ["openFile"],
+      filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "avif"] }],
     })
     return { canceled: result.canceled, paths: result.filePaths }
   })

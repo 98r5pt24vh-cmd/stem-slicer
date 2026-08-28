@@ -46,6 +46,13 @@ export interface LibraryOverview {
   error?: string
 }
 
+export interface LibraryProducerSummary {
+  name: string
+  layerCount: number
+  loopCount: number
+  libraryRoots: string[]
+}
+
 export interface MigrationModule {
   id: string
   label: string
@@ -113,6 +120,8 @@ export interface GenerateJobRequest {
   seed: number
   generationNumber: number
   bars?: number
+  allowedProducers?: string[]
+  maxProducerCount?: number
   lockedIdentitiesBySlot?: Array<string | null>
   excludedIdentities?: string[]
   excludedSourceLoops?: Array<{
@@ -363,6 +372,7 @@ export interface StemSlicerDesktopApi {
   getEnvironment: () => Promise<AppEnvironment>
   getGenerationStorageUsage: () => Promise<GenerationStorageUsage>
   getLibraryOverview: () => Promise<LibraryOverview>
+  getLibraryProducers: () => Promise<LibraryProducerSummary[]>
   removeLibraryRoot: (libraryRoot: string) => Promise<LibraryOverview>
   getKeyIssueReports: () => Promise<KeyIssueReport[]>
   getCategoryCorrections: () => Promise<CategoryCorrection[]>
@@ -376,6 +386,7 @@ export interface StemSlicerDesktopApi {
   getEngineStatus: () => Promise<EngineStatus>
   pickLibraryFolder: () => Promise<AudioSelection>
   pickAudioFiles: () => Promise<AudioSelection>
+  pickImageFile: () => Promise<AudioSelection>
   startAudioJob: (kind: AudioJobKind, request: AudioJobRequest) => Promise<AudioJobStart>
   cancelAudioJob: (jobId: string) => Promise<void>
   onAudioJobEvent: (listener: (event: AudioJobEvent) => void) => () => void

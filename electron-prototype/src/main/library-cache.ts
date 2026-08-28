@@ -5,8 +5,10 @@ import { DatabaseSync } from "node:sqlite"
 import type {
   CategorySummary,
   LibraryOverview,
+  LibraryProducerSummary,
   LibraryRootSummary,
 } from "../shared/contracts"
+import { PRIMARY_PRODUCER, sourceProvenance } from "../lib/source-provenance"
 
 interface CountRow {
   count: number
@@ -25,6 +27,12 @@ interface CategoryRow {
 
 interface RootCategoryRow extends CategoryRow {
   library_root: string
+}
+
+interface ProducerSourceRow {
+  library_root: string
+  source_loop_id: string
+  filename: string
 }
 
 function activeLayerWhere(database: DatabaseSync): string {
@@ -137,6 +145,60 @@ export function readLibraryOverview(acceptedCachePath: string): LibraryOverview 
     }
   } finally {
     database?.close()
+  }
+}
+
+export function summarizeLibraryProducers(rows: ProducerSourceRow[]): LibraryProducerSummary[] {
+  const summaries = new Map<string, {
+    name: string
+    layerCount: number
+    loopIds: Set<string>
+    libraryRoots: Set<string>
+  }>()
+  for (const row of rows) {
+    const loopIdentity = `${row.library_root}\u0000${row.source_loop_id}`
+    for (const producer of sourceProvenance(row.filename, row.source_loop_id).producers) {
+      const key = producer.toLowerCase()
+      const summary = summaries.get(key) ?? {
+        name: producer,
+        layerCount: 0,
+        loopIds: new Set<string>(),
+        libraryRoots: new Set<string>(),
+      }
+      summary.layerCount += 1
+      summary.loopIds.add(loopIdentity)
+      summary.libraryRoots.add(row.library_root)
+      summaries.set(key, summary)
+    }
+  }
+  return [...summaries.values()]
+    .map((summary) => ({
+      name: summary.name,
+      layerCount: summary.layerCount,
+      loopCount: summary.loopIds.size,
+      libraryRoots: [...summary.libraryRoots].sort((left, right) => left.localeCompare(right)),
+    }))
+    .sort((left, right) => {
+      if (left.name === PRIMARY_PRODUCER) return -1
+      if (right.name === PRIMARY_PRODUCER) return 1
+      return right.loopCount - left.loopCount || left.name.localeCompare(right.name)
+    })
+}
+
+export function readLibraryProducers(acceptedCachePath: string): LibraryProducerSummary[] {
+  const databasePath = path.join(acceptedCachePath, "generate", "library.sqlite3")
+  if (!existsSync(databasePath)) return []
+  const database = new DatabaseSync(databasePath, { readOnly: true })
+  try {
+    const activeWhere = activeLayerWhere(database)
+    const rows = database.prepare(`
+      SELECT library_root, source_loop_id, filename
+      FROM layer_cache
+      ${activeWhere}
+    `).all() as unknown as ProducerSourceRow[]
+    return summarizeLibraryProducers(rows)
+  } finally {
+    database.close()
   }
 }
 

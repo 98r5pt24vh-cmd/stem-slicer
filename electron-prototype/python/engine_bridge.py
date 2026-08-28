@@ -12,6 +12,7 @@ import math
 import os
 from pathlib import Path
 import queue
+import random
 import re
 import shutil
 import sqlite3
@@ -53,9 +54,12 @@ def _key_token_count(tokens: list[str], index: int) -> int:
     return 2 if tonic_only and _MODE_TOKEN.fullmatch(following) else 1
 
 
-def _unique_producers(values) -> list[str]:
-    credits = [_PRIMARY_PRODUCER]
-    seen = {_PRIMARY_PRODUCER.casefold()}
+def _unique_producers(values, *, include_primary: bool = False) -> list[str]:
+    credits = []
+    seen = set()
+    if include_primary:
+        credits.append(_PRIMARY_PRODUCER)
+        seen.add(_PRIMARY_PRODUCER.casefold())
     for raw_value in values:
         value = str(raw_value or "").strip()
         if not value:
@@ -98,15 +102,88 @@ def _source_provenance(filename: str) -> dict[str, object]:
         producer_start += _key_token_count(tokens, producer_start)
     return {
         "loop_name": loop_name,
-        "producers": _unique_producers(tokens[producer_start:]),
+        "producers": _unique_producers(tokens[producer_start:]) or [_PRIMARY_PRODUCER],
     }
+
+
+def _record_producers(record: dict) -> list[str]:
+    filename = str(record.get("filename") or "").strip()
+    if not filename:
+        filename = Path(str(record.get("path") or "")).name
+    return list(_source_provenance(filename)["producers"])
+
+
+def _filter_records_by_collaborators(
+    records: list[dict],
+    *,
+    allowed_producers,
+    max_producer_count: int,
+    categories: tuple[str, ...],
+    seed: int,
+) -> tuple[list[dict], list[str]]:
+    allowed_names = _unique_producers(allowed_producers or ())
+    if allowed_names:
+        allowed_keys = {producer.casefold() for producer in allowed_names}
+        allowed_keys.add(_PRIMARY_PRODUCER.casefold())
+        records = [
+            record
+            for record in records
+            if all(producer.casefold() in allowed_keys for producer in _record_producers(record))
+        ]
+
+    selected_external: list[str] = []
+    if max_producer_count > 0:
+        external_slots = max(0, max_producer_count - 1)
+        external_by_key: dict[str, str] = {}
+        for record in records:
+            for producer in _record_producers(record):
+                if producer.casefold() != _PRIMARY_PRODUCER.casefold():
+                    external_by_key.setdefault(producer.casefold(), producer)
+
+        external_names = list(external_by_key.values())
+        if len(external_names) > external_slots:
+            requested_categories = {category.casefold() for category in categories}
+            coverage = {producer.casefold(): 0 for producer in external_names}
+            for record in records:
+                category = str(
+                    record.get("manual_label")
+                    or record.get("predicted_label")
+                    or ""
+                ).casefold()
+                if requested_categories and category not in requested_categories:
+                    continue
+                for producer in _record_producers(record):
+                    key = producer.casefold()
+                    if key in coverage:
+                        coverage[key] += 1
+            tie_break = list(external_names)
+            random.Random(seed).shuffle(tie_break)
+            tie_order = {producer.casefold(): index for index, producer in enumerate(tie_break)}
+            external_names.sort(
+                key=lambda producer: (-coverage[producer.casefold()], tie_order[producer.casefold()])
+            )
+        selected_external = external_names[:external_slots]
+        selected_keys = {producer.casefold() for producer in selected_external}
+        records = [
+            record
+            for record in records
+            if all(
+                producer.casefold() == _PRIMARY_PRODUCER.casefold()
+                or producer.casefold() in selected_keys
+                for producer in _record_producers(record)
+            )
+        ]
+    return records, selected_external
 
 
 def _generation_producers(selections) -> list[str]:
     return _unique_producers(
-        producer
-        for selection in selections
-        for producer in _source_provenance(selection.candidate.path.name)["producers"]
+        (
+            producer
+            for selection in selections
+            for producer in _source_provenance(selection.candidate.path.name)["producers"]
+        ),
+        include_primary=True,
     )
 
 
@@ -134,7 +211,7 @@ def _generation_display_name(
         f"L Gen{max(1, int(generation_number)):02d}_"
         f"{int(round(float(target_bpm)))}_"
         f"{_compact_generation_key(target_key)} "
-        f"{' '.join(_unique_producers(producers))}"
+        f"{' '.join(_unique_producers(producers, include_primary=True))}"
     )
 
 
@@ -1042,16 +1119,29 @@ def generation(job_id: str, payload: dict) -> dict:
             else:
                 eligible_records.append(record)
         records = eligible_records
+    categories = tuple(str(item) for item in payload.get("categories") or ())
+    max_producer_count = max(0, int(payload.get("maxProducerCount") or 0))
+    records, selected_external_producers = _filter_records_by_collaborators(
+        records,
+        allowed_producers=payload.get("allowedProducers"),
+        max_producer_count=max_producer_count,
+        categories=categories,
+        seed=int(payload.get("seed") or 0),
+    )
     if not records:
-        raise ValueError("No layer is available in the selected libraries.")
+        raise ValueError("No indexed layer matches the current collaborator selection.")
     quarantine_label = f" · {quarantined_count} quarantined" if quarantined_count else ""
+    collaborator_label = ""
+    if max_producer_count == 1:
+        collaborator_label = " · solo"
+    elif selected_external_producers:
+        collaborator_label = f" · +NRGY + {' + '.join(selected_external_producers)}"
     progress_percent(
         job_id,
-        f"Loaded {len(records)} indexed layers{quarantine_label}",
+        f"Loaded {len(records)} indexed layers{quarantine_label}{collaborator_label}",
         3,
         "selection",
     )
-    categories = tuple(str(item) for item in payload.get("categories") or ())
     request = GenerationRequest(
         categories=categories,
         target_bpm=float(payload.get("targetBpm") or 140),

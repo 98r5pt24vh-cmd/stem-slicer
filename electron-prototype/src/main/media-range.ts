@@ -7,13 +7,22 @@ const audioMimeTypes: Record<string, string> = {
   ".wav": "audio/wav",
 }
 
+const imageMimeTypes: Record<string, string> = {
+  ".avif": "image/avif",
+  ".jpeg": "image/jpeg",
+  ".jpg": "image/jpeg",
+  ".png": "image/png",
+  ".webp": "image/webp",
+}
+
 export interface ByteRange {
   start: number
   end: number
 }
 
 export function mediaMimeType(extension: string): string {
-  return audioMimeTypes[extension.toLowerCase()] ?? "application/octet-stream"
+  const normalized = extension.toLowerCase()
+  return audioMimeTypes[normalized] ?? imageMimeTypes[normalized] ?? "application/octet-stream"
 }
 
 export function parseByteRange(value: string, size: number): ByteRange | null {
