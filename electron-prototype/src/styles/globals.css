@@ -6129,6 +6129,12 @@ td strong {
   overflow: hidden;
 }
 
+.cloud-main .cloud-network-grid > .cloud-panel {
+  border-block-end: 0;
+  border-end-start-radius: 0;
+  border-end-end-radius: 0;
+}
+
 .cloud-network-grid > .cloud-panel,
 .cloud-network-grid > .cloud-panel > [data-slot="card-content"] {
   display: flex;
