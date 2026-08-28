@@ -35,6 +35,7 @@ export function parseExtractionHistory(raw: string | null): ExtractionHistoryEnt
         && typeof entry.sourceFileCount === "number"
         && typeof entry.outputCount === "number"
         && isStringArray(entry.outputs)
+        && (entry.outputBytes === undefined || typeof entry.outputBytes === "number")
     })
   } catch {
     return []

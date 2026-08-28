@@ -8,6 +8,8 @@ import { createClient, type Session, type SupabaseClient } from "@supabase/supab
 import type {
   CloudConnection,
   CloudCredentialsRequest,
+  CloudGenerationActivity,
+  CloudGenerationRecordRequest,
   CloudLibrarySummary,
   CloudProfile,
   CloudProfileUpdateRequest,
@@ -98,6 +100,25 @@ interface RemoteLayerRow {
   sha256: string
   byte_size: number
   metadata: Record<string, unknown>
+}
+
+interface GenerationRunRow {
+  id: string
+  created_by: string
+  contributor_ids: string[]
+  seed: number
+  target_bpm: number
+  target_key: string
+  layer_count: number
+  created_at: string
+}
+
+interface GenerationSourceRow {
+  generation_id: string
+  slot_index: number
+  source_owner_id: string
+  source_loop_id: string
+  category: string
 }
 
 interface CloudGenerateJobRequest extends GenerateJobRequest {
@@ -419,6 +440,11 @@ export class CloudService {
     return data.session
   }
 
+  async refreshSession(): Promise<void> {
+    const { error } = await this.supabase().auth.refreshSession()
+    if (error) throw error
+  }
+
   private async ensureProfile(session: Session, requested?: { handle: string; displayName: string }): Promise<CloudProfile> {
     const client = this.supabase()
     const existing = await client
@@ -736,6 +762,79 @@ export class CloudService {
       .in("id", [...new Set(ids)])
     if (response.error) throw response.error
     return new Map((response.data as ProfileRow[]).map((row) => [row.id, this.cloudProfile(row)]))
+  }
+
+  async recordGeneration(request: CloudGenerationRecordRequest): Promise<string | undefined> {
+    if (!Array.isArray(request.sources) || request.sources.length === 0) return undefined
+    const session = await this.currentSession()
+    const contributors = [...new Set(request.sources.map((source) => source.cloudOwnerId).filter(Boolean))]
+    const insertedRun = await this.supabase()
+      .from("generation_runs")
+      .insert({
+        created_by: session.user.id,
+        contributor_ids: contributors,
+        seed: Math.trunc(request.seed),
+        target_bpm: Math.round(request.targetBpm),
+        target_key: String(request.targetKey || "Unknown"),
+        layer_count: Math.max(1, Math.round(request.layerCount)),
+      })
+      .select("id")
+      .single<{ id: string }>()
+    if (insertedRun.error) throw insertedRun.error
+
+    const sourceRows = request.sources.map((source) => ({
+      generation_id: insertedRun.data.id,
+      slot_index: Math.max(0, Math.round(source.slotIndex)),
+      cloud_layer_id: source.cloudLayerId,
+      source_owner_id: source.cloudOwnerId,
+      source_sha256: source.sourceSha256,
+      source_loop_id: source.sourceLoopId,
+      category: source.category,
+    }))
+    const insertedSources = await this.supabase().from("generation_sources").insert(sourceRows)
+    if (insertedSources.error) throw insertedSources.error
+    return insertedRun.data.id
+  }
+
+  async generationActivity(): Promise<CloudGenerationActivity[]> {
+    await this.currentSession()
+    const runsResponse = await this.supabase()
+      .from("generation_runs")
+      .select("id,created_by,contributor_ids,seed,target_bpm,target_key,layer_count,created_at")
+      .order("created_at", { ascending: false })
+      .limit(60)
+    if (runsResponse.error) throw runsResponse.error
+    const runs = runsResponse.data as GenerationRunRow[]
+    if (runs.length === 0) return []
+
+    const sourcesResponse = await this.supabase()
+      .from("generation_sources")
+      .select("generation_id,slot_index,source_owner_id,source_loop_id,category")
+      .in("generation_id", runs.map((run) => run.id))
+      .order("slot_index", { ascending: true })
+    if (sourcesResponse.error) throw sourcesResponse.error
+    const sources = sourcesResponse.data as GenerationSourceRow[]
+    const profiles = await this.profileRows([
+      ...runs.flatMap((run) => [run.created_by, ...(run.contributor_ids ?? [])]),
+      ...sources.map((source) => source.source_owner_id),
+    ])
+
+    return runs.map((run) => ({
+      id: run.id,
+      createdBy: profiles.get(run.created_by) ?? fallbackProfile(run.created_by),
+      contributors: (run.contributor_ids ?? []).map((id) => profiles.get(id) ?? fallbackProfile(id)),
+      seed: Number(run.seed),
+      targetBpm: Number(run.target_bpm),
+      targetKey: run.target_key,
+      layerCount: Number(run.layer_count),
+      createdAt: run.created_at,
+      sources: sources.filter((source) => source.generation_id === run.id).map((source) => ({
+        slotIndex: Number(source.slot_index),
+        sourceOwner: profiles.get(source.source_owner_id) ?? fallbackProfile(source.source_owner_id),
+        sourceLoopId: source.source_loop_id,
+        category: source.category,
+      })),
+    }))
   }
 
   async getState(): Promise<CloudState> {

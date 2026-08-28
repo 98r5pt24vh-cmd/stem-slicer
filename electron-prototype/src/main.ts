@@ -6,9 +6,9 @@ import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs"
 import { pathToFileURL } from "node:url"
 
 import { AudioEngineService } from "./main/audio-engine"
-import { readQuickActivityHistory } from "./main/activity-history"
-import { getSourceLoopEditor, listCategoryCorrections, saveSourceLoopEdit, setLayerCategory } from "./main/catalog-edits"
-import { CloudService } from "./main/cloud-service"
+import { historyRoot, isAllowedHistoryOutput, readHistoryStorageUsage, readQuickActivityHistory } from "./main/activity-history"
+import { dismissCategoryCorrections, getSourceLoopEditor, listCategoryCorrections, saveSourceLoopEdit, setLayerCategory } from "./main/catalog-edits"
+import { CloudService, cloudErrorMessage } from "./main/cloud-service"
 import { dismissKeyIssueReport, listKeyIssueReports, reportKeyIssue, setKeyIssueActive } from "./main/key-feedback"
 import { readLibraryOverview, readLibraryProducers, removeLibraryRoot } from "./main/library-cache"
 import { mediaMimeType, parseByteRange } from "./main/media-range"
@@ -19,10 +19,12 @@ import type {
   AudioJobRequest,
   AudioSelection,
   CloudCredentialsRequest,
+  CloudGenerationRecordRequest,
   CloudProfileUpdateRequest,
   CloudSignUpRequest,
   ConfigureCloudRequest,
   GenerateJobRequest,
+  TrashHistoryOutputRequest,
   ReportKeyIssueRequest,
   SaveSourceLoopEditRequest,
   SetLayerCategoryRequest,
@@ -49,6 +51,8 @@ const generatedOutputRoot = path.join(
   "Stem Slicer",
   "Generated Loops",
 )
+const documentsRoot = path.join(homedir(), "Documents")
+const slicerHistoryRoot = historyRoot(documentsRoot)
 const dragPreviewMaxSize = 40
 const profileImageMaxSize = 512
 
@@ -184,6 +188,23 @@ protocol.registerSchemesAsPrivileged([
 const audioEngine = new AudioEngineService(app.getAppPath(), prototypeCachePath, process.resourcesPath, app.isPackaged)
 const cloudService = new CloudService(acceptedCachePath, prototypeCachePath)
 
+async function runCloudRequest<T>(request: () => T | PromiseLike<T>): Promise<T> {
+  try {
+    return await request()
+  } catch (error) {
+    const message = cloudErrorMessage(error, "Cloud is temporarily unavailable.")
+    if (/JWT issued at future/i.test(message)) {
+      try {
+        await cloudService.refreshSession()
+        return await request()
+      } catch (retryError) {
+        throw new Error(cloudErrorMessage(retryError, "Your Cloud session could not be refreshed. Sign in again."))
+      }
+    }
+    throw new Error(message)
+  }
+}
+
 function createWindow(): void {
   const applicationIcon = createApplicationIcon()
   const mainWindow = new BrowserWindow({
@@ -228,7 +249,30 @@ function registerIpc(): void {
     acceptedCacheAccess: "read-only" as const,
   }))
   ipcMain.handle("history:get-storage-usage", () => readGenerationStorageUsage(generatedOutputRoot))
-  ipcMain.handle("history:get-quick-activities", () => readQuickActivityHistory(path.join(homedir(), "Documents")))
+  ipcMain.handle("history:get-path-storage-usage", (_event: IpcMainInvokeEvent, paths: unknown) => {
+    if (!Array.isArray(paths) || !paths.every((item) => typeof item === "string")) {
+      throw new Error("The history storage paths are invalid.")
+    }
+    return readHistoryStorageUsage(paths)
+  })
+  ipcMain.handle("history:get-quick-activities", () => readQuickActivityHistory(documentsRoot))
+  ipcMain.handle("history:open-root", async () => {
+    mkdirSync(slicerHistoryRoot, { recursive: true })
+    const error = await shell.openPath(slicerHistoryRoot)
+    if (error) throw new Error(error)
+  })
+  ipcMain.handle("history:trash-output", async (_event: IpcMainInvokeEvent, request: TrashHistoryOutputRequest) => {
+    if (!request || typeof request !== "object" || !["generate", "extract", "convert"].includes(request.kind) || typeof request.targetPath !== "string") {
+      throw new Error("The history output request is invalid.")
+    }
+    if (!isAllowedHistoryOutput(documentsRoot, request.kind, request.targetPath)) {
+      throw new Error("Only a Slicer history output folder can be moved to Trash.")
+    }
+    const target = path.resolve(request.targetPath)
+    if (!existsSync(target)) return
+    if (!statSync(target).isDirectory()) throw new Error("The history output is not a folder.")
+    await shell.trashItem(target)
+  })
   ipcMain.handle("library:get-overview", () =>
     readLibraryOverview(acceptedCachePath),
   )
@@ -241,6 +285,9 @@ function registerIpc(): void {
   })
   ipcMain.handle("key-issues:list", () => listKeyIssueReports(acceptedCachePath))
   ipcMain.handle("category-corrections:list", () => listCategoryCorrections(acceptedCachePath))
+  ipcMain.handle("category-corrections:dismiss", (_event: IpcMainInvokeEvent, identities: unknown) =>
+    dismissCategoryCorrections(acceptedCachePath, identities),
+  )
   ipcMain.handle("key-issues:report", (_event: IpcMainInvokeEvent, request: ReportKeyIssueRequest) =>
     reportKeyIssue(acceptedCachePath, request),
   )
@@ -265,30 +312,30 @@ function registerIpc(): void {
   )
   ipcMain.handle("migration:get-modules", () => migrationModules)
   ipcMain.handle("engine:get-status", () => audioEngine.status())
-  ipcMain.handle("cloud:get-state", () => cloudService.getState())
+  ipcMain.handle("cloud:get-state", () => runCloudRequest(() => cloudService.getState()))
   ipcMain.handle("cloud:configure", (_event: IpcMainInvokeEvent, request: ConfigureCloudRequest) => {
     if (!request || typeof request.projectUrl !== "string" || typeof request.publishableKey !== "string") {
       throw new Error("The Cloud project configuration is invalid.")
     }
-    return cloudService.configure(request)
+    return runCloudRequest(() => cloudService.configure(request))
   })
   ipcMain.handle("cloud:sign-up", (_event: IpcMainInvokeEvent, request: CloudSignUpRequest) => {
     if (!request || typeof request.email !== "string" || typeof request.password !== "string" || typeof request.handle !== "string" || typeof request.displayName !== "string") {
       throw new Error("The Cloud account form is incomplete.")
     }
-    return cloudService.signUp(request)
+    return runCloudRequest(() => cloudService.signUp(request))
   })
   ipcMain.handle("cloud:sign-in", (_event: IpcMainInvokeEvent, request: CloudCredentialsRequest) => {
     if (!request || typeof request.email !== "string" || typeof request.password !== "string") {
       throw new Error("The Cloud sign-in form is incomplete.")
     }
-    return cloudService.signIn(request)
+    return runCloudRequest(() => cloudService.signIn(request))
   })
   ipcMain.handle("cloud:sign-in-test-account", (_event: IpcMainInvokeEvent, accountId: unknown) => {
     if (typeof accountId !== "string") throw new Error("The alpha account is invalid.")
-    return cloudService.signInTestAccount(accountId)
+    return runCloudRequest(() => cloudService.signInTestAccount(accountId))
   })
-  ipcMain.handle("cloud:sign-out", () => cloudService.signOut())
+  ipcMain.handle("cloud:sign-out", () => runCloudRequest(() => cloudService.signOut()))
   ipcMain.handle("cloud:update-profile", (_event: IpcMainInvokeEvent, request: CloudProfileUpdateRequest) => {
     if (
       !request
@@ -303,40 +350,44 @@ function registerIpc(): void {
     ) {
       throw new Error("The Cloud profile form is invalid.")
     }
-    return cloudService.updateProfile(request)
+    return runCloudRequest(() => cloudService.updateProfile(request))
   })
   ipcMain.handle("cloud:connect", (_event: IpcMainInvokeEvent, handle: unknown) => {
     if (typeof handle !== "string") throw new Error("The producer handle is invalid.")
-    return cloudService.connect(handle)
+    return runCloudRequest(() => cloudService.connect(handle))
   })
   ipcMain.handle("cloud:accept-connection", (_event: IpcMainInvokeEvent, connectionId: unknown) => {
     if (typeof connectionId !== "string") throw new Error("The connection request is invalid.")
-    return cloudService.acceptConnection(connectionId)
+    return runCloudRequest(() => cloudService.acceptConnection(connectionId))
   })
   ipcMain.handle("cloud:set-library-enabled", (_event: IpcMainInvokeEvent, libraryId: unknown, enabled: unknown) => {
     if (typeof libraryId !== "string" || typeof enabled !== "boolean") {
       throw new Error("The Cloud library selection is invalid.")
     }
-    return cloudService.setLibraryEnabled(libraryId, enabled)
+    return runCloudRequest(() => cloudService.setLibraryEnabled(libraryId, enabled))
   })
   ipcMain.handle("cloud:set-library-sharing", (_event: IpcMainInvokeEvent, libraryId: unknown, sharing: unknown) => {
     if (typeof libraryId !== "string" || typeof sharing !== "boolean") {
       throw new Error("The Cloud library sharing request is invalid.")
     }
-    return cloudService.setLibrarySharing(libraryId, sharing)
+    return runCloudRequest(() => cloudService.setLibrarySharing(libraryId, sharing))
   })
   ipcMain.handle("cloud:remove-library", (_event: IpcMainInvokeEvent, libraryId: unknown) => {
     if (typeof libraryId !== "string") {
       throw new Error("The Cloud library removal request is invalid.")
     }
-    return cloudService.removeLibrary(libraryId)
+    return runCloudRequest(() => cloudService.removeLibrary(libraryId))
   })
+  ipcMain.handle("cloud:record-generation", (_event: IpcMainInvokeEvent, request: CloudGenerationRecordRequest) =>
+    runCloudRequest(() => cloudService.recordGeneration(request)),
+  )
+  ipcMain.handle("cloud:get-generation-activity", () => runCloudRequest(() => cloudService.generationActivity()))
   ipcMain.handle("cloud:publish-library", (event: IpcMainInvokeEvent, libraryRoot: unknown) => {
     if (typeof libraryRoot !== "string") throw new Error("The local library path is invalid.")
     const sender = event.sender
-    return cloudService.publishLibrary(libraryRoot, (payload) => {
+    return runCloudRequest(() => cloudService.publishLibrary(libraryRoot, (payload) => {
       if (!sender.isDestroyed()) sender.send("cloud:publish-event", payload)
-    })
+    }))
   })
   ipcMain.handle(
     "audio-job:start",

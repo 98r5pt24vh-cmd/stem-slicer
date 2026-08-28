@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite"
 
 import { describe, expect, it } from "vitest"
 
-import { getSourceLoopEditor, listCategoryCorrections, saveSourceLoopEdit, setLayerCategory } from "./catalog-edits"
+import { dismissCategoryCorrections, getSourceLoopEditor, listCategoryCorrections, saveSourceLoopEdit, setLayerCategory } from "./catalog-edits"
 import { readLibraryOverview } from "./library-cache"
 
 function recoverableTestRoot(): string {
@@ -122,6 +122,23 @@ describe("catalogue edits", () => {
         correctedCategory: "Texture",
       }),
     ])
+  })
+
+  it("hides a correction from history without deleting its truth feedback", () => {
+    const fixture = createCatalogue()
+    setLayerCategory(fixture.acceptedCache, {
+      libraryRoot: fixture.libraryRoot,
+      sourceLoopId: "loop-source",
+      identity: "identity-2",
+      path: fixture.paths[1],
+      category: "Texture",
+    })
+
+    expect(dismissCategoryCorrections(fixture.acceptedCache, ["identity-2"])).toEqual([])
+    const feedback = new DatabaseSync(path.join(fixture.acceptedCache, "generate", "key-feedback.sqlite3"), { readOnly: true })
+    const truth = feedback.prepare("SELECT corrected_category FROM category_truth_feedback WHERE identity = 'identity-2'").get() as unknown as { corrected_category: string }
+    feedback.close()
+    expect(truth.corrected_category).toBe("Texture")
   })
 
   it("excludes only the selected layer while preserving its catalogue record", () => {

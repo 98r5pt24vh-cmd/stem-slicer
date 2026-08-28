@@ -17,7 +17,6 @@ import {
   FolderOpen,
   ExternalLink,
   GripVertical,
-  HardDrive,
   History,
   Instagram,
   Library as LibraryIcon,
@@ -84,6 +83,7 @@ import type {
   AudioJobResult,
   BatchJobResult,
   CategoryCorrection,
+  CloudGenerationActivity,
   CloudLibrarySummary,
   CloudPublishEvent,
   CloudProfile,
@@ -132,6 +132,9 @@ interface GeneratedLayer {
   producers?: string[]
   libraryRoot?: string
   sourceOrigin?: "local" | "cloud"
+  cloudLayerId?: string
+  cloudOwnerId?: string
+  sourceSha256?: string
   sourceDetectedKey?: string
   identity?: string
   sourceKeyRank?: 1 | 2
@@ -151,6 +154,8 @@ interface HistoryEntry {
   layerCount: number
   generation: GenerateResult
   layers: GeneratedLayer[]
+  cloudRunId?: string
+  exportedAt?: string
 }
 
 interface SourceLoopStudioRequest {
@@ -2047,6 +2052,7 @@ function LayerCard({
   onCorrectCategory,
   onToggleLock,
   onRemove,
+  onExport,
   categoryOptions,
   canRemove,
   updating = false,
@@ -2071,6 +2077,7 @@ function LayerCard({
   onCorrectCategory?: (category: string) => void | Promise<void>
   onToggleLock?: () => void
   onRemove?: () => void
+  onExport?: () => void
   categoryOptions?: string[]
   canRemove?: boolean
   updating?: boolean
@@ -2093,6 +2100,7 @@ function LayerCard({
   const beginDrag = (event: React.DragEvent, path: string | undefined) => {
     if (!path) return
     event.preventDefault()
+    onExport?.()
     window.stemSlicer?.startFileDrag(path)
   }
 
@@ -2392,6 +2400,7 @@ function GenerateView({
   setCurrentGenerationResult,
   onAddHistory,
   onUpdateHistory,
+  onMarkCurrentGenerationExported,
   keyIssues,
   onReportKeyIssue,
   onSetKeyIssueActive,
@@ -2407,6 +2416,7 @@ function GenerateView({
   setCurrentGenerationResult: React.Dispatch<React.SetStateAction<GenerateResult | null>>
   onAddHistory: (entry: HistoryEntry) => void
   onUpdateHistory: (generation: GenerateResult, layers: GeneratedLayer[]) => void
+  onMarkCurrentGenerationExported: (generation: GenerateResult) => void
   keyIssues: KeyIssueReport[]
   onReportKeyIssue: (request: ReportKeyIssueRequest) => Promise<void>
   onSetKeyIssueActive: (issueId: string, active: boolean) => Promise<void>
@@ -2706,6 +2716,9 @@ function GenerateView({
       producers: artifact.producers,
       libraryRoot: artifact.libraryRoot,
       sourceOrigin: artifact.sourceOrigin ?? sourceOriginForLayer(artifact),
+      cloudLayerId: artifact.cloudLayerId,
+      cloudOwnerId: artifact.cloudOwnerId,
+      sourceSha256: artifact.sourceSha256,
       sourceDetectedKey: artifact.sourceDetectedKey,
       identity: artifact.identity,
       sourceKeyRank: artifact.sourceKeyRank ?? 1,
@@ -2762,6 +2775,9 @@ function GenerateView({
         producers: artifact.producers ?? previous?.producers,
         libraryRoot: artifact.libraryRoot ?? previous?.libraryRoot,
         sourceOrigin: artifact.sourceOrigin ?? previous?.sourceOrigin ?? sourceOriginForLayer(artifact),
+        cloudLayerId: artifact.cloudLayerId ?? previous?.cloudLayerId,
+        cloudOwnerId: artifact.cloudOwnerId ?? previous?.cloudOwnerId,
+        sourceSha256: artifact.sourceSha256 ?? previous?.sourceSha256,
         sourceDetectedKey: artifact.sourceDetectedKey ?? previous?.sourceDetectedKey,
         identity: artifact.identity,
         sourceKeyRank: artifact.sourceKeyRank ?? 1,
@@ -3178,6 +3194,7 @@ function GenerateView({
             onDragStart={(event) => {
               if (!currentGenerationResult?.masterPath || recipeDirty) return
               event.preventDefault()
+              onMarkCurrentGenerationExported(currentGenerationResult)
               window.stemSlicer?.startFileDrag(currentGenerationResult.masterPath)
             }}
           ><Layers3 /> Drag all</Button>
@@ -3205,6 +3222,7 @@ function GenerateView({
                 onCorrectCategory={(category) => correctLayerCategory(index, category)}
                 onToggleLock={() => toggleLayerLock(index)}
                 onRemove={() => removeLayerCard(index)}
+                onExport={() => currentGenerationResult && onMarkCurrentGenerationExported(currentGenerationResult)}
                 categoryOptions={selectedCategories.map((category) => category.name)}
                 canRemove={layers.length > 1}
                 updating={generateUpdateJob.busy}
@@ -3271,7 +3289,7 @@ function StemSlicerView({ onExtractionCompleted }: { onExtractionCompleted: (ent
       createdAt: new Date().toISOString(),
       sourceFileCount: batchResult.files,
       outputCount: batchResult.outputs.length,
-      outputs: [],
+      outputs: batchResult.outputs,
     })
   }, [batchResult, layerExtraction, onExtractionCompleted, sourceFolder])
 
@@ -3537,6 +3555,7 @@ function QuickToolsView({
       sourceFileCount: 1,
       outputCount: extractResult.layers.length,
       outputs: extractResult.layers.map((layer) => layer.path),
+      outputBytes: extractResult.layers.reduce((sum, layer) => sum + layer.bytes, 0),
       elapsedSeconds: extractResult.elapsedSeconds,
     })
   }, [extractFile, extractResult, onExtractionCompleted])
@@ -4458,7 +4477,10 @@ function HistoryView({
   convertHistory,
   playback,
   onReopen,
-  onTrashSelected,
+  onTrashGenerated,
+  onTrashExtractions,
+  onTrashConversions,
+  onMarkExported,
   onTogglePlayback,
 }: {
   history: HistoryEntry[]
@@ -4466,62 +4488,110 @@ function HistoryView({
   convertHistory: ConvertHistoryEntry[]
   playback: PlaybackClock
   onReopen: (entry: HistoryEntry) => void
-  onTrashSelected: (entries: HistoryEntry[]) => Promise<void>
+  onTrashGenerated: (entries: HistoryEntry[]) => Promise<void>
+  onTrashExtractions: (entries: ExtractionHistoryEntry[]) => Promise<void>
+  onTrashConversions: (entries: ConvertHistoryEntry[]) => Promise<void>
+  onMarkExported: (entry: HistoryEntry) => void
   onTogglePlayback: (entry: HistoryEntry) => void
 }) {
-  const [activeSection, setActiveSection] = useState<"generate" | "extract" | "convert">("generate")
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
+  type SectionId = "generate" | "extract" | "convert"
+  const [activeSection, setActiveSection] = useState<SectionId>("generate")
+  const [selectedBySection, setSelectedBySection] = useState<Record<SectionId, Set<string>>>(() => ({
+    generate: new Set(),
+    extract: new Set(),
+    convert: new Set(),
+  }))
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState("")
-  const [storageUsage, setStorageUsage] = useState<GenerationStorageUsage | null>(null)
-  const [storageError, setStorageError] = useState("")
-  const selectedEntries = history.filter((entry) => selectedIds.has(entry.id))
-  const allSelected = history.length > 0 && selectedEntries.length === history.length
+  const [storageUsage, setStorageUsage] = useState<Record<SectionId, GenerationStorageUsage | null>>({ generate: null, extract: null, convert: null })
+  const [storageError, setStorageError] = useState<Record<SectionId, string>>({ generate: "", extract: "", convert: "" })
+  const itemIds = useMemo<Record<SectionId, string[]>>(() => ({
+    generate: history.map((entry) => entry.id),
+    extract: extractionHistory.map((entry) => entry.id),
+    convert: convertHistory.map((entry) => entry.id),
+  }), [convertHistory, extractionHistory, history])
+  const selectedIds = selectedBySection[activeSection]
+  const selectedCount = itemIds[activeSection].filter((id) => selectedIds.has(id)).length
+  const allSelected = itemIds[activeSection].length > 0 && selectedCount === itemIds[activeSection].length
 
   const refreshStorageUsage = useCallback(async () => {
-    setStorageError("")
-    try {
-      const usage = await window.stemSlicer?.getGenerationStorageUsage()
-      if (usage) setStorageUsage(usage)
-    } catch (reason) {
-      setStorageError(reason instanceof Error ? reason.message : "Generation storage is unavailable.")
-    }
-  }, [])
+    const api = window.stemSlicer
+    if (!api) return
+    const requests: Array<[SectionId, Promise<GenerationStorageUsage>]> = [
+      ["generate", api.getGenerationStorageUsage()],
+      ["extract", api.getHistoryStorageUsage(extractionHistory.map((entry) => entry.outputFolder))],
+      ["convert", api.getHistoryStorageUsage(convertHistory.map((entry) => entry.outputFolder))],
+    ]
+    const results = await Promise.all(requests.map(async ([section, request]) => {
+      try {
+        return { section, usage: await request, error: "" }
+      } catch (reason) {
+        return { section, usage: null, error: reason instanceof Error ? reason.message : "Storage is unavailable." }
+      }
+    }))
+    setStorageUsage((current) => ({ ...current, ...Object.fromEntries(results.map((result) => [result.section, result.usage])) }))
+    setStorageError((current) => ({ ...current, ...Object.fromEntries(results.map((result) => [result.section, result.error])) }))
+  }, [convertHistory, extractionHistory])
 
   useEffect(() => {
-    const availableIds = new Set(history.map((entry) => entry.id))
-    setSelectedIds((current) => new Set([...current].filter((id) => availableIds.has(id))))
+    setSelectedBySection((current) => ({
+      generate: new Set([...current.generate].filter((id) => itemIds.generate.includes(id))),
+      extract: new Set([...current.extract].filter((id) => itemIds.extract.includes(id))),
+      convert: new Set([...current.convert].filter((id) => itemIds.convert.includes(id))),
+    }))
     void refreshStorageUsage()
-  }, [history, refreshStorageUsage])
+  }, [itemIds, refreshStorageUsage])
 
   const toggleSelected = (entryId: string, selected: boolean) => {
-    setSelectedIds((current) => {
-      const next = new Set(current)
+    setSelectedBySection((current) => {
+      const next = new Set(current[activeSection])
       if (selected) next.add(entryId)
       else next.delete(entryId)
-      return next
+      return { ...current, [activeSection]: next }
     })
   }
 
+  const toggleAll = () => {
+    setSelectedBySection((current) => ({
+      ...current,
+      [activeSection]: allSelected ? new Set() : new Set(itemIds[activeSection]),
+    }))
+  }
+
   const deleteSelection = async () => {
-    if (selectedEntries.length === 0) return
+    if (selectedCount === 0) return
     setDeleting(true)
     setDeleteError("")
     try {
-      await onTrashSelected(selectedEntries)
-      setSelectedIds(new Set())
+      if (activeSection === "generate") await onTrashGenerated(history.filter((entry) => selectedIds.has(entry.id)))
+      else if (activeSection === "extract") await onTrashExtractions(extractionHistory.filter((entry) => selectedIds.has(entry.id)))
+      else await onTrashConversions(convertHistory.filter((entry) => selectedIds.has(entry.id)))
+      setSelectedBySection((current) => ({ ...current, [activeSection]: new Set() }))
       setDeleteOpen(false)
     } catch (reason) {
-      setDeleteError(reason instanceof Error ? reason.message : "Unable to move the selected generations to Trash.")
+      setDeleteError(reason instanceof Error ? reason.message : "Unable to move the selected history outputs to Trash.")
     } finally {
       setDeleting(false)
     }
   }
 
+  const sectionMeta = {
+    generate: { title: "Generations", description: "Previously rendered stacks remain available here.", countLabel: history.length === 1 ? "generation" : "generations" },
+    extract: { title: "Extractions", description: "Quick Extract jobs and full folder batches share one timeline with a distinct source type.", countLabel: extractionHistory.length === 1 ? "extraction" : "extractions" },
+    convert: { title: "Quick Convert", description: "Completed one-file conversions remain easy to reveal or drag back into your workflow.", countLabel: convertHistory.length === 1 ? "conversion" : "conversions" },
+  }[activeSection]
+  const activeUsage = storageUsage[activeSection]
+  const activeStorageError = storageError[activeSection]
+
   return (
     <div className="page-stack history-page">
-      <PageHeader eyebrow="Workspace / History" title="Activity history" description="Reopen generated loops and find completed extraction or conversion jobs without mixing them with library maintenance." />
+      <PageHeader
+        eyebrow="Workspace / History"
+        title="Activity history"
+        description="Reopen, export or remove generated loops, extraction jobs and conversions from one consistent workspace."
+        actions={<Button variant="outline" size="sm" onClick={() => void window.stemSlicer?.openHistoryRoot()}><FolderOpen aria-hidden="true" /> Open Slicer folder</Button>}
+      />
 
       <div className="workspace-section-tabs" role="group" aria-label="History sections">
         {([
@@ -4545,36 +4615,28 @@ function HistoryView({
         ))}
       </div>
 
-      {activeSection === "generate" ? <section id="history-panel-generate" role="tabpanel" className="history-panel">
       <div className="history-section-heading app-no-drag">
-        <div><h2>Generations</h2><p>Previously rendered stacks remain available here.</p></div>
-        <div className="history-generation-tools">
-          <span
-            className={cn("history-storage-usage", storageError && "is-unavailable")}
-            role="status"
-            title={storageError || (storageUsage ? `${storageUsage.folders} generation folders · ${storageUsage.files} files` : "Calculating generation storage")}
-          >
-            <HardDrive aria-hidden="true" />
-            <span><b>{storageUsage ? formatDecimalBytes(storageUsage.bytes) : "…"}</b><small>generation storage</small></span>
-          </span>
-          <div className="history-selection-actions" aria-live="polite">
-            <span>{selectedEntries.length > 0 ? `${selectedEntries.length} selected` : `${history.length} generations`}</span>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={history.length === 0}
-              aria-pressed={allSelected}
-              onClick={() => setSelectedIds(allSelected ? new Set() : new Set(history.map((entry) => entry.id)))}
-            >
-              {allSelected ? <Square aria-hidden="true" /> : <CheckSquare2 aria-hidden="true" />}
-              {allSelected ? "Clear selection" : "Select all"}
-            </Button>
-            <Button variant="destructive" size="sm" disabled={selectedEntries.length === 0} onClick={() => setDeleteOpen(true)}>
-              <Trash2 aria-hidden="true" /> Move selected to Trash
-            </Button>
+        <div>
+          <div className="history-title-line">
+            <h2>{sectionMeta.title}</h2>
+            <span>{formatCount(itemIds[activeSection].length)} {sectionMeta.countLabel}</span>
+            <span title={activeStorageError || (activeUsage ? `${activeUsage.files} files` : "Calculating storage")}>{activeUsage ? formatDecimalBytes(activeUsage.bytes) : "…"}</span>
           </div>
+          <p>{sectionMeta.description}</p>
+        </div>
+        <div className="history-selection-actions" aria-live="polite">
+          <span>{selectedCount > 0 ? `${selectedCount} selected` : "Nothing selected"}</span>
+          <Button variant="outline" size="sm" disabled={itemIds[activeSection].length === 0} aria-pressed={allSelected} onClick={toggleAll}>
+            {allSelected ? <Square aria-hidden="true" /> : <CheckSquare2 aria-hidden="true" />}
+            {allSelected ? "Clear selection" : "Select all"}
+          </Button>
+          <Button variant="destructive" size="sm" disabled={selectedCount === 0} onClick={() => setDeleteOpen(true)}>
+            <Trash2 aria-hidden="true" /> Move selected to Trash
+          </Button>
         </div>
       </div>
+
+      {activeSection === "generate" ? <section id="history-panel-generate" role="tabpanel" className="history-panel">
       {history.length ? (
         <div className="history-list">
           {history.map((entry) => {
@@ -4629,7 +4691,7 @@ function HistoryView({
                     <HistoryPlayButton entry={entry} playing={playback.playing && playback.mode === "solo" && playback.soloId === historyLayerId(entry.id)} onToggle={() => onTogglePlayback(entry)} />
                     <Button variant="outline" size="sm" onClick={() => void window.stemSlicer?.revealPath(entry.generation.outputDirectory)}><FolderOpen aria-hidden="true" /> Open</Button>
                     <Button variant="outline" className="history-reload" size="sm" onClick={() => onReopen(entry)}><RefreshCw aria-hidden="true" /> Reload</Button>
-                    <Button variant="outline" size="sm" draggable onClick={() => void window.stemSlicer?.revealPath(entry.generation.masterPath)} onDragStart={(event) => { event.preventDefault(); window.stemSlicer?.startFileDrag(entry.generation.masterPath) }}><Layers3 aria-hidden="true" /> Drag</Button>
+                    <Button variant="outline" size="sm" draggable onClick={() => void window.stemSlicer?.revealPath(entry.generation.masterPath)} onDragStart={(event) => { event.preventDefault(); onMarkExported(entry); window.stemSlicer?.startFileDrag(entry.generation.masterPath) }}><Layers3 aria-hidden="true" /> Drag</Button>
                   </div>
                 </CardContent>
               </Card>
@@ -4642,14 +4704,14 @@ function HistoryView({
       </section> : null}
 
       {activeSection === "extract" ? <section id="history-panel-extract" role="tabpanel" className="history-panel">
-        <div className="history-section-heading">
-          <div><h2>Extractions</h2><p>Quick Extract jobs and full folder batches share one timeline with a distinct source type.</p></div>
-          <Badge variant="secondary">{extractionHistory.length} saved</Badge>
-        </div>
         {extractionHistory.length > 0 ? <div className="activity-history-list">
           {extractionHistory.map((entry) => (
-            <Card key={entry.id} className="activity-history-item">
+            <Card key={entry.id} className={cn("activity-history-item", selectedIds.has(entry.id) && "is-selected")}>
               <CardContent>
+                <label className="history-select-control activity-select-control">
+                  <input type="checkbox" checked={selectedIds.has(entry.id)} onChange={(event) => toggleSelected(entry.id, event.target.checked)} />
+                  <span className="sr-only">Select extraction {basename(entry.sourcePath)}</span>
+                </label>
                 <span className={cn("activity-history-icon", entry.mode === "folder" && "is-folder")}>
                   {entry.mode === "folder" ? <FolderOpen aria-hidden="true" /> : <Music2 aria-hidden="true" />}
                 </span>
@@ -4673,14 +4735,14 @@ function HistoryView({
       </section> : null}
 
       {activeSection === "convert" ? <section id="history-panel-convert" role="tabpanel" className="history-panel">
-        <div className="history-section-heading">
-          <div><h2>Quick Convert</h2><p>Completed one-file conversions remain easy to reveal or drag back into your workflow.</p></div>
-          <Badge variant="secondary">{convertHistory.length} saved</Badge>
-        </div>
         {convertHistory.length > 0 ? <div className="activity-history-list">
           {convertHistory.map((entry) => (
-            <Card key={entry.id} className="activity-history-item">
+            <Card key={entry.id} className={cn("activity-history-item", selectedIds.has(entry.id) && "is-selected")}>
               <CardContent>
+                <label className="history-select-control activity-select-control">
+                  <input type="checkbox" checked={selectedIds.has(entry.id)} onChange={(event) => toggleSelected(entry.id, event.target.checked)} />
+                  <span className="sr-only">Select conversion {basename(entry.sourcePath)}</span>
+                </label>
                 <span className="activity-history-icon is-convert"><Repeat2 aria-hidden="true" /></span>
                 <div className="activity-history-copy">
                   <strong title={entry.sourcePath}>{basename(entry.sourcePath)}</strong>
@@ -4708,15 +4770,15 @@ function HistoryView({
           <Dialog.Viewport className="dialog-viewport">
             <Dialog.Popup className="confirmation-dialog destructive-confirmation-dialog">
               <span className="confirmation-dialog-icon"><Trash2 aria-hidden="true" /></span>
-              <Dialog.Title>Move {selectedEntries.length} generation{selectedEntries.length === 1 ? "" : "s"} to Trash?</Dialog.Title>
+              <Dialog.Title>Move {selectedCount} {selectedCount === 1 ? "history output" : "history outputs"} to Trash?</Dialog.Title>
               <Dialog.Description>
-                Their generated folders and audio files will move to the macOS Trash. Your indexed source library remains untouched.
+                The selected Slicer output folders and their audio files will move to the macOS Trash. Indexed source libraries remain untouched.
               </Dialog.Description>
               {deleteError ? <p className="dialog-inline-error" role="alert">{deleteError}</p> : null}
               <footer>
                 <Dialog.Close className="dialog-cancel" disabled={deleting}>Cancel</Dialog.Close>
                 <Button variant="destructive" disabled={deleting} onClick={() => void deleteSelection()}>
-                  <Trash2 aria-hidden="true" /> {deleting ? "Moving…" : "Move generations to Trash"}
+                  <Trash2 aria-hidden="true" /> {deleting ? "Moving…" : "Move outputs to Trash"}
                 </Button>
               </footer>
             </Dialog.Popup>
@@ -4729,15 +4791,15 @@ function HistoryView({
 
 function LibraryIssueList({
   issues,
-  dismissingIssueId,
+  selectedIds,
+  onToggleSelected,
   onSetKeyIssueActive,
-  onDismiss,
   onEditSourceLoop,
 }: {
   issues: KeyIssueReport[]
-  dismissingIssueId: string | null
+  selectedIds: Set<string>
+  onToggleSelected: (issueId: string, selected: boolean) => void
   onSetKeyIssueActive: (issueId: string, active: boolean) => Promise<void>
-  onDismiss: (issueId: string) => void
   onEditSourceLoop: (request: SourceLoopStudioRequest) => void
 }) {
   if (issues.length === 0) return <p className="key-issues-empty">No correction has been reported in this section yet.</p>
@@ -4745,7 +4807,7 @@ function LibraryIssueList({
   return (
     <div className="key-issue-list">
       {issues.map((issue) => (
-        <Card key={issue.id} className={cn("key-issue-item", issue.active && "is-active")}>
+        <Card key={issue.id} className={cn("key-issue-item", issue.active && "is-active", selectedIds.has(issue.id) && "is-selected")}>
           <CardContent>
             <span className={cn("key-issue-icon", issue.issueType === "wrong-slice" && "is-wrong-slice")}>
               {issue.issueType === "wrong-slice" ? <Scissors aria-hidden="true" /> : <CircleAlert aria-hidden="true" />}
@@ -4774,16 +4836,10 @@ function LibraryIssueList({
                 {issue.active ? <Check aria-hidden="true" /> : <CircleX aria-hidden="true" />}
                 {issue.active ? "Restore" : "Exclude again"}
               </Button>
-              <button
-                type="button"
-                className="key-issue-dismiss"
-                disabled={dismissingIssueId === issue.id}
-                aria-label={`Remove ${issue.reportedFile} report from the list`}
-                title="Remove report from list"
-                onClick={() => onDismiss(issue.id)}
-              >
-                <X aria-hidden="true" />
-              </button>
+              <label className="library-history-select">
+                <input type="checkbox" checked={selectedIds.has(issue.id)} onChange={(event) => onToggleSelected(issue.id, event.target.checked)} />
+                <span className="sr-only">Select {issue.reportedFile} report</span>
+              </label>
             </div>
           </CardContent>
         </Card>
@@ -4799,6 +4855,7 @@ function LibraryView({
   categoryCorrections,
   onSetKeyIssueActive,
   onDismissKeyIssue,
+  onDismissCategoryCorrections,
   onEditSourceLoop,
 }: {
   active: boolean
@@ -4807,30 +4864,73 @@ function LibraryView({
   categoryCorrections: CategoryCorrection[]
   onSetKeyIssueActive: (issueId: string, active: boolean) => Promise<void>
   onDismissKeyIssue: (issueId: string) => Promise<void>
+  onDismissCategoryCorrections: (identities: string[]) => Promise<void>
   onEditSourceLoop: (request: SourceLoopStudioRequest) => void
 }) {
-  const [activeSection, setActiveSection] = useState<"wrong-key" | "wrong-category" | "wrong-cut" | "cloud">("wrong-key")
-  const [dismissingIssueId, setDismissingIssueId] = useState<string | null>(null)
+  type CorrectionSection = "wrong-key" | "wrong-category" | "wrong-cut"
+  const [activeSection, setActiveSection] = useState<CorrectionSection | "cloud">("wrong-key")
+  const [selectedBySection, setSelectedBySection] = useState<Record<CorrectionSection, Set<string>>>(() => ({
+    "wrong-key": new Set(),
+    "wrong-category": new Set(),
+    "wrong-cut": new Set(),
+  }))
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const [issueError, setIssueError] = useState("")
-  const wrongKeyIssues = keyIssues.filter((issue) => issue.issueType === "wrong-key")
-  const wrongCutIssues = keyIssues.filter((issue) => issue.issueType === "wrong-slice")
+  const wrongKeyIssues = useMemo(() => keyIssues.filter((issue) => issue.issueType === "wrong-key"), [keyIssues])
+  const wrongCutIssues = useMemo(() => keyIssues.filter((issue) => issue.issueType === "wrong-slice"), [keyIssues])
+  const correctionIds = useMemo<Record<CorrectionSection, string[]>>(() => ({
+    "wrong-key": wrongKeyIssues.map((issue) => issue.id),
+    "wrong-category": categoryCorrections.map((correction) => correction.identity),
+    "wrong-cut": wrongCutIssues.map((issue) => issue.id),
+  }), [categoryCorrections, wrongCutIssues, wrongKeyIssues])
+  const correctionSection = activeSection === "cloud" ? null : activeSection
+  const selectedCorrectionIds = correctionSection ? selectedBySection[correctionSection] : new Set<string>()
+  const availableCorrectionIds = correctionSection ? correctionIds[correctionSection] : []
+  const selectedCorrectionCount = availableCorrectionIds.filter((id) => selectedCorrectionIds.has(id)).length
+  const allCorrectionsSelected = availableCorrectionIds.length > 0 && selectedCorrectionCount === availableCorrectionIds.length
 
-  const dismissIssue = async (issueId: string) => {
-    setDismissingIssueId(issueId)
+  useEffect(() => {
+    setSelectedBySection((current) => ({
+      "wrong-key": new Set([...current["wrong-key"]].filter((id) => correctionIds["wrong-key"].includes(id))),
+      "wrong-category": new Set([...current["wrong-category"]].filter((id) => correctionIds["wrong-category"].includes(id))),
+      "wrong-cut": new Set([...current["wrong-cut"]].filter((id) => correctionIds["wrong-cut"].includes(id))),
+    }))
+  }, [correctionIds])
+
+  const toggleCorrectionSelected = (id: string, selected: boolean) => {
+    if (!correctionSection) return
+    setSelectedBySection((current) => {
+      const next = new Set(current[correctionSection])
+      if (selected) next.add(id)
+      else next.delete(id)
+      return { ...current, [correctionSection]: next }
+    })
+  }
+
+  const dismissSelectedCorrections = async () => {
+    if (!correctionSection || selectedCorrectionCount === 0) return
+    setDeleting(true)
     setIssueError("")
     try {
-      await onDismissKeyIssue(issueId)
+      if (correctionSection === "wrong-category") {
+        await onDismissCategoryCorrections([...selectedCorrectionIds])
+      } else {
+        for (const issueId of selectedCorrectionIds) await onDismissKeyIssue(issueId)
+      }
+      setSelectedBySection((current) => ({ ...current, [correctionSection]: new Set() }))
+      setDeleteOpen(false)
     } catch (reason) {
-      setIssueError(reason instanceof Error ? reason.message : "Unable to remove this report from the list.")
+      setIssueError(reason instanceof Error ? reason.message : "Unable to remove the selected corrections from history.")
     } finally {
-      setDismissingIssueId(null)
+      setDeleting(false)
     }
   }
 
   const correctionProps = {
-    dismissingIssueId,
+    selectedIds: selectedCorrectionIds,
+    onToggleSelected: toggleCorrectionSelected,
     onSetKeyIssueActive,
-    onDismiss: (issueId: string) => void dismissIssue(issueId),
     onEditSourceLoop,
   }
 
@@ -4861,6 +4961,28 @@ function LibraryView({
         ))}
       </div>
 
+      {correctionSection ? (
+        <div className="library-selection-toolbar app-no-drag">
+          <span>{selectedCorrectionCount > 0 ? `${selectedCorrectionCount} selected` : `${availableCorrectionIds.length} saved`}</span>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={availableCorrectionIds.length === 0}
+            aria-pressed={allCorrectionsSelected}
+            onClick={() => setSelectedBySection((current) => ({
+              ...current,
+              [correctionSection]: allCorrectionsSelected ? new Set() : new Set(availableCorrectionIds),
+            }))}
+          >
+            {allCorrectionsSelected ? <Square aria-hidden="true" /> : <CheckSquare2 aria-hidden="true" />}
+            {allCorrectionsSelected ? "Clear selection" : "Select all"}
+          </Button>
+          <Button variant="destructive" size="sm" disabled={selectedCorrectionCount === 0} onClick={() => setDeleteOpen(true)}>
+            <Trash2 aria-hidden="true" /> Remove from history
+          </Button>
+        </div>
+      ) : null}
+
       {activeSection === "wrong-key" ? <section id="library-panel-wrong-key" role="tabpanel" className="library-correction-panel">
         <div className="history-section-heading"><div><h2>Wrong key history</h2><p>Review reported key mismatches without mixing them into activity history.</p></div><Badge variant={wrongKeyIssues.some((issue) => issue.active) ? "warning" : "secondary"}>{wrongKeyIssues.filter((issue) => issue.active).length} active</Badge></div>
         <LibraryIssueList issues={wrongKeyIssues} {...correctionProps} />
@@ -4878,7 +5000,7 @@ function LibraryView({
             const provenance = provenanceForLayer({ sourceFile: correction.filename, sourceLoopId: correction.sourceLoopId })
             const relatedIssue = keyIssues.find((issue) => sourceLoopKey(issue.libraryRoot, issue.sourceLoopId) === sourceLoopKey(correction.libraryRoot, correction.sourceLoopId))
             return (
-              <Card key={correction.identity} className="category-correction-item">
+              <Card key={correction.identity} className={cn("category-correction-item", selectedCorrectionIds.has(correction.identity) && "is-selected")}>
                 <CardContent>
                   <span className="category-correction-icon"><Check aria-hidden="true" /></span>
                   <div className="category-correction-copy"><strong title={stripAudioExtension(correction.filename)}>{provenance.loopName}</strong><small>{provenance.producers.join(", ")}</small></div>
@@ -4887,6 +5009,10 @@ function LibraryView({
                   <div className="category-correction-actions">
                     <Button variant="outline" size="sm" onClick={() => void window.stemSlicer?.revealPath(correction.path)}><FolderOpen aria-hidden="true" /> Reveal</Button>
                     <Button variant="outline" size="sm" onClick={() => onEditSourceLoop({ libraryRoot: correction.libraryRoot, sourceLoopId: correction.sourceLoopId, issueId: relatedIssue?.id ?? "", issueActive: relatedIssue?.active ?? false })}><Pencil aria-hidden="true" /> Studio</Button>
+                    <label className="library-history-select">
+                      <input type="checkbox" checked={selectedCorrectionIds.has(correction.identity)} onChange={(event) => toggleCorrectionSelected(correction.identity, event.target.checked)} />
+                      <span className="sr-only">Select {provenance.loopName} correction</span>
+                    </label>
                   </div>
                 </CardContent>
               </Card>
@@ -4897,6 +5023,28 @@ function LibraryView({
 
       {issueError ? <p className="dialog-inline-error" role="alert">{issueError}</p> : null}
       {activeSection === "cloud" && active ? <section id="library-panel-cloud" role="tabpanel" className="library-cloud-panel"><CloudView library={library} section="libraries" embedded /></section> : null}
+
+      <Dialog.Root open={deleteOpen} onOpenChange={(open) => { if (!deleting) setDeleteOpen(open) }}>
+        <Dialog.Portal>
+          <Dialog.Backdrop className="dialog-backdrop" />
+          <Dialog.Viewport className="dialog-viewport">
+            <Dialog.Popup className="confirmation-dialog destructive-confirmation-dialog">
+              <span className="confirmation-dialog-icon"><Trash2 aria-hidden="true" /></span>
+              <Dialog.Title>Remove {selectedCorrectionCount} {selectedCorrectionCount === 1 ? "entry" : "entries"} from history?</Dialog.Title>
+              <Dialog.Description>
+                This only clears the selected correction history. Source audio, catalogue categories, quarantines and retained truth feedback stay unchanged.
+              </Dialog.Description>
+              {issueError ? <p className="dialog-inline-error" role="alert">{issueError}</p> : null}
+              <footer>
+                <Dialog.Close className="dialog-cancel" disabled={deleting}>Cancel</Dialog.Close>
+                <Button variant="destructive" disabled={deleting} onClick={() => void dismissSelectedCorrections()}>
+                  <Trash2 aria-hidden="true" /> {deleting ? "Removing…" : "Remove from history"}
+                </Button>
+              </footer>
+            </Dialog.Popup>
+          </Dialog.Viewport>
+        </Dialog.Portal>
+      </Dialog.Root>
     </div>
   )
 }
@@ -4912,9 +5060,14 @@ const EMPTY_CLOUD_STATE: CloudState = {
 type CloudSection = "profile" | "producers" | "libraries"
 
 function cloudErrorMessage(reason: unknown, fallback: string): string {
-  const rawMessage = reason instanceof Error ? reason.message : ""
+  const candidate = reason instanceof Error
+    ? reason.message
+    : reason && typeof reason === "object" && "message" in reason
+      ? reason.message
+      : ""
+  const rawMessage = typeof candidate === "string" ? candidate : ""
   const message = rawMessage.replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/i, "").trim()
-  return message && !/^(?:<none>|none|null|undefined)$/i.test(message) ? message : fallback
+  return message && !/^(?:<none>|none|null|undefined|\[object Object\])$/i.test(message) ? message : fallback
 }
 
 function CloudProfileAvatar({ profile, large = false }: { profile?: CloudProfile; large?: boolean }) {
@@ -4929,8 +5082,10 @@ function CloudProfileAvatar({ profile, large = false }: { profile?: CloudProfile
   )
 }
 
-function CloudView({ library, section, embedded = false }: { library: LibraryOverview; section: CloudSection; embedded?: boolean }) {
+function CloudView({ library, section, embedded = false, generationHistory = [] }: { library: LibraryOverview; section: CloudSection; embedded?: boolean; generationHistory?: HistoryEntry[] }) {
   const [cloud, setCloud] = useState<CloudState>(EMPTY_CLOUD_STATE)
+  const [cloudActivity, setCloudActivity] = useState<CloudGenerationActivity[]>([])
+  const [activityError, setActivityError] = useState("")
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
@@ -4958,18 +5113,34 @@ function CloudView({ library, section, embedded = false }: { library: LibraryOve
   const sharedSelectAllRef = useRef<HTMLInputElement>(null)
   const cloudProfileId = cloud.profile?.id ?? ""
 
+  const refreshActivity = useCallback(async () => {
+    try {
+      const activity = await window.stemSlicer?.getCloudGenerationActivity()
+      setCloudActivity(activity ?? [])
+      setActivityError("")
+    } catch (reason) {
+      setActivityError(cloudErrorMessage(reason, "Cloud activity is temporarily unavailable."))
+    }
+  }, [])
+
   const refresh = useCallback(async () => {
     const state = await window.stemSlicer?.getCloudState()
     if (state) {
       setCloud(state)
       window.dispatchEvent(new CustomEvent(CLOUD_STATE_CHANGED_EVENT, { detail: state }))
+      if (state.authenticated) void refreshActivity()
     }
-  }, [])
+  }, [refreshActivity])
 
   useEffect(() => {
     let cancelled = false
     void window.stemSlicer?.getCloudState()
-      .then((state) => { if (!cancelled && state) setCloud(state) })
+      .then((state) => {
+        if (!cancelled && state) {
+          setCloud(state)
+          if (state.authenticated) void refreshActivity()
+        }
+      })
       .catch((reason) => { if (!cancelled) setError(cloudErrorMessage(reason, "Cloud is unavailable.")) })
       .finally(() => { if (!cancelled) setLoading(false) })
     const unsubscribe = window.stemSlicer?.onCloudPublishEvent((event) => {
@@ -4989,7 +5160,7 @@ function CloudView({ library, section, embedded = false }: { library: LibraryOve
       cancelled = true
       unsubscribe?.()
     }
-  }, [refresh])
+  }, [refresh, refreshActivity])
 
   useEffect(() => {
     if (!cloud.profile) return
@@ -5166,6 +5337,9 @@ function CloudView({ library, section, embedded = false }: { library: LibraryOve
     const nameOrder = left.name.localeCompare(right.name, undefined, { numeric: true, sensitivity: "base" })
     return sharedLibrarySortDirection === "asc" ? nameOrder : -nameOrder
   })
+  const localCloudHistory = generationHistory.filter((entry) => entry.layers.some((layer) => sourceOriginForLayer(layer) === "cloud"))
+  const recordedCloudRunIds = new Set(cloudActivity.map((entry) => entry.id))
+  const localOnlyCloudHistory = localCloudHistory.filter((entry) => !entry.cloudRunId || !recordedCloudRunIds.has(entry.cloudRunId))
 
   useEffect(() => {
     if (sharedSelectAllRef.current) sharedSelectAllRef.current.indeterminate = someReadyLibrariesEnabled
@@ -5330,39 +5504,74 @@ function CloudView({ library, section, embedded = false }: { library: LibraryOve
           ) : null}
 
           {section === "producers" ? (
-            <Card className="cloud-panel cloud-producers-panel">
-              <CardHeader><div><CardTitle>Trusted producers</CardTitle><CardDescription>Connect by handle. Both producers must accept before private libraries become available.</CardDescription></div><Badge>{acceptedConnections.length} connected</Badge></CardHeader>
-              <CardContent>
-                <form className="cloud-connect-form" onSubmit={requestConnection}>
-                  <label htmlFor="cloud-friend-handle"><span>Producer handle</span><Input id="cloud-friend-handle" value={friendHandle} onChange={(event) => setFriendHandle(event.target.value)} placeholder="producer-handle" required /></label>
-                  <Button type="submit" variant="outline" disabled={busy}><UsersRound aria-hidden="true" /> Send request</Button>
-                </form>
-                <div className="cloud-connection-list">
-                  {pendingConnections.map((connection) => (
-                    <div className="cloud-list-row cloud-producer-row" key={connection.id}>
-                      <CloudProfileAvatar profile={connection.profile} />
-                      <span><strong>{connection.profile.displayName}</strong><small>@{connection.profile.handle} · {connection.direction === "incoming" ? "wants to connect" : "request sent"}</small></span>
-                      {connection.direction === "incoming" ? <Button size="sm" onClick={() => void perform(() => window.stemSlicer?.cloudAcceptConnection(connection.id) ?? Promise.resolve(undefined))}>Accept request</Button> : <Badge variant="warning">Pending</Badge>}
-                    </div>
-                  ))}
-                  {acceptedConnections.map((connection) => (
-                    <div className="cloud-list-row cloud-producer-row" key={connection.id}>
-                      <CloudProfileAvatar profile={connection.profile} />
-                      <span>
-                        <strong>{connection.profile.displayName}</strong>
-                        <small>@{connection.profile.handle}{connection.profile.aliases.length ? ` · ${connection.profile.aliases.join(", ")}` : ""}</small>
-                        {connection.profile.bio ? <em>{connection.profile.bio}</em> : null}
-                      </span>
-                      <div className="cloud-producer-actions">
-                        {connection.profile.instagramHandle ? <button type="button" aria-label={`Open ${connection.profile.displayName} on Instagram`} onClick={() => void window.stemSlicer?.openExternalUrl(`https://instagram.com/${connection.profile.instagramHandle}`)}><Instagram aria-hidden="true" /></button> : null}
-                        <Badge variant={connection.profile.openToCollaborate ? "success" : "default"}>{connection.profile.openToCollaborate ? "Open" : "Connected"}</Badge>
+            <div className="cloud-network-grid">
+              <Card className="cloud-panel cloud-producers-panel">
+                <CardHeader><div><CardTitle>Trusted producers</CardTitle><CardDescription>Connect by handle. Both producers must accept before private libraries become available.</CardDescription></div><Badge>{acceptedConnections.length} connected</Badge></CardHeader>
+                <CardContent>
+                  <form className="cloud-connect-form" onSubmit={requestConnection}>
+                    <label htmlFor="cloud-friend-handle"><span>Producer handle</span><Input id="cloud-friend-handle" value={friendHandle} onChange={(event) => setFriendHandle(event.target.value)} placeholder="producer-handle" required /></label>
+                    <Button type="submit" variant="outline" disabled={busy}><UsersRound aria-hidden="true" /> Send request</Button>
+                  </form>
+                  <div className="cloud-connection-list">
+                    {pendingConnections.map((connection) => (
+                      <div className="cloud-list-row cloud-producer-row" key={connection.id}>
+                        <CloudProfileAvatar profile={connection.profile} />
+                        <span><strong>{connection.profile.displayName}</strong><small>@{connection.profile.handle} · {connection.direction === "incoming" ? "wants to connect" : "request sent"}</small></span>
+                        {connection.direction === "incoming" ? <Button size="sm" onClick={() => void perform(() => window.stemSlicer?.cloudAcceptConnection(connection.id) ?? Promise.resolve(undefined))}>Accept request</Button> : <Badge variant="warning">Pending</Badge>}
                       </div>
-                    </div>
-                  ))}
-                  {cloud.connections.length === 0 ? <p className="cloud-empty-copy">Connect a trusted producer to share private libraries and preserve credits.</p> : null}
-                </div>
-              </CardContent>
-            </Card>
+                    ))}
+                    {acceptedConnections.map((connection) => (
+                      <div className="cloud-list-row cloud-producer-row" key={connection.id}>
+                        <CloudProfileAvatar profile={connection.profile} />
+                        <span>
+                          <strong>{connection.profile.displayName}</strong>
+                          <small>@{connection.profile.handle}{connection.profile.aliases.length ? ` · ${connection.profile.aliases.join(", ")}` : ""}</small>
+                          {connection.profile.bio ? <em>{connection.profile.bio}</em> : null}
+                        </span>
+                        <div className="cloud-producer-actions">
+                          {connection.profile.instagramHandle ? <button type="button" aria-label={`Open ${connection.profile.displayName} on Instagram`} onClick={() => void window.stemSlicer?.openExternalUrl(`https://instagram.com/${connection.profile.instagramHandle}`)}><Instagram aria-hidden="true" /></button> : null}
+                          <Badge variant={connection.profile.openToCollaborate ? "success" : "default"}>{connection.profile.openToCollaborate ? "Open" : "Connected"}</Badge>
+                        </div>
+                      </div>
+                    ))}
+                    {cloud.connections.length === 0 ? <p className="cloud-empty-copy">Connect a trusted producer to share private libraries and preserve credits.</p> : null}
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="cloud-panel cloud-activity-panel">
+                <CardHeader><div><CardTitle>Cloud activity</CardTitle><CardDescription>See who generated with shared layers. Local exports are marked when audio leaves Slicer.</CardDescription></div><Badge>{cloudActivity.length + localOnlyCloudHistory.length} events</Badge></CardHeader>
+                <CardContent>
+                  {activityError ? <p className="cloud-activity-error" role="status"><CircleAlert aria-hidden="true" />{activityError}</p> : null}
+                  <div className="cloud-activity-list">
+                    {cloudActivity.map((activity) => {
+                      const createdHere = activity.createdBy.id === cloud.profile?.id
+                      const ownedSourceCount = activity.sources.filter((source) => source.sourceOwner.id === cloud.profile?.id).length
+                      const localHistoryEntry = generationHistory.find((entry) => entry.cloudRunId === activity.id)
+                      return (
+                        <article className="cloud-activity-row" key={activity.id}>
+                          <CloudProfileAvatar profile={activity.createdBy} />
+                          <div>
+                            <strong>{createdHere ? `You generated with ${activity.contributors.map((producer) => producer.displayName).join(", ") || "Cloud layers"}` : `${activity.createdBy.displayName} used your shared layers`}</strong>
+                            <small>{new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(activity.createdAt))} · {activity.sources.length} Cloud layers · {activity.targetBpm} BPM · {activity.targetKey}</small>
+                            {!createdHere ? <span>{ownedSourceCount} of your layers contributed</span> : null}
+                          </div>
+                          <Badge variant={localHistoryEntry?.exportedAt ? "success" : "secondary"}>{localHistoryEntry?.exportedAt ? "Exported" : "Generated"}</Badge>
+                        </article>
+                      )
+                    })}
+                    {localOnlyCloudHistory.map((entry) => (
+                      <article className="cloud-activity-row" key={`local-${entry.id}`}>
+                        <CloudProfileAvatar profile={cloud.profile} />
+                        <div><strong>{entry.displayName}</strong><small>This Mac · {entry.layers.filter((layer) => sourceOriginForLayer(layer) === "cloud").length} Cloud layers · {entry.bpm} BPM · {entry.keyName}</small></div>
+                        <Badge variant={entry.exportedAt ? "success" : "secondary"}>{entry.exportedAt ? "Exported" : "Generated"}</Badge>
+                      </article>
+                    ))}
+                    {cloudActivity.length === 0 && localOnlyCloudHistory.length === 0 ? <p className="cloud-empty-copy">Cloud generation activity will appear here after a shared layer is selected.</p> : null}
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
           ) : null}
 
           {section === "libraries" ? (
@@ -5713,6 +5922,30 @@ export function App() {
   const addHistory = useCallback((entry: HistoryEntry) => {
     setHistory((items) => [entry, ...items.filter((item) => item.generation.outputDirectory !== entry.generation.outputDirectory)])
     setGenerationSequence((current) => Math.max(current, entry.generationNumber))
+    const sources = entry.layers.flatMap((layer, slotIndex) => (
+      layer.cloudLayerId && layer.cloudOwnerId && layer.sourceSha256 && layer.sourceLoopId
+        ? [{
+            slotIndex,
+            cloudLayerId: layer.cloudLayerId,
+            cloudOwnerId: layer.cloudOwnerId,
+            sourceSha256: layer.sourceSha256,
+            sourceLoopId: layer.sourceLoopId,
+            category: layer.category,
+          }]
+        : []
+    ))
+    if (sources.length > 0) {
+      void window.stemSlicer?.cloudRecordGeneration({
+        seed: entry.generation.seed,
+        targetBpm: entry.bpm,
+        targetKey: entry.keyName,
+        layerCount: entry.layerCount,
+        sources,
+      }).then((cloudRunId) => {
+        if (!cloudRunId) return
+        setHistory((items) => items.map((item) => item.generation.outputDirectory === entry.generation.outputDirectory ? { ...item, cloudRunId } : item))
+      }).catch(() => undefined)
+    }
   }, [])
 
   const updateHistory = useCallback((generation: GenerateResult, updatedLayers: GeneratedLayer[]) => {
@@ -5727,6 +5960,16 @@ export function App() {
 
   const addConvertHistory = useCallback((entry: ConvertHistoryEntry) => {
     setConvertHistory((items) => prependUniqueActivity(items, entry, (item) => item.artifact.path).slice(0, 100))
+  }, [])
+
+  const markHistoryExported = useCallback((entry: HistoryEntry) => {
+    const exportedAt = new Date().toISOString()
+    setHistory((items) => items.map((item) => item.generation.outputDirectory === entry.generation.outputDirectory ? { ...item, exportedAt } : item))
+  }, [])
+
+  const markCurrentGenerationExported = useCallback((generation: GenerateResult) => {
+    const exportedAt = new Date().toISOString()
+    setHistory((items) => items.map((item) => item.generation.outputDirectory === generation.outputDirectory ? { ...item, exportedAt } : item))
   }, [])
 
   const refreshLibrary = useCallback(async () => {
@@ -5777,6 +6020,12 @@ export function App() {
     const issues = await window.stemSlicer?.dismissKeyIssueReport(issueId)
     if (!issues) throw new Error("The desktop key-feedback service is unavailable.")
     setKeyIssues(issues)
+  }, [])
+
+  const dismissCategoryCorrectionHistory = useCallback(async (identities: string[]) => {
+    const corrections = await window.stemSlicer?.dismissCategoryCorrections(identities)
+    if (!corrections) throw new Error("The desktop category-correction service is unavailable.")
+    setCategoryCorrections(corrections)
   }, [])
 
   useEffect(() => {
@@ -5911,7 +6160,7 @@ export function App() {
     const failures: string[] = []
     for (const entry of entries) {
       try {
-        await api.trashPath(entry.generation.outputDirectory)
+        await api.trashHistoryPath({ kind: "generate", targetPath: entry.generation.outputDirectory })
         movedIds.add(entry.id)
       } catch {
         failures.push(entry.recipe)
@@ -5927,21 +6176,55 @@ export function App() {
     }
   }
 
+  const trashExtractionEntries = async (entries: ExtractionHistoryEntry[]) => {
+    const api = window.stemSlicer
+    if (!api) throw new Error("The desktop Trash service is unavailable.")
+    const movedIds = new Set<string>()
+    const failures: string[] = []
+    for (const entry of entries) {
+      try {
+        await api.trashHistoryPath({ kind: "extract", targetPath: entry.outputFolder })
+        movedIds.add(entry.id)
+      } catch {
+        failures.push(basename(entry.sourcePath))
+      }
+    }
+    setExtractionHistory((items) => items.filter((item) => !movedIds.has(item.id)))
+    if (failures.length > 0) throw new Error(`${failures.length} extraction output${failures.length === 1 ? "" : "s"} could not be moved to Trash.`)
+  }
+
+  const trashConvertEntries = async (entries: ConvertHistoryEntry[]) => {
+    const api = window.stemSlicer
+    if (!api) throw new Error("The desktop Trash service is unavailable.")
+    const movedIds = new Set<string>()
+    const failures: string[] = []
+    for (const entry of entries) {
+      try {
+        await api.trashHistoryPath({ kind: "convert", targetPath: entry.outputFolder })
+        movedIds.add(entry.id)
+      } catch {
+        failures.push(basename(entry.sourcePath))
+      }
+    }
+    setConvertHistory((items) => items.filter((item) => !movedIds.has(item.id)))
+    if (failures.length > 0) throw new Error(`${failures.length} conversion output${failures.length === 1 ? "" : "s"} could not be moved to Trash.`)
+  }
+
   return (
     <div className="app-frame">
       <a className="skip-link" href="#main-content">Aller au contenu principal</a>
       <AppSidebar activeView={activeView} collapsed={sidebarCollapsed} onNavigate={navigateToView} onToggle={() => setSidebarCollapsed((value) => !value)} />
       <div className="app-workspace">
-        <main id="main-content" tabIndex={-1} ref={mainRef} className={cn(activeView === "generate" && "generate-main", activeView === "quick-tools" && "quick-tools-main", activeView === "stem-slicer" && "stem-slicer-main", studioActive && "studio-main")}>
+        <main id="main-content" tabIndex={-1} ref={mainRef} className={cn(activeView === "generate" && "generate-main", activeView === "quick-tools" && "quick-tools-main", activeView === "stem-slicer" && "stem-slicer-main", activeView === "library" && !studioActive && "library-main", activeView === "cloud" && "cloud-main", activeView === "profile" && "profile-main", studioActive && "studio-main")}>
           <div hidden={activeView !== "stem-slicer"}><StemSlicerView onExtractionCompleted={addExtractionHistory} /></div>
-          <div hidden={activeView !== "generate"}><GenerateView library={library} layers={layers} setLayers={setLayers} currentGenerationResult={currentGenerationResult} setCurrentGenerationResult={setCurrentGenerationResult} onAddHistory={addHistory} onUpdateHistory={updateHistory} keyIssues={keyIssues} onReportKeyIssue={reportKeyIssue} onSetKeyIssueActive={updateKeyIssueState} onLibraryRefresh={refreshLibrary} onCategoryCorrectionsRefresh={refreshCategoryCorrections} nextGenerationNumber={nextGenerationNumber} playback={playback} /></div>
+          <div hidden={activeView !== "generate"}><GenerateView library={library} layers={layers} setLayers={setLayers} currentGenerationResult={currentGenerationResult} setCurrentGenerationResult={setCurrentGenerationResult} onAddHistory={addHistory} onUpdateHistory={updateHistory} onMarkCurrentGenerationExported={markCurrentGenerationExported} keyIssues={keyIssues} onReportKeyIssue={reportKeyIssue} onSetKeyIssueActive={updateKeyIssueState} onLibraryRefresh={refreshLibrary} onCategoryCorrectionsRefresh={refreshCategoryCorrections} nextGenerationNumber={nextGenerationNumber} playback={playback} /></div>
           <div hidden={activeView !== "quick-tools"}><QuickToolsView previewLayers={quickPreviewLayers} setPreviewLayers={setQuickPreviewLayers} playback={playback} onActiveToolChange={setActiveQuickTool} onExtractionCompleted={addExtractionHistory} onConvertCompleted={addConvertHistory} /></div>
-          <div hidden={activeView !== "history"}><HistoryView history={history} extractionHistory={extractionHistory} convertHistory={convertHistory} playback={playback} onReopen={reopenHistory} onTrashSelected={trashHistoryEntries} onTogglePlayback={toggleHistoryPlayback} /></div>
+          <div hidden={activeView !== "history"}><HistoryView history={history} extractionHistory={extractionHistory} convertHistory={convertHistory} playback={playback} onReopen={reopenHistory} onTrashGenerated={trashHistoryEntries} onTrashExtractions={trashExtractionEntries} onTrashConversions={trashConvertEntries} onMarkExported={markHistoryExported} onTogglePlayback={toggleHistoryPlayback} /></div>
           <div hidden={activeView !== "library"} className={cn("library-workspace", studioActive && "is-studio")}>
-            <div hidden={studioActive}><LibraryView active={activeView === "library" && !studioActive} library={library} keyIssues={keyIssues} categoryCorrections={categoryCorrections} onSetKeyIssueActive={updateKeyIssueState} onDismissKeyIssue={dismissKeyIssue} onEditSourceLoop={openSourceLoopStudio} /></div>
+            <div hidden={studioActive}><LibraryView active={activeView === "library" && !studioActive} library={library} keyIssues={keyIssues} categoryCorrections={categoryCorrections} onSetKeyIssueActive={updateKeyIssueState} onDismissKeyIssue={dismissKeyIssue} onDismissCategoryCorrections={dismissCategoryCorrectionHistory} onEditSourceLoop={openSourceLoopStudio} /></div>
             {studioSource ? <SourceLoopStudio active={studioActive} {...studioSource} onSetKeyIssueActive={updateKeyIssueState} onSaved={async () => { await refreshLibrary(); await refreshCategoryCorrections() }} onClose={closeSourceLoopStudio} /> : null}
           </div>
-          <div hidden={activeView !== "cloud"}>{activeView === "cloud" ? <CloudView library={library} section="producers" /> : null}</div>
+          <div hidden={activeView !== "cloud"}>{activeView === "cloud" ? <CloudView library={library} section="producers" generationHistory={history} /> : null}</div>
           <div hidden={activeView !== "profile"}>{activeView === "profile" ? <CloudView library={library} section="profile" /> : null}</div>
         </main>
         {!studioActive ? <GlobalPlayer layers={playerLayers} playback={playback} contextLabel={playbackContext === "history" ? "History generation" : playbackContext === "quick-extract" ? "Extracted stack" : "Generated stack"} displayName={playbackContext === "generate" ? currentGenerationDisplayName : historyPlaybackName} /> : null}

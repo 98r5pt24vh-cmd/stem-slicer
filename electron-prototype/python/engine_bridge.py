@@ -1373,6 +1373,9 @@ def generation_artifacts(
                 "producers": producers,
                 "libraryRoot": source_metadata.get("library_root"),
                 "sourceOrigin": _source_origin(source_metadata),
+                "cloudLayerId": source_metadata.get("cloud_layer_id"),
+                "cloudOwnerId": source_metadata.get("cloud_owner_id"),
+                "sourceSha256": source_metadata.get("sha256"),
                 "sourceDetectedKey": " ".join(
                     item for item in (detected_key, detected_mode) if item
                 ),

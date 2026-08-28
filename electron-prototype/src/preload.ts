@@ -5,12 +5,16 @@ import type { AudioJobEvent, CloudPublishEvent, StemSlicerDesktopApi } from "./s
 const api: StemSlicerDesktopApi = {
   getEnvironment: () => ipcRenderer.invoke("app:get-environment"),
   getGenerationStorageUsage: () => ipcRenderer.invoke("history:get-storage-usage"),
+  getHistoryStorageUsage: (paths) => ipcRenderer.invoke("history:get-path-storage-usage", paths),
   getQuickActivityHistory: () => ipcRenderer.invoke("history:get-quick-activities"),
+  openHistoryRoot: () => ipcRenderer.invoke("history:open-root"),
+  trashHistoryPath: (request) => ipcRenderer.invoke("history:trash-output", request),
   getLibraryOverview: () => ipcRenderer.invoke("library:get-overview"),
   getLibraryProducers: () => ipcRenderer.invoke("library:get-producers"),
   removeLibraryRoot: (libraryRoot) => ipcRenderer.invoke("library:remove-root", libraryRoot),
   getKeyIssueReports: () => ipcRenderer.invoke("key-issues:list"),
   getCategoryCorrections: () => ipcRenderer.invoke("category-corrections:list"),
+  dismissCategoryCorrections: (identities) => ipcRenderer.invoke("category-corrections:dismiss", identities),
   reportKeyIssue: (request) => ipcRenderer.invoke("key-issues:report", request),
   setKeyIssueActive: (issueId, active) => ipcRenderer.invoke("key-issues:set-active", issueId, active),
   dismissKeyIssueReport: (issueId) => ipcRenderer.invoke("key-issues:dismiss", issueId),
@@ -32,6 +36,8 @@ const api: StemSlicerDesktopApi = {
   cloudSetLibraryEnabled: (libraryId, enabled) => ipcRenderer.invoke("cloud:set-library-enabled", libraryId, enabled),
   cloudSetLibrarySharing: (libraryId, sharing) => ipcRenderer.invoke("cloud:set-library-sharing", libraryId, sharing),
   cloudRemoveLibrary: (libraryId) => ipcRenderer.invoke("cloud:remove-library", libraryId),
+  cloudRecordGeneration: (request) => ipcRenderer.invoke("cloud:record-generation", request),
+  getCloudGenerationActivity: () => ipcRenderer.invoke("cloud:get-generation-activity"),
   onCloudPublishEvent: (listener) => {
     const handler = (_event: IpcRendererEvent, payload: CloudPublishEvent) => listener(payload)
     ipcRenderer.on("cloud:publish-event", handler)

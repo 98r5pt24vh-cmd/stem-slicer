@@ -146,6 +146,10 @@ function ensureTruthFeedbackSchema(database: DatabaseSync): void {
       previous_category TEXT,
       corrected_category TEXT NOT NULL,
       validated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS category_correction_history_hidden (
+      identity TEXT PRIMARY KEY,
+      hidden_at TEXT NOT NULL
     )
   `)
 }
@@ -248,6 +252,7 @@ function recordCategoryTruth(
       correctedCategory,
       new Date().toISOString(),
     )
+    database.prepare("DELETE FROM category_correction_history_hidden WHERE identity = ?").run(row.identity)
   } finally {
     database.close()
   }
@@ -260,8 +265,11 @@ export function listCategoryCorrections(acceptedCachePath: string): CategoryCorr
   try {
     ensureTruthFeedbackSchema(database)
     const rows = database.prepare(`
-      SELECT *
-      FROM category_truth_feedback
+      SELECT feedback.*
+      FROM category_truth_feedback AS feedback
+      LEFT JOIN category_correction_history_hidden AS hidden
+        ON hidden.identity = feedback.identity
+      WHERE hidden.identity IS NULL
       ORDER BY validated_at DESC
     `).all() as unknown as CategoryFeedbackRow[]
     return rows.map((row) => ({
@@ -277,6 +285,39 @@ export function listCategoryCorrections(acceptedCachePath: string): CategoryCorr
   } finally {
     database.close()
   }
+}
+
+export function dismissCategoryCorrections(
+  acceptedCachePath: string,
+  requestedIdentities: unknown,
+): CategoryCorrection[] {
+  if (!Array.isArray(requestedIdentities) || requestedIdentities.length === 0) {
+    throw new Error("Choose at least one category correction to remove from history.")
+  }
+  const identities = [...new Set(requestedIdentities.map((identity) => normalizedText(identity, "Category correction identity")))]
+  const feedbackPath = feedbackDatabasePath(acceptedCachePath)
+  mkdirSync(path.dirname(feedbackPath), { recursive: true })
+  const database = new DatabaseSync(feedbackPath)
+  try {
+    ensureTruthFeedbackSchema(database)
+    const hide = database.prepare(`
+      INSERT INTO category_correction_history_hidden (identity, hidden_at)
+      VALUES (?, ?)
+      ON CONFLICT (identity) DO UPDATE SET hidden_at = excluded.hidden_at
+    `)
+    const hiddenAt = new Date().toISOString()
+    database.exec("BEGIN IMMEDIATE")
+    try {
+      for (const identity of identities) hide.run(identity, hiddenAt)
+      database.exec("COMMIT")
+    } catch (error) {
+      database.exec("ROLLBACK")
+      throw error
+    }
+  } finally {
+    database.close()
+  }
+  return listCategoryCorrections(acceptedCachePath)
 }
 
 export function getSourceLoopEditor(

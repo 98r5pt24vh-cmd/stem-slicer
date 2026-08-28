@@ -25,6 +25,13 @@ export interface GenerationStorageUsage {
   files: number
 }
 
+export type HistoryOutputKind = "generate" | "extract" | "convert"
+
+export interface TrashHistoryOutputRequest {
+  kind: HistoryOutputKind
+  targetPath: string
+}
+
 export interface CloudProfile {
   id: string
   handle: string
@@ -74,6 +81,40 @@ export interface CloudState {
   libraries: CloudLibrarySummary[]
   testAccounts?: CloudTestAccount[]
   message?: string
+}
+
+export interface CloudGenerationSource {
+  slotIndex: number
+  sourceOwner: CloudProfile
+  sourceLoopId: string
+  category: string
+}
+
+export interface CloudGenerationActivity {
+  id: string
+  createdBy: CloudProfile
+  contributors: CloudProfile[]
+  seed: number
+  targetBpm: number
+  targetKey: string
+  layerCount: number
+  createdAt: string
+  sources: CloudGenerationSource[]
+}
+
+export interface CloudGenerationRecordRequest {
+  seed: number
+  targetBpm: number
+  targetKey: string
+  layerCount: number
+  sources: Array<{
+    slotIndex: number
+    cloudLayerId: string
+    cloudOwnerId: string
+    sourceSha256: string
+    sourceLoopId: string
+    category: string
+  }>
 }
 
 export interface ConfigureCloudRequest {
@@ -279,6 +320,9 @@ export interface AudioArtifact {
   producers?: string[]
   libraryRoot?: string
   sourceOrigin?: "local" | "cloud"
+  cloudLayerId?: string
+  cloudOwnerId?: string
+  sourceSha256?: string
   sourceDetectedKey?: string
   identity?: string
   sourceKeyRank?: 1 | 2
@@ -295,6 +339,7 @@ export interface ExtractionHistoryEntry {
   sourceFileCount: number
   outputCount: number
   outputs: string[]
+  outputBytes?: number
   elapsedSeconds?: number
 }
 
@@ -514,12 +559,16 @@ export interface EngineStatus {
 export interface StemSlicerDesktopApi {
   getEnvironment: () => Promise<AppEnvironment>
   getGenerationStorageUsage: () => Promise<GenerationStorageUsage>
+  getHistoryStorageUsage: (paths: string[]) => Promise<GenerationStorageUsage>
   getQuickActivityHistory: () => Promise<QuickActivityHistorySnapshot>
+  openHistoryRoot: () => Promise<void>
+  trashHistoryPath: (request: TrashHistoryOutputRequest) => Promise<void>
   getLibraryOverview: () => Promise<LibraryOverview>
   getLibraryProducers: () => Promise<LibraryProducerSummary[]>
   removeLibraryRoot: (libraryRoot: string) => Promise<LibraryOverview>
   getKeyIssueReports: () => Promise<KeyIssueReport[]>
   getCategoryCorrections: () => Promise<CategoryCorrection[]>
+  dismissCategoryCorrections: (identities: string[]) => Promise<CategoryCorrection[]>
   reportKeyIssue: (request: ReportKeyIssueRequest) => Promise<KeyIssueReport[]>
   setKeyIssueActive: (issueId: string, active: boolean) => Promise<KeyIssueReport[]>
   dismissKeyIssueReport: (issueId: string) => Promise<KeyIssueReport[]>
@@ -541,6 +590,8 @@ export interface StemSlicerDesktopApi {
   cloudSetLibraryEnabled: (libraryId: string, enabled: boolean) => Promise<CloudState>
   cloudSetLibrarySharing: (libraryId: string, sharing: boolean) => Promise<CloudState>
   cloudRemoveLibrary: (libraryId: string) => Promise<CloudState>
+  cloudRecordGeneration: (request: CloudGenerationRecordRequest) => Promise<string | undefined>
+  getCloudGenerationActivity: () => Promise<CloudGenerationActivity[]>
   onCloudPublishEvent: (listener: (event: CloudPublishEvent) => void) => () => void
   pickLibraryFolder: () => Promise<AudioSelection>
   pickAudioFiles: () => Promise<AudioSelection>
