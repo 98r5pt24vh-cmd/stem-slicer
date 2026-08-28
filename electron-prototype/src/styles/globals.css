@@ -4987,7 +4987,7 @@ td strong {
   position: fixed;
   z-index: 60;
   inset-inline-end: 24px;
-  inset-block-end: 84px;
+  inset-block-start: 24px;
   width: min(380px, calc(100vw - 48px));
   box-shadow: 0 16px 38px rgb(0 0 0 / 0.42), 0 1px 0 rgb(255 255 255 / 0.08) inset;
 }
@@ -5776,6 +5776,7 @@ td strong {
   gap: 10px;
   margin-block-end: 9px;
   border-block-end: 1px solid rgb(255 255 255 / 0.065);
+  padding-inline: 12px 7px;
   padding-block-end: 9px;
 }
 
