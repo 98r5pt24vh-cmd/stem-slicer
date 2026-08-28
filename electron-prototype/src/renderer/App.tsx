@@ -26,6 +26,7 @@ import {
   Lock,
   LogIn,
   LogOut,
+  Monitor,
   Music2,
   Pause,
   Pencil,
@@ -192,6 +193,23 @@ function MidiFileIcon() {
   )
 }
 
+function CloudFillIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M7.1 19h10.95a4.45 4.45 0 0 0 .67-8.85 6.85 6.85 0 0 0-13.1-.82A4.9 4.9 0 0 0 7.1 19Z" />
+    </svg>
+  )
+}
+
+function SourceOriginIcon({ origin }: { origin: "local" | "cloud" }) {
+  const label = origin === "cloud" ? "Cloud source" : "Local source"
+  return (
+    <span className={cn("source-origin-icon", `is-${origin}`)} role="img" aria-label={label} title={label}>
+      {origin === "cloud" ? <CloudFillIcon /> : <Monitor aria-hidden="true" />}
+    </span>
+  )
+}
+
 type QuickToolId = "extract" | "scan" | "convert"
 type PlaybackContext = "generate" | "quick-extract" | "history"
 
@@ -204,10 +222,9 @@ const NAVIGATION: NavItem[] = [
   { id: "cloud", label: "Cloud", icon: Cloud, badge: "ALPHA" },
 ]
 
-const LAYER_CATEGORY_OPTIONS = [
-  "Bass", "Chords", "Counter", "Keys", "Piano", "Lead", "Pad", "Pluck",
-  "Vocal Chop", "Bells", "Strings", "Texture", "Guitar Lead", "Guitar Chords",
-  "Vocal", "Arp", "Brass", "Synth",
+const GENERATE_CATEGORY_OPTIONS = [
+  "Arp", "Bass", "Chords", "Counter", "Guitar Chords", "Keys",
+  "Lead", "Pad", "Pluck", "Strings", "Texture", "Vocal Chop",
 ]
 
 const SHARP_CAMELOT_KEYS: Record<string, string> = {
@@ -2015,7 +2032,7 @@ function WrongLayerAction({
                   <input type="checkbox" checked={wrongCategory} onChange={(event) => setWrongCategory(event.target.checked)} />
                   <span><strong>Wrong category</strong><small>Choose the category that should drive future generations.</small></span>
                 </label>
-                {wrongCategory ? <Select id={`wrong-category-${layer.id}`} label="Correct category" value={category} onChange={setCategory} options={LAYER_CATEGORY_OPTIONS} forceBelow /> : null}
+                {wrongCategory ? <Select id={`wrong-category-${layer.id}`} label="Correct category" value={category} onChange={setCategory} options={GENERATE_CATEGORY_OPTIONS} forceBelow /> : null}
                 {quarantineReason ? <p className="wrong-layer-warning"><AlertTriangle aria-hidden="true" /> Every matching card from this source loop will stop and disappear after confirmation.</p> : null}
               </div>
             ) : null}
@@ -2127,7 +2144,7 @@ function LayerCard({
               <span className="layer-producer-credit" aria-label={`Producers: ${provenance.producers.join(", ")}`}>
                 <ProducerAvatarStack producers={provenance.producers} />
                 <span className="truncate">{provenance.producers.join(", ")}</span>
-                {sourceOrigin ? <span className={cn("source-origin-badge", `is-${sourceOrigin}`)}>{sourceOrigin === "cloud" ? "Cloud" : "Local"}</span> : null}
+                {sourceOrigin ? <SourceOriginIcon origin={sourceOrigin} /> : null}
               </span>
             </div>
           ) : (
@@ -2271,8 +2288,8 @@ function LayerCard({
 }
 
 function mergeGenerateCategories(...groups: Array<Array<{ name: string; count: number }>>) {
-  const supported = new Set(LAYER_CATEGORY_OPTIONS.map((category) => category.toLowerCase()))
-  const canonicalNames = new Map(LAYER_CATEGORY_OPTIONS.map((category) => [category.toLowerCase(), category]))
+  const supported = new Set(GENERATE_CATEGORY_OPTIONS.map((category) => category.toLowerCase()))
+  const canonicalNames = new Map(GENERATE_CATEGORY_OPTIONS.map((category) => [category.toLowerCase(), category]))
   const counts = new Map<string, number>()
   for (const group of groups) {
     for (const category of group) {
@@ -4345,7 +4362,7 @@ function SourceLoopStudio({
                               <X aria-hidden="true" />
                             </button>
                             <div className="mini-daw-track-strip">
-                              <div className="mini-daw-track-category"><LayerCategorySelect id={`editor-category-${layer.identity}`} value={layer.category} options={LAYER_CATEGORY_OPTIONS} disabled={saving} onChange={(category) => updateLayer(layer.identity, { category })} /></div>
+                              <div className="mini-daw-track-category"><LayerCategorySelect id={`editor-category-${layer.identity}`} value={layer.category} options={GENERATE_CATEGORY_OPTIONS} disabled={saving} onChange={(category) => updateLayer(layer.identity, { category })} /></div>
                               <label className="mini-daw-track-volume" title={`Volume ${trackVolume}%`}>
                                 <span className="sr-only">Volume for {displayName.fullLabel}</span>
                                 <input type="range" min="0" max="125" value={trackVolume} onChange={(event) => updateTrackVolume(layer.identity, Number(event.target.value))} />
@@ -4751,7 +4768,7 @@ function HistoryView({
                                 <strong title={stripAudioExtension(layer.sourceFile ?? layer.file)}>{provenance.loopName}</strong>
                                 <small>{provenance.producers.join(", ")}</small>
                               </span>
-                              <span className={cn("source-origin-badge", `is-${sourceOriginForLayer(layer)}`)}>{sourceOriginForLayer(layer) === "cloud" ? "Cloud" : "Local"}</span>
+                              <SourceOriginIcon origin={sourceOriginForLayer(layer)} />
                               <Badge variant="secondary">{layer.category}</Badge>
                             </li>
                           )
