@@ -951,8 +951,8 @@ main:focus {
   position: fixed;
   z-index: 90;
   inset: 0;
-  background: rgb(0 0 0 / 0.54);
-  backdrop-filter: blur(6.4px);
+  background: rgb(0 0 0 / 0.35);
+  backdrop-filter: blur(4px);
   transition: opacity 140ms ease-out;
 }
 
