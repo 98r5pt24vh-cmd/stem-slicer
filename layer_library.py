@@ -57,7 +57,7 @@ TAXONOMY = (
     "Vocal",
     "Arp",
     "Brass",
-    "Accent",
+    "Synth",
     "Percussion",
 )
 

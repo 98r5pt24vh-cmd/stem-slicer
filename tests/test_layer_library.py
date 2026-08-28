@@ -121,6 +121,8 @@ class LayerLibraryTests(unittest.TestCase):
         self.assertEqual(len(set(TAXONOMY)), 19)
         self.assertNotIn("Unreviewed", TAXONOMY)
         self.assertIn("Piano", TAXONOMY)
+        self.assertIn("Synth", TAXONOMY)
+        self.assertNotIn("Accent", TAXONOMY)
         self.assertNotIn("Rhythmic Pluck", TAXONOMY)
         self.assertEqual(
             AUDIO_EXTENSIONS,

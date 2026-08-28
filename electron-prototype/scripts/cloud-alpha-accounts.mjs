@@ -95,7 +95,7 @@ async function ensureAccount(account) {
   }, { onConflict: "id" }).select("id,handle,display_name").single()
   if (profile.error) throw profile.error
 
-  await supabase.auth.signOut()
+  await supabase.auth.signOut({ scope: "local" })
   return profile.data
 }
 

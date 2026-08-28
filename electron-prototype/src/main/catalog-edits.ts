@@ -39,7 +39,7 @@ const CATEGORIES = new Set([
   "Vocal",
   "Arp",
   "Brass",
-  "Accent",
+  "Synth",
   "Percussion",
 ])
 

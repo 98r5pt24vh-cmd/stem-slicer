@@ -116,7 +116,7 @@ const result = await new Promise((resolve, reject) => {
   })
 })
 
-await supabase.auth.signOut()
+await supabase.auth.signOut({ scope: "local" })
 process.stdout.write(`${JSON.stringify({
   ok: true,
   outputDirectory: result.outputDirectory,

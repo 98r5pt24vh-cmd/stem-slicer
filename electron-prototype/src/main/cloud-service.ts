@@ -32,6 +32,7 @@ const FREE_PROJECT_OBJECT_LIMIT = 50_000_000
 const UPLOAD_CONCURRENCY = 3
 const INSERT_BATCH_SIZE = 200
 const CATALOG_PAGE_SIZE = 1_000
+const STORAGE_LIST_PAGE_SIZE = 1_000
 const STORAGE_DELETE_BATCH_SIZE = 1_000
 const PROFILE_AVATAR_SOURCE_LIMIT = 25_000_000
 const PROFILE_AVATAR_UPLOAD_LIMIT = 5_000_000
@@ -206,10 +207,14 @@ export function canonicalizeCloudProducerCredits(producers: string[], owner?: Cl
   )).filter(Boolean))]
 }
 
-function errorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message
-  if (error && typeof error === "object" && "message" in error) return String(error.message)
-  return "The Cloud request failed."
+export function cloudErrorMessage(error: unknown, fallback = "The Cloud request failed."): string {
+  const rawMessage = error instanceof Error
+    ? error.message
+    : error && typeof error === "object" && "message" in error
+      ? String(error.message)
+      : ""
+  const message = rawMessage.trim()
+  return message && !/^(?:<none>|none|null|undefined)$/i.test(message) ? message : fallback
 }
 
 function isInvalidRefreshSession(error: unknown): boolean {
@@ -292,14 +297,21 @@ class EncryptedAuthStorage {
 
 async function parallelMap<T>(items: T[], concurrency: number, task: (item: T, index: number) => Promise<void>): Promise<void> {
   let nextIndex = 0
+  let firstError: unknown
   const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
-    while (nextIndex < items.length) {
+    while (firstError === undefined && nextIndex < items.length) {
       const index = nextIndex
       nextIndex += 1
-      await task(items[index], index)
+      try {
+        await task(items[index], index)
+      } catch (error) {
+        if (firstError === undefined) firstError = error
+        return
+      }
     }
   })
   await Promise.all(workers)
+  if (firstError !== undefined) throw firstError
 }
 
 export class CloudService {
@@ -631,7 +643,7 @@ export class CloudService {
     }
   }
 
-  private async libraryObjectPaths(libraryId: string): Promise<string[]> {
+  private async cataloguedLibraryObjectPaths(libraryId: string): Promise<string[]> {
     const paths: string[] = []
     for (let start = 0; ; start += CATALOG_PAGE_SIZE) {
       const response = await this.supabase()
@@ -646,6 +658,32 @@ export class CloudService {
       if (page.length < CATALOG_PAGE_SIZE) break
     }
     return paths
+  }
+
+  private async storedLibraryObjectPaths(libraryId: string, ownerId: string): Promise<string[]> {
+    const prefix = `${ownerId}/${libraryId}`
+    const paths: string[] = []
+    for (let offset = 0; ; offset += STORAGE_LIST_PAGE_SIZE) {
+      const response = await this.supabase().storage.from(CLOUD_BUCKET).list(prefix, {
+        limit: STORAGE_LIST_PAGE_SIZE,
+        offset,
+        sortBy: { column: "name", order: "asc" },
+      })
+      if (response.error) throw response.error
+      paths.push(...response.data
+        .filter((object) => object.name !== ".emptyFolderPlaceholder")
+        .map((object) => `${prefix}/${object.name}`))
+      if (response.data.length < STORAGE_LIST_PAGE_SIZE) break
+    }
+    return paths
+  }
+
+  private async libraryObjectPaths(libraryId: string, ownerId: string): Promise<string[]> {
+    const [catalogued, stored] = await Promise.all([
+      this.cataloguedLibraryObjectPaths(libraryId),
+      this.storedLibraryObjectPaths(libraryId, ownerId),
+    ])
+    return [...new Set([...catalogued, ...stored])]
   }
 
   async removeLibrary(libraryId: string): Promise<CloudState> {
@@ -663,7 +701,7 @@ export class CloudService {
       if (paused.error) throw paused.error
     }
     try {
-      const objectPaths = await this.libraryObjectPaths(library.id)
+      const objectPaths = await this.libraryObjectPaths(library.id, session.user.id)
       for (const batch of chunkCloudObjectPaths(objectPaths)) {
         const removed = await this.supabase().storage.from(CLOUD_BUCKET).remove(batch)
         if (removed.error) throw removed.error
@@ -678,7 +716,7 @@ export class CloudService {
       if (deleted.error) throw deleted.error
       if (!deleted.data) throw new Error("The Cloud library could not be removed.")
     } catch (error) {
-      throw new Error(`Sharing was paused, but Cloud removal did not finish. Try again. ${errorMessage(error)}`)
+      throw new Error(`Sharing was paused, but Cloud removal did not finish. Try again. ${cloudErrorMessage(error)}`)
     }
     const enabledIds = new Set(this.settings.enabledLibraryIds ?? [])
     enabledIds.delete(library.id)
@@ -789,7 +827,7 @@ export class CloudService {
         jobId,
         type: "failed",
         message: "Cloud library upload failed.",
-        error: errorMessage(error),
+        error: cloudErrorMessage(error),
       })
     })
     return { jobId }
@@ -805,35 +843,52 @@ export class CloudService {
     if (oversized) {
       throw new Error(`${oversized.fileName} exceeds the 50 MB object limit of a free Supabase project.`)
     }
-    const created = await this.supabase()
+    const reusable = await this.supabase()
       .from("cloud_libraries")
-      .insert({
-        owner_id: profile.id,
-        name: manifest.name,
-        source_fingerprint: manifest.fingerprint,
-        status: "uploading",
-        layer_count: manifest.layers.length,
-        loop_count: manifest.loopCount,
-        total_bytes: manifest.totalBytes,
-      })
+      .select("id,owner_id,name,status,layer_count,loop_count,total_bytes,updated_at")
+      .eq("owner_id", profile.id)
+      .eq("source_fingerprint", manifest.fingerprint)
+      .in("status", ["failed", "uploading"])
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle<LibraryRow>()
+    if (reusable.error) throw reusable.error
+    const libraryResponse = reusable.data
+      ? await this.supabase()
+        .from("cloud_libraries")
+        .update({
+          name: manifest.name,
+          status: "uploading",
+          layer_count: manifest.layers.length,
+          loop_count: manifest.loopCount,
+          total_bytes: manifest.totalBytes,
+        })
+        .eq("id", reusable.data.id)
+        .eq("owner_id", profile.id)
+        .select("id,owner_id,name,status,layer_count,loop_count,total_bytes,updated_at")
+        .single<LibraryRow>()
+      : await this.supabase()
+        .from("cloud_libraries")
+        .insert({
+          owner_id: profile.id,
+          name: manifest.name,
+          source_fingerprint: manifest.fingerprint,
+          status: "uploading",
+          layer_count: manifest.layers.length,
+          loop_count: manifest.loopCount,
+          total_bytes: manifest.totalBytes,
+        })
       .select("id,owner_id,name,status,layer_count,loop_count,total_bytes,updated_at")
       .single<LibraryRow>()
-    if (created.error) throw created.error
-    const library = created.data
-    const layerRows = new Array<Record<string, unknown>>(manifest.layers.length)
-    let completed = 0
-    try {
-      await parallelMap(manifest.layers, UPLOAD_CONCURRENCY, async (layer, index) => {
-        const fileName = safeObjectFileName(layer.fileName)
-        const objectPath = `${profile.id}/${library.id}/${String(index + 1).padStart(5, "0")}-${layer.sha256.slice(0, 12)}-${fileName}`
-        const body = await readFile(layer.path)
-        const upload = await this.supabase().storage.from(CLOUD_BUCKET).upload(objectPath, body, {
-          contentType: audioMimeType(layer.fileName),
-          cacheControl: "3600",
-          upsert: false,
-        })
-        if (upload.error) throw upload.error
-        layerRows[index] = {
+    if (libraryResponse.error) throw libraryResponse.error
+    const library = libraryResponse.data
+    const preparedLayers = manifest.layers.map((layer, index) => {
+      const fileName = safeObjectFileName(layer.fileName)
+      const objectPath = `${profile.id}/${library.id}/${String(index + 1).padStart(5, "0")}-${layer.sha256.slice(0, 12)}-${fileName}`
+      return {
+        layer,
+        objectPath,
+        row: {
           library_id: library.id,
           owner_id: profile.id,
           object_path: objectPath,
@@ -842,6 +897,41 @@ export class CloudService {
           sha256: layer.sha256,
           byte_size: layer.byteSize,
           metadata: layer.metadata,
+        },
+      }
+    })
+    const storedPaths = new Set(await this.storedLibraryObjectPaths(library.id, profile.id))
+    const resumableCount = preparedLayers.reduce((total, item) => total + Number(storedPaths.has(item.objectPath)), 0)
+    let completed = resumableCount
+    if (resumableCount > 0) {
+      listener({
+        jobId,
+        type: "progress",
+        message: `Resuming Cloud upload · ${resumableCount}/${manifest.layers.length} layers already stored…`,
+        current: resumableCount,
+        total: manifest.layers.length,
+        percent: Math.max(2, Math.min(88, Math.round((resumableCount / manifest.layers.length) * 88))),
+      })
+    }
+    try {
+      await parallelMap(preparedLayers, UPLOAD_CONCURRENCY, async ({ layer, objectPath }) => {
+        if (storedPaths.has(objectPath)) return
+        let body: Buffer
+        try {
+          body = await readFile(layer.path)
+        } catch (error) {
+          throw new Error(`Unable to read ${layer.fileName}. ${cloudErrorMessage(error, "Check that the local file is still available, then retry the library.")}`)
+        }
+        const upload = await this.supabase().storage.from(CLOUD_BUCKET).upload(objectPath, body, {
+          contentType: audioMimeType(layer.fileName),
+          cacheControl: "3600",
+          upsert: false,
+        })
+        if (upload.error) {
+          throw new Error(`Unable to upload ${layer.fileName}. ${cloudErrorMessage(
+            upload.error,
+            "Supabase Storage returned no reason. Check your connection, then retry the library.",
+          )}`)
         }
         completed += 1
         listener({
@@ -853,9 +943,10 @@ export class CloudService {
           percent: Math.max(2, Math.min(88, Math.round((completed / manifest.layers.length) * 88))),
         })
       })
+      const layerRows = preparedLayers.map((item) => item.row)
       for (let index = 0; index < layerRows.length; index += INSERT_BATCH_SIZE) {
         const batch = layerRows.slice(index, index + INSERT_BATCH_SIZE)
-        const inserted = await this.supabase().from("cloud_layers").insert(batch)
+        const inserted = await this.supabase().from("cloud_layers").upsert(batch, { onConflict: "object_path" })
         if (inserted.error) throw inserted.error
         listener({
           jobId,
@@ -893,7 +984,7 @@ export class CloudService {
       })
     } catch (error) {
       await this.supabase().from("cloud_libraries").update({ status: "failed" }).eq("id", library.id)
-      throw error
+      throw new Error(`${cloudErrorMessage(error)} Uploaded layers were kept so Retry upload can continue instead of starting over.`)
     }
   }
 

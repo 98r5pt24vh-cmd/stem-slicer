@@ -214,5 +214,8 @@ try {
     if (objectPaths.length > 0) await owner.supabase.storage.from(BUCKET).remove(objectPaths)
     await owner.supabase.from("cloud_libraries").delete().eq("id", libraryId)
   }
-  await Promise.all([owner.supabase.auth.signOut(), viewer.supabase.auth.signOut()])
+  await Promise.all([
+    owner.supabase.auth.signOut({ scope: "local" }),
+    viewer.supabase.auth.signOut({ scope: "local" }),
+  ])
 }

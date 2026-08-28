@@ -187,7 +187,7 @@ const NAVIGATION: NavItem[] = [
 const LAYER_CATEGORY_OPTIONS = [
   "Bass", "Chords", "Counter", "Keys", "Piano", "Lead", "Pad", "Pluck",
   "Vocal Chop", "Bells", "Strings", "Texture", "Guitar Lead", "Guitar Chords",
-  "Vocal", "Arp", "Brass", "Accent", "Percussion",
+  "Vocal", "Arp", "Brass", "Synth", "Percussion",
 ]
 
 const SHARP_CAMELOT_KEYS: Record<string, string> = {
@@ -4677,8 +4677,9 @@ const EMPTY_CLOUD_STATE: CloudState = {
 type CloudSection = "profile" | "producers" | "libraries"
 
 function cloudErrorMessage(reason: unknown, fallback: string): string {
-  const message = reason instanceof Error ? reason.message : fallback
-  return message.replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/i, "")
+  const rawMessage = reason instanceof Error ? reason.message : ""
+  const message = rawMessage.replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/i, "").trim()
+  return message && !/^(?:<none>|none|null|undefined)$/i.test(message) ? message : fallback
 }
 
 function CloudProfileAvatar({ profile, large = false }: { profile?: CloudProfile; large?: boolean }) {
@@ -4743,7 +4744,8 @@ function CloudView({ library }: { library: LibraryOverview }) {
         setNotice(event.message)
         void refresh()
       } else if (event.type === "failed") {
-        setError(event.error || event.message)
+        setError(cloudErrorMessage(new Error(event.error || ""), "Cloud upload stopped. Check your connection, then retry the library."))
+        void refresh()
       }
     })
     return () => {
@@ -4796,6 +4798,7 @@ function CloudView({ library }: { library: LibraryOverview }) {
       }
     } catch (reason) {
       setError(cloudErrorMessage(reason, "The Cloud request failed."))
+      void refresh().catch(() => undefined)
     } finally {
       setBusy(false)
     }
@@ -5141,6 +5144,7 @@ function CloudView({ library }: { library: LibraryOverview }) {
                     {ownLibraries.map((item) => {
                       const sharing = item.status === "ready"
                       const paused = item.status === "archived"
+                      const localRoot = library.roots.find((root) => root.name === item.name)
                       const statusLabel = sharing ? "Shared" : paused ? "Paused" : item.status === "uploading" ? "Publishing" : "Upload failed"
                       return (
                         <div className={cn("cloud-list-row cloud-library-row", paused && "is-paused")} key={item.id}>
@@ -5157,6 +5161,17 @@ function CloudView({ library }: { library: LibraryOverview }) {
                               >
                                 {paused ? <RefreshCw aria-hidden="true" /> : <Pause aria-hidden="true" />}
                                 {paused ? "Resume sharing" : "Pause sharing"}
+                              </Button>
+                            ) : null}
+                            {(item.status === "failed" || item.status === "uploading") && localRoot ? (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                disabled={publishEvent?.type === "progress"}
+                                onClick={() => void publishLibrary(localRoot.path)}
+                              >
+                                <RefreshCw aria-hidden="true" /> {item.status === "failed" ? "Retry upload" : "Resume upload"}
                               </Button>
                             ) : null}
                             <Button

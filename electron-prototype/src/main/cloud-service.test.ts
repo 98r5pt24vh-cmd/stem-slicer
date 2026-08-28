@@ -4,6 +4,7 @@ import type { GenerateJobRequest } from "../shared/contracts"
 import {
   canonicalizeCloudProducerCredits,
   chunkCloudObjectPaths,
+  cloudErrorMessage,
   CloudService,
   normalizeAliases,
   normalizeCloudHandle,
@@ -73,6 +74,17 @@ describe("Cloud library removal", () => {
 
   it("does not create an empty deletion request", () => {
     expect(chunkCloudObjectPaths([])).toEqual([])
+  })
+})
+
+describe("Cloud error copy", () => {
+  it("replaces empty provider errors with an actionable fallback", () => {
+    expect(cloudErrorMessage({ message: "<none>" }, "Check the connection and retry.")).toBe("Check the connection and retry.")
+    expect(cloudErrorMessage({ message: "  " }, "Check the connection and retry.")).toBe("Check the connection and retry.")
+  })
+
+  it("preserves a useful provider error", () => {
+    expect(cloudErrorMessage({ message: "The object already exists." })).toBe("The object already exists.")
   })
 })
 

@@ -150,7 +150,7 @@ async function ensureSyntheticLibrary() {
     .maybeSingle()
   if (existing.error) throw existing.error
   if (existing.data) {
-    await supabase.auth.signOut()
+    await supabase.auth.signOut({ scope: "local" })
     return existing.data
   }
 
@@ -228,7 +228,7 @@ async function ensureSyntheticLibrary() {
     .select("id,owner_id,name,status,layer_count,loop_count,total_bytes")
     .single()
   if (ready.error) throw ready.error
-  await supabase.auth.signOut()
+  await supabase.auth.signOut({ scope: "local" })
   return ready.data
 }
 
@@ -242,7 +242,7 @@ async function archiveLegacyLibraries() {
     .eq("status", "ready")
     .select("id")
   if (archived.error) throw archived.error
-  await supabase.auth.signOut()
+  await supabase.auth.signOut({ scope: "local" })
   return archived.data.map((item) => item.id)
 }
 
@@ -274,7 +274,7 @@ async function connectAccountsAndVerify(library) {
       .single()
     if (connection.error) throw connection.error
   }
-  await nrgy.supabase.auth.signOut()
+  await nrgy.supabase.auth.signOut({ scope: "local" })
 
   if (connection.data.status === "pending") {
     const xt = await signIn(credentials.accounts.xt)
@@ -285,7 +285,7 @@ async function connectAccountsAndVerify(library) {
       .select("id,status")
       .single()
     if (accepted.error) throw accepted.error
-    await xt.supabase.auth.signOut()
+    await xt.supabase.auth.signOut({ scope: "local" })
   }
 
   const connected = await signIn(credentials.accounts.nrgy)
@@ -305,7 +305,7 @@ async function connectAccountsAndVerify(library) {
   const download = await connected.supabase.storage.from(BUCKET).download(layers.data[0].object_path)
   if (download.error) throw download.error
   const downloadedBytes = (await download.data.arrayBuffer()).byteLength
-  await connected.supabase.auth.signOut()
+  await connected.supabase.auth.signOut({ scope: "local" })
   return {
     hiddenBeforeConnection: before.data.length === 0,
     visibleAfterConnection: true,
