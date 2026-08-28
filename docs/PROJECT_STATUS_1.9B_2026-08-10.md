@@ -39,11 +39,13 @@ handoff et les documents `docs/build`.
 ### Generate
 
 - Scan incrémental d'une bibliothèque de layers avec cache SQLite persistant.
-- Classification locale MERT-v1-95M + 64 caractéristiques DSP, soit 832 valeurs
-  par layer.
-- Tête entraînée sur 14 classes: Arp, Bass, Bells, Chords, Counter,
-  Guitar Chords, Keys, Lead, Pad, Pluck, Rhythmic Pluck, Strings, Texture et
-  Vocal Chop.
+- Classification locale MERT-v1-95M (moyenne + dispersion temporelle) + 64
+  caractéristiques DSP, soit 1 600 valeurs par layer.
+- Tête V3 entraînée sur 849 vérités issues de 641 loops sources, plus 323
+  exemples auxiliaires Vocal Chop.
+- Taxonomie V3 à 14 classes: Arp, Bass, Bells, Chords, Counter,
+  Guitar Chords, Keys, Lead, Pad, Piano, Pluck, Strings, Texture et Vocal Chop.
+  Rhythmic Pluck est fusionné dans Pluck.
 - Taxonomie UI additionnelle lorsque des vérités explicites existent:
   Guitar Lead, Vocal, Brass, Accent et Percussion.
 - Recette directement composée avec les cards: ajout, suppression, catégorie,
@@ -57,7 +59,8 @@ handoff et les documents `docs/build`.
 ## Moteurs principaux
 
 - UI: PySide6 / Qt 6.11.1.
-- Catégories: MERT-v1-95M + DSP64 + tête `layer_roles_v1`.
+- Catégories: MERT-v1-95M moyenne/dispersion + DSP64 + tête
+  `layer_roles_v3`.
 - Clé: OpenKeyScan / MusicalKeyCNN.
 - BPM: DeepRhythm, onset et structure.
 - Audio: FFmpeg et moteurs structure/grid.

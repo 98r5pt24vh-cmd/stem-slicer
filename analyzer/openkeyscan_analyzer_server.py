@@ -98,6 +98,7 @@ except ImportError:
 # Import from existing modules
 from dataset import CAMELOT_MAPPING
 from eval import load_model
+from key_inference import ANALYZER_ID, MARGIN_THRESHOLD, infer_relative_family
 
 # Supported audio formats
 SUPPORTED_FORMATS = {'.mp3', '.mp4', '.wav', '.flac', '.ogg', '.m4a', '.aac', '.aiff', '.au'}
@@ -485,9 +486,8 @@ class KeyDetectionServer:
                 t0 = time.time()
             model = self.get_model()
             with torch.no_grad():
-                outputs = model(spec_tensor)
-                pred_tensor = torch.argmax(outputs, dim=1)
-                pred = int(pred_tensor.cpu().numpy()[0])
+                key_decision = infer_relative_family(model, spec_tensor)
+                pred = key_decision.class_id
             if profile:
                 timings['model_inference'] = time.time() - t0
 
@@ -567,6 +567,18 @@ class KeyDetectionServer:
                 'openkey': openkey_str,
                 'key': key_text,
                 'class_id': pred,
+                'key_analyzer_id': ANALYZER_ID,
+                'top1_key': key_decision.top1_key,
+                'top1_probability': key_decision.top1_probability,
+                'top2_key': key_decision.top2_key,
+                'top2_probability': key_decision.top2_probability,
+                'top1_top2_margin': key_decision.margin,
+                'key_confidence_threshold': MARGIN_THRESHOLD,
+                'key_confidence_status': (
+                    'safe'
+                    if key_decision.margin >= MARGIN_THRESHOLD
+                    else 'uncertain'
+                ),
                 'bpm': normalized_bpm,
                 'raw_bpm': float(raw_bpm),
                 'bpm_confidence': float(bpm_confidence),

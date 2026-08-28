@@ -14,6 +14,7 @@ from mert_feature_cache import (
     FEATURE_DTYPE,
     MertFeatureCache,
     derive_feature_extractor_id,
+    expected_feature_dimension,
 )
 
 
@@ -49,6 +50,8 @@ def _runtime(
     runtime.feature_dimension = 3
     runtime.head_id = head_id
     runtime.feature_cache = MertFeatureCache(cache_path)
+    runtime.reusable_base_feature_extractor_id = None
+    runtime.reusable_base_feature_dimension = None
     runtime.classifier = _Head(invert=invert)
     runtime._extract_feature_vectors = MagicMock()
     return runtime
@@ -207,6 +210,31 @@ class MertFeatureCacheTests(unittest.TestCase):
         )
         runtime.feature_cache.close()
 
+    def test_v2_miss_reuses_the_v1_vector_for_dsp(self):
+        runtime = _runtime(self.cache_path, extractor_id="extractor-v2")
+        runtime.reusable_base_feature_extractor_id = "extractor-v1"
+        runtime.reusable_base_feature_dimension = 3
+        v1_vector = np.asarray([1.0, 2.0, 9.0], dtype=np.float32)
+        runtime.feature_cache.put_many(
+            [("4" * 64, "extractor-v1", v1_vector)],
+            expected_dimension=3,
+        )
+        runtime._extract_feature_vectors.return_value = np.asarray(
+            [[1.0, 2.0, 7.0]], dtype=np.float32
+        )
+
+        runtime.feature_vectors_many(
+            [self.root / "audio.wav"],
+            ["4" * 64],
+            window_batch_size=8,
+        )
+
+        reusable = runtime._extract_feature_vectors.call_args.kwargs[
+            "reusable_base_vectors"
+        ]
+        np.testing.assert_array_equal(reusable[0], v1_vector)
+        runtime.feature_cache.close()
+
     def test_blob_is_raw_little_endian_float32_with_checksum(self):
         cache = MertFeatureCache(self.cache_path)
         vector = np.asarray([1.25, -2.5, 3.75], dtype=np.float64)
@@ -274,6 +302,31 @@ class MertFeatureCacheTests(unittest.TestCase):
             derive_feature_extractor_id(
                 {**metadata, "feature_extractor_id": "mert-dsp:stale"}
             )
+
+    def test_v2_mean_std_has_a_distinct_identity_and_dimension(self):
+        base = {
+            "mert": {
+                "model_id": "m-a-p/MERT-v1-95M",
+                "revision": "revision",
+                "sample_rate": 24000,
+                "max_window_seconds": 15.0,
+                "state_index": 6,
+                "dimension": 768,
+            },
+            "dsp_dimension": 64,
+            "dsp_feature_names": [f"feature-{index}" for index in range(64)],
+        }
+        temporal = json.loads(json.dumps(base))
+        temporal["mert"].update(
+            {"statistics": ["mean", "std"], "output_dimension": 1536}
+        )
+
+        self.assertNotEqual(
+            derive_feature_extractor_id(base),
+            derive_feature_extractor_id(temporal),
+        )
+        self.assertEqual(expected_feature_dimension(base), 832)
+        self.assertEqual(expected_feature_dimension(temporal), 1600)
 
 
 if __name__ == "__main__":

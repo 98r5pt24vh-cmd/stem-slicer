@@ -49,7 +49,7 @@ def canonical_audio_sha256(value: str) -> str:
 def canonical_feature_extractor_spec(
     metadata: Mapping[str, object],
 ) -> dict[str, object]:
-    """Describe only operations that can change the cached 832-vector."""
+    """Describe only operations that can change the cached feature vector."""
 
     raw_mert = metadata.get("mert")
     if not isinstance(raw_mert, Mapping):
@@ -58,11 +58,47 @@ def canonical_feature_extractor_spec(
     if not isinstance(raw_names, (list, tuple)):
         raise ValueError("Classifier metadata has no DSP feature-name sequence")
 
-    # These algorithm identifiers describe implementation details not present
-    # in the historical artifact.  Changing any feature-producing operation
-    # requires changing the corresponding identifier below.
+    statistics = tuple(str(value) for value in raw_mert.get("statistics", ("mean",)))
+    if statistics not in (("mean",), ("mean", "std")):
+        raise ValueError(f"Unsupported MERT statistics: {statistics!r}")
+
+    # Preserve the historical specification byte-for-byte so existing v1
+    # vectors retain their exact cache identity.
+    if statistics == ("mean",):
+        return {
+            "identity_schema": "stem-slicer-feature-extractor-v1",
+            "audio_decode": {
+                "kind": "librosa.load",
+                "mono": True,
+                "dtype": "float32",
+                "res_type": "soxr_hq",
+                "sample_rate": int(raw_mert.get("sample_rate", 24_000)),
+            },
+            "mert": {
+                "model_id": str(raw_mert.get("model_id", "")),
+                "revision": str(raw_mert.get("revision", "")),
+                "state_index": int(raw_mert.get("state_index", -1)),
+                "dimension": int(raw_mert.get("dimension", -1)),
+                "max_window_seconds": float(
+                    raw_mert.get("max_window_seconds", 15.0)
+                ),
+                "hidden_pool": "attention-mask-weighted-mean-v1",
+                "window_pool": "ordered-mean-float64-to-float32-v1",
+            },
+            "dsp": {
+                "algorithm": "stem-slicer-audited-dsp64-v1",
+                "dimension": int(metadata.get("dsp_dimension", -1)),
+                "feature_names": [str(item) for item in raw_names],
+            },
+            "concatenation": "mert-then-dsp-float32-v1",
+        }
+
+    dimension = int(raw_mert.get("dimension", -1))
+    output_dimension = int(raw_mert.get("output_dimension", dimension * 2))
+    if output_dimension != dimension * 2:
+        raise ValueError("MERT mean+std output dimension must be twice its state size")
     return {
-        "identity_schema": "stem-slicer-feature-extractor-v1",
+        "identity_schema": "stem-slicer-feature-extractor-v2",
         "audio_decode": {
             "kind": "librosa.load",
             "mono": True,
@@ -74,19 +110,22 @@ def canonical_feature_extractor_spec(
             "model_id": str(raw_mert.get("model_id", "")),
             "revision": str(raw_mert.get("revision", "")),
             "state_index": int(raw_mert.get("state_index", -1)),
-            "dimension": int(raw_mert.get("dimension", -1)),
+            "dimension": dimension,
+            "output_dimension": output_dimension,
+            "statistics": list(statistics),
             "max_window_seconds": float(
                 raw_mert.get("max_window_seconds", 15.0)
             ),
-            "hidden_pool": "attention-mask-weighted-mean-v1",
-            "window_pool": "ordered-mean-float64-to-float32-v1",
+            "hidden_pool_mean": "attention-mask-weighted-mean-v1",
+            "hidden_pool_std": "attention-mask-weighted-population-std-v1",
+            "window_pool": "ordered-total-variance-float64-to-float32-v1",
         },
         "dsp": {
             "algorithm": "stem-slicer-audited-dsp64-v1",
             "dimension": int(metadata.get("dsp_dimension", -1)),
             "feature_names": [str(item) for item in raw_names],
         },
-        "concatenation": "mert-then-dsp-float32-v1",
+        "concatenation": "mert-mean-then-std-then-dsp-float32-v2",
     }
 
 
@@ -124,7 +163,9 @@ def expected_feature_dimension(metadata: Mapping[str, object]) -> int:
     raw_mert = metadata.get("mert")
     if not isinstance(raw_mert, Mapping):
         raise ValueError("Classifier metadata has no MERT feature specification")
-    dimension = int(raw_mert.get("dimension", -1)) + int(
+    dimension = int(
+        raw_mert.get("output_dimension", raw_mert.get("dimension", -1))
+    ) + int(
         metadata.get("dsp_dimension", -1)
     )
     if dimension < 1:

@@ -235,7 +235,7 @@ class CardsAsSlotsUITests(unittest.TestCase):
             "Lead": 1158,
             "Pad": 197,
             "Pluck": 193,
-            "Rhythmic Pluck": 105,
+            "Piano": 105,
             "Vocal Chop": 103,
             "Bells": 80,
             "Strings": 98,

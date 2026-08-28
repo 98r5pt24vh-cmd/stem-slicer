@@ -30,6 +30,7 @@ def candidate(
     key_sensitive=True,
     key_margin=0.9,
     key_status="safe",
+    key_analyzer_id=None,
 ):
     return LayerCandidate(
         identity=identity,
@@ -46,10 +47,39 @@ def candidate(
         scanned_mode=None,
         key_confidence_margin=key_margin,
         key_confidence_status=key_status,
+        key_analyzer_id=key_analyzer_id,
     )
 
 
 class ExactTargetTests(unittest.TestCase):
+    def test_manual_editor_metadata_overrides_scanned_values(self):
+        source = LayerCandidate.from_record(
+            {
+                "path": "/library/edited.wav",
+                "sha256": "edited",
+                "source_loop_id": "edited-loop",
+                "bpm": 140,
+                "manual_bpm": 155,
+                "key": "A",
+                "mode": "minor",
+                "scanned_key": "A",
+                "scanned_mode": "minor",
+                "manual_key": "C#",
+                "manual_mode": "minor",
+                "manual_label": "Lead",
+                "timeline_offset_beats": 1.25,
+                "trim_start_beats": 0.5,
+                "trim_end_beats": 0.25,
+                "duration_seconds": 12.0,
+            }
+        )
+        self.assertEqual(source.source_bpm, 155)
+        self.assertEqual(source.source_signature().canonical, "C# minor")
+        self.assertEqual(source.key_confidence_status, "safe")
+        self.assertEqual(source.timeline_offset_beats, 1.25)
+        self.assertEqual(source.trim_start_beats, 0.5)
+        self.assertEqual(source.trim_end_beats, 0.25)
+
     def test_target_requires_exact_tonic_and_mode(self):
         with self.assertRaises(GenerationPolicyError):
             GenerationRequest(("Bass",), 140, "")
@@ -514,6 +544,60 @@ class SelectionPolicyTests(unittest.TestCase):
                 for selection in plan.selections
             )
         )
+
+    def test_temporal_analyzer_safe_margin_uses_its_own_scale(self):
+        temporal = candidate(
+            "temporal-safe",
+            "Lead",
+            key_margin=0.14,
+            key_status="safe",
+            key_analyzer_id="openkeyscan-split2-relative-family-v2",
+        )
+        legacy = candidate(
+            "legacy-reserve",
+            "Lead",
+            key_margin=0.14,
+            key_status="safe",
+        )
+        for seed in range(8):
+            plan = select_generation(
+                [legacy, temporal],
+                GenerationRequest(("Lead",), 140, "A minor", seed=seed),
+            )
+            self.assertEqual(plan.selections[0].candidate.identity, "temporal-safe")
+
+    def test_recipe_with_only_uncertain_key_pools_is_still_deterministic(self):
+        layers = [
+            candidate("lead-reserve", "Lead", key_status="unavailable", key_margin=None),
+            candidate("pad-reserve", "Pad", key_status="unavailable", key_margin=None),
+        ]
+        request = GenerationRequest(("Lead", "Pad"), 140, "A minor", seed=73)
+        first = select_generation(layers, request)
+        second = select_generation(reversed(layers), request)
+        self.assertEqual(
+            [item.candidate.identity for item in first.selections],
+            ["lead-reserve", "pad-reserve"],
+        )
+        self.assertEqual(first, second)
+
+    def test_strict_key_mode_abstains_instead_of_using_uncertain_reserve(self):
+        with self.assertRaises(SelectionError):
+            select_generation(
+                [
+                    candidate(
+                        "uncertain",
+                        "Lead",
+                        key_status="uncertain",
+                        key_margin=0.10,
+                    )
+                ],
+                GenerationRequest(
+                    ("Lead",),
+                    140,
+                    "A minor",
+                    allow_uncertain_key_reserve=False,
+                ),
+            )
 
     def test_key_conflict_is_never_selected(self):
         with self.assertRaises(SelectionError):

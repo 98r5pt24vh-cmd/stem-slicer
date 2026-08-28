@@ -17,6 +17,8 @@ import unicodedata
 
 
 DEFAULT_KEY_MARGIN_THRESHOLD = 0.22
+TEMPORAL_RELATIVE_ANALYZER_ID = "openkeyscan-split2-relative-family-v2"
+TEMPORAL_RELATIVE_KEY_MARGIN_THRESHOLD = 0.13234874606132507
 KEY_STATUS_SAFE = "safe"
 KEY_STATUS_UNCERTAIN = "uncertain"
 KEY_STATUS_CONFLICT = "conflict"
@@ -29,6 +31,18 @@ KEY_STATUSES = frozenset(
         KEY_STATUS_UNAVAILABLE,
     }
 )
+
+
+def key_margin_threshold_for_analyzer(
+    analyzer_id: str | None,
+    *,
+    fallback: float = DEFAULT_KEY_MARGIN_THRESHOLD,
+) -> float:
+    """Return the calibrated margin threshold for one score definition."""
+
+    if str(analyzer_id or "") == TEMPORAL_RELATIVE_ANALYZER_ID:
+        return TEMPORAL_RELATIVE_KEY_MARGIN_THRESHOLD
+    return float(fallback)
 
 _PITCH_CLASSES = {
     "C": 0,
@@ -136,6 +150,36 @@ def _relative_family(signature: tuple[int, str]) -> int:
     return pitch_class if mode == "minor" else (pitch_class - 3) % 12
 
 
+def classify_key_confidence_status(
+    *,
+    filename_key: str | None,
+    filename_mode: str | None,
+    scanned_key: str,
+    scanned_mode: str,
+    margin: float,
+    threshold: float = DEFAULT_KEY_MARGIN_THRESHOLD,
+) -> str:
+    """Classify one precomputed analysis against the current filename key.
+
+    The audio analysis may safely follow an exact-content SHA-256 match after
+    a file is copied or relocated.  Its status must still be recalculated,
+    because the destination filename may advertise a different key.
+    """
+
+    filename_signature = _signature(filename_key, filename_mode)
+    scanned_signature = _signature(scanned_key, scanned_mode)
+    if (
+        filename_signature is None
+        or scanned_signature is None
+        or _relative_family(filename_signature)
+        != _relative_family(scanned_signature)
+    ):
+        return KEY_STATUS_CONFLICT
+    if float(margin) < float(threshold):
+        return KEY_STATUS_UNCERTAIN
+    return KEY_STATUS_SAFE
+
+
 @dataclass(frozen=True)
 class KeyConfidenceMatch:
     source_loop_id: str
@@ -161,6 +205,7 @@ class _LoopConfidence:
     top2_probability: float | None
     margin: float
     analyzer_id: str
+    threshold: float
 
 
 class KeyConfidenceIndex:
@@ -193,6 +238,10 @@ class KeyConfidenceIndex:
             return cls(threshold=threshold, enabled=False)
 
         analyzer_id = str(results_payload.get("scanner_id") or "unknown-key-analyzer")
+        analyzer_threshold = key_margin_threshold_for_analyzer(
+            analyzer_id,
+            fallback=threshold,
+        )
         by_source: dict[str, _LoopConfidence] = {}
         for item in results_payload.get("results", ()):
             if item.get("status") != "success":
@@ -227,6 +276,7 @@ class KeyConfidenceIndex:
                 ),
                 margin=float(item["top1_top2_margin"]),
                 analyzer_id=analyzer_id,
+                threshold=analyzer_threshold,
             )
 
         aliases: dict[str, _LoopConfidence] = {}
@@ -267,21 +317,14 @@ class KeyConfidenceIndex:
         if confidence is None:
             return None
 
-        filename_signature = _signature(filename_key, filename_mode)
-        scanned_signature = _signature(
-            confidence.scanned_key,
-            confidence.scanned_mode,
+        status = classify_key_confidence_status(
+            filename_key=filename_key,
+            filename_mode=filename_mode,
+            scanned_key=confidence.scanned_key,
+            scanned_mode=confidence.scanned_mode,
+            margin=confidence.margin,
+            threshold=confidence.threshold,
         )
-        if (
-            filename_signature is None
-            or _relative_family(filename_signature)
-            != _relative_family(scanned_signature)
-        ):
-            status = KEY_STATUS_CONFLICT
-        elif confidence.margin < self.threshold:
-            status = KEY_STATUS_UNCERTAIN
-        else:
-            status = KEY_STATUS_SAFE
         return KeyConfidenceMatch(
             source_loop_id=confidence.source_loop_id,
             scanned_key=confidence.scanned_key,
@@ -305,4 +348,8 @@ __all__ = [
     "KEY_STATUS_UNCERTAIN",
     "KeyConfidenceIndex",
     "KeyConfidenceMatch",
+    "classify_key_confidence_status",
+    "key_margin_threshold_for_analyzer",
+    "TEMPORAL_RELATIVE_ANALYZER_ID",
+    "TEMPORAL_RELATIVE_KEY_MARGIN_THRESHOLD",
 ]

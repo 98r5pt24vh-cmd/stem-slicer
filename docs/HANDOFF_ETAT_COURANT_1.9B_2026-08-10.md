@@ -81,11 +81,13 @@ ne remplacent jamais la source Git canonique actuelle.
 ### Generate
 
 - Scan incrémental d'une librairie de layers et cache SQLite persistant.
-- Classification hors ligne MERT-v1-95M (768 valeurs) + DSP (64 valeurs), soit
-  832 valeurs par layer.
-- Tête entraînée sur 14 classes: Arp, Bass, Bells, Chords, Counter,
-  Guitar Chords, Keys, Lead, Pad, Pluck, Rhythmic Pluck, Strings, Texture et
-  Vocal Chop.
+- Classification hors ligne MERT-v1-95M (moyenne et dispersion temporelle,
+  1 536 valeurs) + DSP (64 valeurs), soit 1 600 valeurs par layer.
+- Tête V3 entraînée sur 849 vérités issues de 641 loops sources, plus 323
+  exemples auxiliaires Vocal Chop.
+- Taxonomie V3 à 14 classes: Arp, Bass, Bells, Chords, Counter,
+  Guitar Chords, Keys, Lead, Pad, Piano, Pluck, Strings, Texture et Vocal Chop.
+  Rhythmic Pluck est fusionné dans Pluck.
 - Taxonomie UI étendue conservant aussi Guitar Lead, Vocal, Brass, Accent et
   Percussion lorsque des vérités explicites existent.
 - Cards servant directement de recette: ajout, suppression et changement de
@@ -108,8 +110,8 @@ ne remplacent jamais la source Git canonique actuelle.
 - BPM: DeepRhythm/onset/structure.
 - Transposition/stretch: Bungee.
 - MIDI: Basic Pitch ONNX.
-- Catégories Generate: MERT-v1-95M + DSP64 + tête
-  `layer_roles_v1`.
+- Catégories Generate: MERT-v1-95M moyenne/dispersion + DSP64 + tête
+  `layer_roles_v3`.
 - macOS: CPython 3.12.13 arm64, PyInstaller 6.18.0.
 - Windows: CPython officiel 3.12.10 x64, PyInstaller piloté par la CI.
 

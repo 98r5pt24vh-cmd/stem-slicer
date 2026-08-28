@@ -16,6 +16,7 @@ small ``transform`` interface.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from fractions import Fraction
@@ -39,7 +40,7 @@ from generation_policy import (
 )
 
 
-RENDERER_VERSION = "generate-mp3-320-sequence-v3"
+RENDERER_VERSION = "generate-mp3-320-sequence-v4-editor-timeline"
 OUTPUT_CODEC = "libmp3lame"
 OUTPUT_BITRATE_BPS = 320_000
 WAVEFORM_BINS = 110
@@ -388,6 +389,34 @@ def _fit_tail(
     return np.concatenate((audio, padding), axis=0)
 
 
+def _apply_timeline_edits(
+    audio: npt.NDArray[np.float32],
+    selection: SelectedLayer,
+    *,
+    target_bpm: float,
+    sample_rate: int,
+    frames: int,
+) -> npt.NDArray[np.float32]:
+    """Apply non-destructive beat-based trims and placement before fitting."""
+
+    frames_per_beat = float(sample_rate) * 60.0 / float(target_bpm)
+    trim_start = int(round(selection.candidate.trim_start_beats * frames_per_beat))
+    trim_end = int(round(selection.candidate.trim_end_beats * frames_per_beat))
+    offset = int(round(selection.candidate.timeline_offset_beats * frames_per_beat))
+    source_end = audio.shape[0] - trim_end
+    if trim_start >= source_end:
+        raise GenerationRenderError(
+            f"Timeline trims remove the complete layer: {selection.candidate.path}"
+        )
+    trimmed = np.ascontiguousarray(audio[trim_start:source_end])
+    if offset >= frames:
+        return np.zeros((frames, audio.shape[1]), dtype=np.float32)
+    if offset > 0:
+        leading = np.zeros((offset, audio.shape[1]), dtype=np.float32)
+        trimmed = np.concatenate((leading, trimmed), axis=0)
+    return _fit_tail(trimmed, frames)
+
+
 def _linear_to_db(gain: float) -> float:
     return -math.inf if gain <= 0 else 20.0 * math.log10(gain)
 
@@ -446,7 +475,13 @@ def _render_selected_audio(
         channels=channels,
     )
     channel_normalized = _normalise_channels(transformed, channels)
-    fitted = _fit_tail(channel_normalized, frames)
+    fitted = _apply_timeline_edits(
+        channel_normalized,
+        selection,
+        target_bpm=target_bpm,
+        sample_rate=sample_rate,
+        frames=frames,
+    )
     if selection.normalization_enabled:
         return _peak_normalize(fitted)
     return _peak_protect(fitted, ceiling=1.0)
@@ -622,8 +657,18 @@ def render_generation(
     backend: PCMTransformBackend | None = None,
     encoder: FinalAudioEncoder | None = None,
     progress: Callable[[str, int, int], None] | None = None,
+    transform_workers: int = 1,
+    encode_workers: int = 1,
 ) -> RenderResult:
-    """Transform, mix, and encode a complete generated-loop package."""
+    """Transform, mix, and encode a complete generated-loop package.
+
+    The accepted renderer remains serial by default.  Callers that provide
+    thread-safe backends may opt into bounded parallel transforms and final
+    encodes; ``executor.map`` preserves the recipe/output order.
+    """
+
+    if int(transform_workers) < 1 or int(encode_workers) < 1:
+        raise GenerationRenderError("Render worker counts must be positive")
 
     transform_backend = backend or BungeePCMBackend()
     final_encoder = encoder or FFmpegMP3Encoder()
@@ -639,10 +684,8 @@ def render_generation(
         request.plan.request.seed,
     )
     total = len(request.plan.selections)
-    stem_audio: list[npt.NDArray[np.float32]] = []
-    stem_metrics: list[tuple[float, float, float]] = []
-
-    for index, selection in enumerate(request.plan.selections, start=1):
+    def render_selection(index_and_selection):
+        index, selection = index_and_selection
         if progress:
             progress(f"Transforming {selection.category}", index, total)
         protected, source_peak, rendered_peak, gain_db = _render_selected_audio(
@@ -653,8 +696,19 @@ def render_generation(
             channels=request.channels,
             frames=timeline.loop_frames,
         )
-        stem_audio.append(protected)
-        stem_metrics.append((source_peak, rendered_peak, gain_db))
+        return protected, (source_peak, rendered_peak, gain_db)
+
+    indexed_selections = tuple(enumerate(request.plan.selections, start=1))
+    if int(transform_workers) == 1 or total == 1:
+        rendered_layers = tuple(map(render_selection, indexed_selections))
+    else:
+        with ThreadPoolExecutor(
+            max_workers=min(int(transform_workers), total),
+            thread_name_prefix="StemSlicerRender",
+        ) as executor:
+            rendered_layers = tuple(executor.map(render_selection, indexed_selections))
+    stem_audio = [item[0] for item in rendered_layers]
+    stem_metrics = [item[1] for item in rendered_layers]
 
     stacked = np.stack(stem_audio, axis=0).astype(np.float64, copy=False)
     raw_master = np.sum(stacked, axis=0, dtype=np.float64)
@@ -674,12 +728,6 @@ def render_generation(
     ):
         category = _safe_stem(selection.category, "Layer")
         destination = run_directory / f"{index:02d}_{category}.mp3"
-        final_encoder.encode(
-            destination,
-            audio,
-            sample_rate=request.sample_rate,
-            bitrate_bps=OUTPUT_BITRATE_BPS,
-        )
         stem_results.append(
             StemRenderResult(
                 selection=selection,
@@ -702,12 +750,30 @@ def render_generation(
             "Internal presentation timeline does not match its sample-accurate plan"
         )
     master_peaks = _waveform_peaks(presentation)
-    final_encoder.encode(
-        master_path,
-        presentation,
-        sample_rate=request.sample_rate,
-        bitrate_bps=OUTPUT_BITRATE_BPS,
-    )
+    encode_jobs = [
+        (item.output_path, audio)
+        for item, audio in zip(stem_results, stem_audio)
+    ]
+    encode_jobs.append((master_path, presentation))
+
+    def encode_output(job) -> None:
+        destination, audio = job
+        final_encoder.encode(
+            destination,
+            audio,
+            sample_rate=request.sample_rate,
+            bitrate_bps=OUTPUT_BITRATE_BPS,
+        )
+
+    if int(encode_workers) == 1 or len(encode_jobs) == 1:
+        for job in encode_jobs:
+            encode_output(job)
+    else:
+        with ThreadPoolExecutor(
+            max_workers=min(int(encode_workers), len(encode_jobs)),
+            thread_name_prefix="StemSlicerEncode",
+        ) as executor:
+            tuple(executor.map(encode_output, encode_jobs))
     # Compatibility alias only: there is deliberately no second presentation
     # file because the primary master already contains the complete sequence.
     presentation_path = master_path
@@ -773,6 +839,9 @@ def render_generation(
                 ),
                 "source_path": str(item.selection.candidate.path),
                 "source_loop_id": item.selection.candidate.source_loop_id,
+                "timeline_offset_beats": item.selection.candidate.timeline_offset_beats,
+                "trim_start_beats": item.selection.candidate.trim_start_beats,
+                "trim_end_beats": item.selection.candidate.trim_end_beats,
                 "label_source": item.selection.label_source,
                 "confidence": item.selection.confidence,
                 "source_bpm": item.selection.candidate.source_bpm,

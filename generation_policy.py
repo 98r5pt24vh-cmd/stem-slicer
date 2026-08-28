@@ -21,6 +21,7 @@ from key_confidence import (
     KEY_STATUS_SAFE,
     KEY_STATUS_UNAVAILABLE,
     KEY_STATUS_UNCERTAIN,
+    key_margin_threshold_for_analyzer,
 )
 
 
@@ -196,6 +197,10 @@ class LayerCandidate:
     key_top2_probability: float | None = None
     key_confidence_margin: float | None = None
     key_confidence_status: str = KEY_STATUS_UNAVAILABLE
+    key_analyzer_id: str | None = None
+    timeline_offset_beats: float = 0.0
+    trim_start_beats: float = 0.0
+    trim_end_beats: float = 0.0
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "path", Path(self.path))
@@ -232,6 +237,17 @@ class LayerCandidate:
                     f"Key confidence margin must be between 0 and 1 for {self.identity!r}"
                 )
             object.__setattr__(self, "key_confidence_margin", margin)
+        for field_name in (
+            "timeline_offset_beats",
+            "trim_start_beats",
+            "trim_end_beats",
+        ):
+            value = float(getattr(self, field_name))
+            if not math.isfinite(value) or value < 0.0 or value > 64.0:
+                raise GenerationPolicyError(
+                    f"{field_name} must be between 0 and 64 beats for {self.identity!r}"
+                )
+            object.__setattr__(self, field_name, value)
 
     @classmethod
     def from_record(
@@ -262,7 +278,8 @@ class LayerCandidate:
         source_loop_id = str(
             _record_value(record, "source_loop_id", default=path.parent.name or identity)
         )
-        bpm = _record_value(record, "source_bpm", "bpm")
+        manual_bpm = _record_value(record, "manual_bpm")
+        bpm = manual_bpm if manual_bpm is not None else _record_value(record, "source_bpm", "bpm")
         if bpm is None:
             raise GenerationPolicyError(f"Layer record has no BPM: {path}")
 
@@ -287,20 +304,25 @@ class LayerCandidate:
             if duration is not None:
                 bars = float(duration) * float(bpm) / 240.0
 
+        manual_key = _record_value(record, "manual_key")
+        manual_mode = _record_value(record, "manual_mode")
+        scanned_key = manual_key or _record_value(record, "scanned_key")
+        scanned_mode = manual_mode or _record_value(record, "scanned_mode")
+
         return cls(
             identity=identity,
             path=path,
             source_loop_id=source_loop_id,
             source_bpm=float(bpm),
-            source_key=_record_value(record, "source_key", "key"),
-            source_mode=_record_value(record, "source_mode", "mode"),
+            source_key=manual_key or _record_value(record, "source_key", "key"),
+            source_mode=manual_mode or _record_value(record, "source_mode", "mode"),
             bars=float(bars) if bars is not None else None,
             manual_label=manual_label,
             predicted_label=predicted_label,
             prediction_confidence=float(confidence) if confidence is not None else None,
             key_sensitive=key_sensitive,
-            scanned_key=_record_value(record, "scanned_key"),
-            scanned_mode=_record_value(record, "scanned_mode"),
+            scanned_key=scanned_key,
+            scanned_mode=scanned_mode,
             alternate_scanned_key=_record_value(
                 record, "alternate_scanned_key"
             ),
@@ -313,15 +335,19 @@ class LayerCandidate:
             key_top2_probability=_record_value(
                 record, "key_top2_probability"
             ),
-            key_confidence_margin=_record_value(record, "key_confidence_margin"),
+            key_confidence_margin=(1.0 if manual_key else _record_value(record, "key_confidence_margin")),
             key_confidence_status=str(
-                _record_value(
+                KEY_STATUS_SAFE if manual_key else _record_value(
                     record,
                     "key_confidence_status",
                     default=KEY_STATUS_UNAVAILABLE,
                 )
                 or KEY_STATUS_UNAVAILABLE
             ),
+            key_analyzer_id=("manual-user-v1" if manual_key else _record_value(record, "key_analyzer_id")),
+            timeline_offset_beats=float(_record_value(record, "timeline_offset_beats", default=0.0) or 0.0),
+            trim_start_beats=float(_record_value(record, "trim_start_beats", default=0.0) or 0.0),
+            trim_end_beats=float(_record_value(record, "trim_end_beats", default=0.0) or 0.0),
         )
 
     def resolved_label(self) -> tuple[str | None, str | None, float | None]:
@@ -367,6 +393,7 @@ class GenerationRequest:
     bars: int = 8
     seed: int = 0
     key_confidence_threshold: float = DEFAULT_KEY_MARGIN_THRESHOLD
+    allow_uncertain_key_reserve: bool = True
     bars_tolerance: float = 0.20
     max_layers_per_source_loop: int = 2
     excluded_identities: frozenset[str] = frozenset()
@@ -654,11 +681,17 @@ def _option_for_slot(
     key_pool_priority = 0
     if candidate.key_sensitive:
         margin = candidate.key_confidence_margin
+        effective_key_threshold = key_margin_threshold_for_analyzer(
+            candidate.key_analyzer_id,
+            fallback=request.key_confidence_threshold,
+        )
         if (
             key_status in {KEY_STATUS_UNCERTAIN, KEY_STATUS_UNAVAILABLE}
             or margin is None
-            or margin < request.key_confidence_threshold
+            or margin < effective_key_threshold
         ):
+            if not request.allow_uncertain_key_reserve:
+                return None
             # This is a reserve pool, not a lower weighted chance.  Reserve
             # candidates are considered only when a recipe cannot be completed
             # from safe candidates after previous-generation exclusions.
@@ -854,16 +887,15 @@ def select_generation(
                 del loop_use_counts[loop_id]
         return False
 
-    # Do not explore reserve limits that are provably impossible.  A library
-    # without precomputed Top-1/Top-2 confidence has no safe options at all;
-    # starting at zero would otherwise enumerate enormous dead search trees
-    # before eventually allowing one unavailable candidate per recipe slot.
-    minimum_reserve = sum(
+    # Every slot without a safe-key option necessarily consumes one reserve.
+    # Starting below that lower bound can never succeed and would enumerate
+    # enormous dead search trees on legacy catalogues without confidence data.
+    minimum_reserve_limit = sum(
         not any(option.key_pool_priority == 0 for option in options)
         for options in options_by_slot
     )
     assigned = False
-    for reserve_limit in range(minimum_reserve, len(request.categories) + 1):
+    for reserve_limit in range(minimum_reserve_limit, len(request.categories) + 1):
         selected_options.clear()
         used_identities.clear()
         loop_use_counts.clear()

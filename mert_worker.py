@@ -40,6 +40,7 @@ import librosa
 import numpy as np
 import torch
 
+from layer_role_classifier import LayerRoleScoreEnsemble  # noqa: F401
 from mert_feature_cache import (
     MertFeatureCache,
     canonical_audio_sha256,
@@ -299,6 +300,23 @@ class Runtime:
         self.hf_cache_dir = hf_cache_dir
         self.feature_extractor_id = derive_feature_extractor_id(self.metadata)
         self.feature_dimension = expected_feature_dimension(self.metadata)
+        self.reusable_base_feature_extractor_id: str | None = None
+        self.reusable_base_feature_dimension: int | None = None
+        mert_spec = self.metadata.get("mert", {})
+        statistics = tuple(str(value) for value in mert_spec.get("statistics", ("mean",)))
+        if statistics == ("mean", "std"):
+            base_metadata = dict(self.metadata)
+            base_mert = dict(mert_spec)
+            base_mert.pop("statistics", None)
+            base_mert.pop("output_dimension", None)
+            base_metadata["mert"] = base_mert
+            base_metadata.pop("feature_extractor_id", None)
+            self.reusable_base_feature_extractor_id = derive_feature_extractor_id(
+                base_metadata
+            )
+            self.reusable_base_feature_dimension = expected_feature_dimension(
+                base_metadata
+            )
         artifact_sha256 = hashlib.sha256(artifact_path.read_bytes()).hexdigest()
         self.head_id = f"sklearn-artifact:{artifact_sha256}"
         head_dimension = getattr(self.classifier, "n_features_in_", None)
@@ -368,15 +386,22 @@ class Runtime:
         *,
         window_batch_size: int,
     ) -> np.ndarray:
-        """Extract one correctly masked MERT vector per input audio."""
+        """Extract correctly masked MERT mean or mean+std per input audio."""
 
+        mert_spec = self.metadata["mert"]
+        statistics = tuple(str(value) for value in mert_spec.get("statistics", ("mean",)))
+        if statistics not in (("mean",), ("mean", "std")):
+            raise RuntimeError(f"Unsupported MERT statistics: {statistics!r}")
+        state_dimension = int(mert_spec["dimension"])
+        output_dimension = int(
+            mert_spec.get("output_dimension", state_dimension * len(statistics))
+        )
         if not audios:
-            return np.empty((0, int(self.metadata["mert"]["dimension"])), dtype=np.float32)
+            return np.empty((0, output_dimension), dtype=np.float32)
         if window_batch_size < 1:
             raise ValueError("MERT window batch size must be at least one")
         self.ensure_mert()
-        state_index = int(self.metadata["mert"]["state_index"])
-        dimension = int(self.metadata["mert"]["dimension"])
+        state_index = int(mert_spec["state_index"])
         windows: list[tuple[int, int, np.ndarray]] = []
         for audio_index, audio in enumerate(audios):
             for chunk in audio_windows(audio):
@@ -390,7 +415,7 @@ class Runtime:
         for window in windows:
             buckets.setdefault(int(window[2].size), []).append(window)
 
-        pooled_by_audio: list[list[tuple[int, np.ndarray]]] = [
+        pooled_by_audio: list[list[tuple[int, np.ndarray, np.ndarray | None]]] = [
             [] for _audio in audios
         ]
         for bucket in buckets.values():
@@ -438,30 +463,56 @@ class Runtime:
                     dtype=state.dtype,
                 ).unsqueeze(-1)
                 denominator = weights.sum(dim=1).clamp_min(1.0)
-                pooled_batch = (
-                    (state * weights).sum(dim=1) / denominator
-                ).detach().cpu().numpy().astype(np.float32)
-                if pooled_batch.shape != (len(current), dimension):
+                mean_tensor = (state * weights).sum(dim=1) / denominator
+                pooled_batch = mean_tensor.detach().cpu().numpy().astype(np.float32)
+                if pooled_batch.shape != (len(current), state_dimension):
                     raise RuntimeError("Invalid batched MERT feature matrix.")
-                for (window_index, owner, _chunk), vector in zip(
+                std_batch: np.ndarray | None = None
+                if statistics == ("mean", "std"):
+                    variance = (
+                        (torch.square(state - mean_tensor.unsqueeze(1)) * weights).sum(dim=1)
+                        / denominator
+                    )
+                    std_batch = (
+                        torch.sqrt(variance.clamp_min(0.0))
+                        .detach()
+                        .cpu()
+                        .numpy()
+                        .astype(np.float32)
+                    )
+                    if std_batch.shape != (len(current), state_dimension):
+                        raise RuntimeError("Invalid batched MERT std matrix.")
+                for batch_index, ((window_index, owner, _chunk), vector) in enumerate(zip(
                     current,
                     pooled_batch,
                     strict=True,
-                ):
-                    pooled_by_audio[owner].append((window_index, vector))
+                )):
+                    window_std = None if std_batch is None else std_batch[batch_index]
+                    pooled_by_audio[owner].append((window_index, vector, window_std))
 
-        pooled = np.stack(
-            [
-                np.mean(
-                    [vector for _index, vector in sorted(chunks)],
-                    axis=0,
-                    dtype=np.float64,
-                ).astype(np.float32)
-                for chunks in pooled_by_audio
-            ],
-            axis=0,
-        )
-        if pooled.shape != (len(audios), dimension) or not np.isfinite(pooled).all():
+        pooled_rows: list[np.ndarray] = []
+        for chunks in pooled_by_audio:
+            ordered = sorted(chunks, key=lambda item: item[0])
+            means = [mean for _index, mean, _std in ordered]
+            pooled_mean = np.mean(means, axis=0, dtype=np.float64).astype(np.float32)
+            if statistics == ("mean",):
+                pooled_rows.append(pooled_mean)
+                continue
+            variances = []
+            for _index, current_mean, current_std in ordered:
+                if current_std is None:
+                    raise RuntimeError("Missing MERT window standard deviation")
+                variances.append(
+                    np.square(current_std, dtype=np.float64)
+                    + np.square(
+                        current_mean.astype(np.float64)
+                        - pooled_mean.astype(np.float64)
+                    )
+                )
+            pooled_std = np.sqrt(np.mean(variances, axis=0)).astype(np.float32)
+            pooled_rows.append(np.concatenate([pooled_mean, pooled_std]))
+        pooled = np.stack(pooled_rows, axis=0)
+        if pooled.shape != (len(audios), output_dimension) or not np.isfinite(pooled).all():
             raise RuntimeError("Invalid MERT feature matrix.")
         return pooled
 
@@ -504,17 +555,43 @@ class Runtime:
         paths: Sequence[Path],
         *,
         window_batch_size: int,
+        reusable_base_vectors: Sequence[np.ndarray | None] | None = None,
     ) -> np.ndarray:
         """Decode and extract complete MERT+DSP vectors for cache misses."""
 
         if not paths:
             return np.empty((0, self.feature_dimension), dtype=np.float32)
+        if reusable_base_vectors is not None and len(reusable_base_vectors) != len(paths):
+            raise ValueError("Reusable feature-vector count does not match paths")
         audios = [load_audio(path) for path in paths]
         mert = self.mert_features_many(
             audios,
             window_batch_size=window_batch_size,
         )
-        dsp = dsp_features_many(audios)
+        dsp_dimension = int(self.metadata["dsp_dimension"])
+        dsp_rows: list[np.ndarray | None] = []
+        missing_dsp_indices: list[int] = []
+        missing_dsp_audios: list[np.ndarray] = []
+        for index, audio in enumerate(audios):
+            reusable = (
+                None if reusable_base_vectors is None else reusable_base_vectors[index]
+            )
+            if reusable is None:
+                dsp_rows.append(None)
+                missing_dsp_indices.append(index)
+                missing_dsp_audios.append(audio)
+                continue
+            vector = np.asarray(reusable, dtype=np.float32)
+            if vector.ndim != 1 or vector.size < dsp_dimension:
+                raise RuntimeError("Invalid reusable base feature vector")
+            dsp_rows.append(vector[-dsp_dimension:])
+        if missing_dsp_audios:
+            computed_dsp = dsp_features_many(missing_dsp_audios)
+            for index, vector in zip(missing_dsp_indices, computed_dsp, strict=True):
+                dsp_rows[index] = vector
+        if any(vector is None for vector in dsp_rows):
+            raise RuntimeError("Missing DSP feature vector")
+        dsp = np.stack(dsp_rows, axis=0)
         vectors = np.concatenate([mert, dsp], axis=1).astype(
             np.float32,
             copy=False,
@@ -576,9 +653,23 @@ class Runtime:
                 miss_hashes.append(audio_sha256)
 
         if miss_paths:
+            reusable_base_vectors: list[np.ndarray | None] | None = None
+            if (
+                self.reusable_base_feature_extractor_id is not None
+                and self.reusable_base_feature_dimension is not None
+            ):
+                reusable_base_vectors = [
+                    self.feature_cache.get(
+                        audio_sha256,
+                        self.reusable_base_feature_extractor_id,
+                        self.reusable_base_feature_dimension,
+                    )
+                    for audio_sha256 in miss_hashes
+                ]
             extracted = self._extract_feature_vectors(
                 miss_paths,
                 window_batch_size=window_batch_size,
+                reusable_base_vectors=reusable_base_vectors,
             )
             # All extraction and validation finished successfully before this
             # single atomic cache write.  A failed batch stores no partial row.
@@ -665,7 +756,7 @@ def main() -> None:
     parser.add_argument(
         "--artifact",
         type=Path,
-        default=PROTOTYPE_ROOT / "models" / "layer_roles_v1.joblib",
+        default=PROTOTYPE_ROOT / "models" / "layer_roles_v3.joblib",
     )
     parser.add_argument(
         "--hf-cache-dir", type=Path, default=DEFAULT_HF_HOME

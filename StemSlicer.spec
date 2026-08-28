@@ -30,8 +30,8 @@ datas = [
     ("licenses/DeepRhythm-LICENSE.txt", "licenses"),
     ("licenses/Bungee-MPL-2.0.txt", "licenses"),
     ("THIRD_PARTY_NOTICES.md", "."),
-    ("models/layer_roles_v1.joblib", "models"),
-    ("models/layer_roles_v1.json", "models"),
+    ("models/layer_roles_v3.joblib", "models"),
+    ("models/layer_roles_v3.json", "models"),
 ]
 
 # MERT is an offline first-scan dependency.  Bundle only its 95M snapshot and
@@ -73,6 +73,7 @@ a = Analysis(
         "sklearn.pipeline",
         "sklearn.preprocessing._data",
         "sklearn.linear_model._logistic",
+        "layer_role_classifier",
     ],
     hookspath=[],
     hooksconfig={},

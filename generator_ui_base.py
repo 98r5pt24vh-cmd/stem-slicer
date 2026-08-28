@@ -1173,7 +1173,7 @@ class CompactRecipeSlotWidget(RecipeSlotWidget):
         super().__init__(category, parent)
         self.selector.ensurePolished()
         text_width = self.selector.fontMetrics().horizontalAdvance(
-            "Rhythmic Pluck"
+            max(TAXONOMY, key=len)
         )
         selector_width = max(54, min(112, text_width + 26))
         self._popup_logical_width = selector_width + 22

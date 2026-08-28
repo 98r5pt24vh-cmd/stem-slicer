@@ -94,9 +94,9 @@ def main():
         "nmp.onnx",
     )
     classifier_artifact = os.path.join(
-        internal, "models", "layer_roles_v1.joblib"
+        internal, "models", "layer_roles_v3.joblib"
     )
-    classifier_metadata = os.path.join(internal, "models", "layer_roles_v1.json")
+    classifier_metadata = os.path.join(internal, "models", "layer_roles_v3.json")
     hf_cache = os.path.join(internal, "models", "huggingface")
     mert_model = os.path.join(
         hf_cache,

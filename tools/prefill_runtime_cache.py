@@ -33,7 +33,7 @@ from mert_client import MertLayerClassifier
 from mert_feature_cache import default_feature_cache_path
 
 
-DEFAULT_ARTIFACT_PATH = PROTOTYPE_ROOT / "models" / "layer_roles_v1.joblib"
+DEFAULT_ARTIFACT_PATH = PROTOTYPE_ROOT / "models" / "layer_roles_v3.joblib"
 DEFAULT_HF_CACHE_DIR = (
     PROJECT_ROOT
     / "research"
@@ -48,7 +48,13 @@ DEFAULT_LIBRARY_CACHE_PATH = (
     / "Stem Slicer Generate Prototype"
     / "library.sqlite3"
 )
-V1_ARTIFACT_SCHEMA = "stem-slicer-layer-role-head-v1"
+SUPPORTED_ARTIFACT_SCHEMAS = frozenset(
+    {
+        "stem-slicer-layer-role-head-v1",
+        "stem-slicer-layer-role-head-v2",
+        "stem-slicer-layer-role-head-v3",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -103,26 +109,29 @@ def validate_config(raw_config: PrefillConfig) -> PrefillConfig:
         )
     if not config.artifact_path.is_file():
         raise FileNotFoundError(
-            f"Classifier v1 artifact does not exist: {config.artifact_path}"
+            f"Classifier artifact does not exist: {config.artifact_path}"
         )
     sidecar_path = config.artifact_path.with_suffix(".json")
     if not sidecar_path.is_file():
         raise FileNotFoundError(
-            f"Classifier v1 sidecar does not exist: {sidecar_path}"
+            f"Classifier sidecar does not exist: {sidecar_path}"
         )
     try:
         sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
-        raise ValueError(f"Invalid classifier v1 sidecar: {error}") from error
-    if not isinstance(sidecar, Mapping) or sidecar.get("schema") != V1_ARTIFACT_SCHEMA:
+        raise ValueError(f"Invalid classifier sidecar: {error}") from error
+    if (
+        not isinstance(sidecar, Mapping)
+        or sidecar.get("schema") not in SUPPORTED_ARTIFACT_SCHEMAS
+    ):
         raise ValueError(
-            "The selected classifier is not a Stem Slicer layer-role v1 artifact"
+            "The selected classifier is not a supported Stem Slicer layer-role artifact"
         )
     expected_artifact_sha256 = str(sidecar.get("artifact_sha256") or "").casefold()
     actual_artifact_sha256 = _sha256_file(config.artifact_path)
     if expected_artifact_sha256 != actual_artifact_sha256:
         raise ValueError(
-            "Classifier v1 artifact checksum does not match its sidecar"
+            "Classifier artifact checksum does not match its sidecar"
         )
     if config.device not in {"auto", "cpu", "mps"}:
         raise ValueError(f"Unsupported MERT device: {config.device!r}")
@@ -334,7 +343,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--artifact",
         type=Path,
         default=DEFAULT_ARTIFACT_PATH,
-        help="Classifier v1 joblib artifact",
+        help="Current layer-role classifier joblib artifact",
     )
     parser.add_argument(
         "--hf-cache-dir",

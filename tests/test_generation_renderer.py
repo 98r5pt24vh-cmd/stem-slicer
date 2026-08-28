@@ -24,6 +24,7 @@ from generation_renderer import (
     LAYER_NORMALIZATION_MAX_BOOST_DB,
     RenderRequest,
     TimelinePlan,
+    _apply_timeline_edits,
     _peak_normalize,
     render_generation,
     rerender_alternate_key,
@@ -136,6 +137,30 @@ class TimelineTests(unittest.TestCase):
         )
         self.assertEqual(silence_gain_db, 0.0)
         self.assertTrue(np.array_equal(unchanged, near_silence))
+
+    def test_editor_timeline_trims_and_offsets_in_beats(self):
+        candidate = replace(
+            layer("edited", "Lead", loop="loop-edited"),
+            source_bpm=60,
+            timeline_offset_beats=2,
+            trim_start_beats=1,
+            trim_end_beats=1,
+        )
+        selection = select_generation(
+            [candidate],
+            GenerationRequest(("Lead",), 60, "A minor", bars=8),
+        ).selections[0]
+        source = np.arange(12, dtype=np.float32).reshape((-1, 1))
+        edited = _apply_timeline_edits(
+            source,
+            selection,
+            target_bpm=60,
+            sample_rate=4,
+            frames=20,
+        )
+        self.assertTrue(np.array_equal(edited[:8], np.zeros((8, 1))))
+        self.assertTrue(np.array_equal(edited[8:12, 0], np.arange(4, 8)))
+        self.assertTrue(np.array_equal(edited[12:], np.zeros((8, 1))))
 
 
 class FinalEncoderTests(unittest.TestCase):
@@ -324,6 +349,61 @@ class RendererTests(unittest.TestCase):
         self.assertEqual(len(backend.calls), 2)
         percussion_call = next(item for item in backend.calls if item["identity"] == "perc")
         self.assertEqual(percussion_call["semitones"], 0)
+
+    def test_parallel_render_preserves_serial_audio_and_recipe_order(self):
+        plan = self._plan()
+        sample_rate = 100
+        loop_frames = 1_600
+        source_audio = {
+            "bass": np.linspace(-0.4, 0.4, loop_frames, dtype=np.float32).reshape((-1, 1)),
+            "perc": np.linspace(0.3, -0.3, loop_frames, dtype=np.float32).reshape((-1, 1)),
+        }
+
+        with tempfile.TemporaryDirectory() as root:
+            serial_encoder = CapturingEncoder()
+            serial = render_generation(
+                RenderRequest(
+                    plan=plan,
+                    output_root=Path(root) / "serial",
+                    generation_name="Serial",
+                    sample_rate=sample_rate,
+                    channels=2,
+                ),
+                backend=SyntheticBackend(source_audio),
+                encoder=serial_encoder,
+            )
+            parallel_encoder = CapturingEncoder()
+            parallel = render_generation(
+                RenderRequest(
+                    plan=plan,
+                    output_root=Path(root) / "parallel",
+                    generation_name="Parallel",
+                    sample_rate=sample_rate,
+                    channels=2,
+                ),
+                backend=SyntheticBackend(source_audio),
+                encoder=parallel_encoder,
+                transform_workers=2,
+                encode_workers=3,
+            )
+
+            self.assertEqual(
+                [item.selection.candidate.identity for item in parallel.stem_results],
+                [item.selection.candidate.identity for item in serial.stem_results],
+            )
+            for serial_path, parallel_path in zip(serial.stem_paths, parallel.stem_paths):
+                self.assertTrue(
+                    np.array_equal(
+                        serial_encoder.audio_for(serial_path),
+                        parallel_encoder.audio_for(parallel_path),
+                    )
+                )
+            self.assertTrue(
+                np.array_equal(
+                    serial_encoder.audio_for(serial.master_path),
+                    parallel_encoder.audio_for(parallel.master_path),
+                )
+            )
 
     def test_existing_run_directory_is_never_overwritten(self):
         plan = self._plan()

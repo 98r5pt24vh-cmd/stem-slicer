@@ -965,14 +965,14 @@ class GeneratePrototypeUITests(unittest.TestCase):
         bass_slot = window._slot_widgets[0]
         bass_width = bass_slot.width()
 
-        bass_slot.selector.setCurrentText("Rhythmic Pluck")
+        bass_slot.selector.setCurrentText("Guitar Chords")
         APP.processEvents()
 
         self.assertGreater(bass_slot.width(), bass_width)
         native_padding = 20 if os.name != "nt" else 0
         self.assertGreaterEqual(
             bass_slot.selector.width(),
-            bass_slot.selector.fontMetrics().horizontalAdvance("Rhythmic Pluck")
+            bass_slot.selector.fontMetrics().horizontalAdvance("Guitar Chords")
             + native_padding,
         )
         expected_host_width = sum(slot.width() for slot in window._slot_widgets)
@@ -1014,7 +1014,7 @@ class GeneratePrototypeUITests(unittest.TestCase):
             "Lead": 1063,
             "Pad": 310,
             "Pluck": 376,
-            "Rhythmic Pluck": 149,
+            "Piano": 149,
             "Vocal Chop": 92,
             "Bells": 4,
             "Strings": 18,
