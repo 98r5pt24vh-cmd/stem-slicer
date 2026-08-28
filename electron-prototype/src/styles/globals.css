@@ -237,8 +237,9 @@ a:focus-visible {
 }
 
 .sidebar-brand {
+  position: relative;
   display: flex;
-  min-height: 58px;
+  min-height: 66px;
   align-items: center;
   gap: 7px;
   padding: 7px 7px 7px 10px;
@@ -247,13 +248,13 @@ a:focus-visible {
 .brand-mark {
   position: relative;
   display: grid;
-  width: 34px;
-  height: 34px;
-  flex: 0 0 34px;
+  width: 46px;
+  height: 46px;
+  flex: 0 0 46px;
   place-items: center;
   overflow: hidden;
   border: 1px solid rgb(225 213 0 / 0.22);
-  border-radius: 12px;
+  border-radius: 14px;
   background: #070a09;
   color: var(--primary);
   box-shadow:
@@ -304,6 +305,15 @@ a:focus-visible {
   transition: opacity 100ms ease, width 180ms ease;
 }
 
+.sidebar-brand > .sidebar-copy {
+  position: absolute;
+  inset-inline-start: 50%;
+  width: max-content;
+  max-width: 58px;
+  text-align: center;
+  transform: translateX(-50%);
+}
+
 .sidebar-copy strong,
 .sidebar-copy span {
   display: block;
@@ -324,6 +334,7 @@ a:focus-visible {
 }
 
 .sidebar-collapse {
+  margin-inline-start: auto;
   flex: 0 0 auto;
   transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease, box-shadow 120ms ease;
 }
