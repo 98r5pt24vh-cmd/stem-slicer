@@ -2604,6 +2604,17 @@ function GenerateView({
     if (activeRequiredProducers.length < maximumExternalSlots) return configuredProducerPool
     return uniqueProducerCredits([PRIMARY_PRODUCER, ...activeRequiredProducers.slice(0, maximumExternalSlots)])
   }, [activeRequiredProducers, allowedCreditCounts, configuredProducerPool])
+  const localOverviewSelectionSummary = useMemo<LibrarySelectionSummary>(() => {
+    const selectedRoots = new Set(selectedLibraryPaths)
+    const roots = library.roots.filter((root) => selectedRoots.has(root.path))
+    const allRootsSelected = roots.length > 0 && roots.length === library.roots.length
+    const primaryProducer = libraryProducers.find((producer) => producer.name.toLowerCase() === PRIMARY_PRODUCER.toLowerCase())
+    return {
+      layerCount: roots.reduce((sum, root) => sum + root.layerCount, 0),
+      loopCount: allRootsSelected ? primaryProducer?.loopCount ?? 0 : 0,
+      categories: mergeGenerateCategories(...roots.map((root) => root.categories)),
+    }
+  }, [library.roots, libraryProducers, selectedLibraryPaths])
   useEffect(() => {
     let cancelled = false
     if (selectedLibraryPaths.length === 0) {
@@ -2611,20 +2622,26 @@ function GenerateView({
       setSelectionSummaryLoading(false)
       return () => { cancelled = true }
     }
+    const getSelectionSummary = window.stemSlicer?.getLibrarySelectionSummary
+    setLocalSelectionSummary(localOverviewSelectionSummary)
+    if (!getSelectionSummary) {
+      setSelectionSummaryLoading(false)
+      return () => { cancelled = true }
+    }
     setSelectionSummaryLoading(true)
-    void window.stemSlicer?.getLibrarySelectionSummary({
+    void getSelectionSummary({
       libraryRoots: selectedLibraryPaths,
       allowedProducers,
       allowedCreditCounts,
     }).then((summary) => {
       if (!cancelled && summary) setLocalSelectionSummary(summary)
     }).catch(() => {
-      if (!cancelled) setLocalSelectionSummary({ layerCount: 0, loopCount: 0, categories: [] })
+      if (!cancelled) setLocalSelectionSummary(localOverviewSelectionSummary)
     }).finally(() => {
       if (!cancelled) setSelectionSummaryLoading(false)
     })
     return () => { cancelled = true }
-  }, [allowedCreditCounts, allowedProducers, library.categories, library.totalLayers, selectedLibraryPaths])
+  }, [allowedCreditCounts, allowedProducers, localOverviewSelectionSummary, selectedLibraryPaths])
   const allowedProducerKeys = new Set(allowedProducers.map((producer) => producer.toLowerCase()))
   const cloudCreditLimitAllowsCollaborators = allowedCreditCounts.includes(0) || Math.max(1, ...allowedCreditCounts) >= 2
   const selectedCloudLibraries = sourcePool === "local-only" || !cloudCreditLimitAllowsCollaborators
@@ -3218,7 +3235,9 @@ function GenerateView({
               <strong title={category.name}>{category.name}</strong>
               <small className="tabular">{formatCount(category.count)}</small>
             </div>
-          )) : <p className="catalogue-empty">Select at least one indexed library to view its categories.</p>}
+          )) : <p className="catalogue-empty">{selectedLibraryPaths.length === 0
+            ? "Select at least one indexed library to view its categories."
+            : "No layers match the current library and collaborator filters."}</p>}
         </div>
       </section>
 
