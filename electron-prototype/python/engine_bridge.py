@@ -761,7 +761,7 @@ def classifier():
 
         _classifier = MertLayerClassifier(
             python_executable=sys.executable,
-            artifact_path=SOURCE_ROOT / "models" / "layer_roles_v3.joblib",
+            artifact_path=SOURCE_ROOT / "models" / "layer_roles_v4_2.joblib",
             hf_cache_dir=SOURCE_ROOT / "models" / "huggingface",
             feature_cache_path=(
                 Path.home()
