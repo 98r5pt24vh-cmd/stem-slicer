@@ -1,4 +1,7 @@
-* text=auto
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
 *.png binary
 *.icns binary
 *.ico binary
@@ -8,4 +11,3 @@
 *.dylib binary
 *.so binary
 *.exe binary
-

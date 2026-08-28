@@ -27,6 +27,7 @@ jobs:
       - name: Record and verify the clean revision
         shell: pwsh
         run: |
+          git status --short
           if (-not (git diff --quiet)) { throw "The checkout is not clean." }
           git rev-parse HEAD | Set-Content electron-prototype/build-revision.txt
 
