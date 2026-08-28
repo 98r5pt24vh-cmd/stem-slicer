@@ -8,7 +8,7 @@ import type {
   LibraryProducerSummary,
   LibraryRootSummary,
 } from "../shared/contracts"
-import { PRIMARY_PRODUCER, sourceProvenance } from "../lib/source-provenance"
+import { PRIMARY_PRODUCER, sourceProvenance, uniqueProducerCredits } from "../lib/source-provenance"
 
 interface CountRow {
   count: number
@@ -149,25 +149,48 @@ export function readLibraryOverview(acceptedCachePath: string): LibraryOverview 
 }
 
 export function summarizeLibraryProducers(rows: ProducerSourceRow[]): LibraryProducerSummary[] {
+  const loops = new Map<string, {
+    libraryRoot: string
+    layerCount: number
+    producers: Set<string>
+  }>()
+  for (const row of rows) {
+    const loopIdentity = `${row.library_root}\u0000${row.source_loop_id}`
+    const loop = loops.get(loopIdentity) ?? {
+      libraryRoot: row.library_root,
+      layerCount: 0,
+      producers: new Set<string>(),
+    }
+    loop.layerCount += 1
+    for (const producer of sourceProvenance(row.filename, row.source_loop_id).producers) {
+      loop.producers.add(producer)
+    }
+    loops.set(loopIdentity, loop)
+  }
+
   const summaries = new Map<string, {
     name: string
     layerCount: number
     loopIds: Set<string>
     libraryRoots: Set<string>
+    loopCountsByCreditCount: Record<string, number>
   }>()
-  for (const row of rows) {
-    const loopIdentity = `${row.library_root}\u0000${row.source_loop_id}`
-    for (const producer of sourceProvenance(row.filename, row.source_loop_id).producers) {
+  for (const [loopIdentity, loop] of loops) {
+    const credits = uniqueProducerCredits(loop.producers)
+    const creditCount = String(credits.length)
+    for (const producer of credits) {
       const key = producer.toLowerCase()
       const summary = summaries.get(key) ?? {
         name: producer,
         layerCount: 0,
         loopIds: new Set<string>(),
         libraryRoots: new Set<string>(),
+        loopCountsByCreditCount: {},
       }
-      summary.layerCount += 1
+      summary.layerCount += loop.layerCount
       summary.loopIds.add(loopIdentity)
-      summary.libraryRoots.add(row.library_root)
+      summary.libraryRoots.add(loop.libraryRoot)
+      summary.loopCountsByCreditCount[creditCount] = (summary.loopCountsByCreditCount[creditCount] ?? 0) + 1
       summaries.set(key, summary)
     }
   }
@@ -176,6 +199,7 @@ export function summarizeLibraryProducers(rows: ProducerSourceRow[]): LibraryPro
       name: summary.name,
       layerCount: summary.layerCount,
       loopCount: summary.loopIds.size,
+      loopCountsByCreditCount: summary.loopCountsByCreditCount,
       libraryRoots: [...summary.libraryRoots].sort((left, right) => left.localeCompare(right)),
     }))
     .sort((left, right) => {

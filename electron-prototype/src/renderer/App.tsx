@@ -3,6 +3,8 @@ import { Select as BaseSelect } from "@base-ui/react/select"
 import {
   AudioLines,
   AlertTriangle,
+  ArrowDownWideNarrow,
+  ArrowUpNarrowWide,
   Check,
   CheckSquare2,
   ChevronDown,
@@ -18,7 +20,6 @@ import {
   GripVertical,
   HardDrive,
   History,
-  ImagePlus,
   Layers3,
   Lock,
   Music2,
@@ -302,6 +303,9 @@ const FALLBACK_LIBRARY: LibraryOverview = {
 const HISTORY_STORAGE_KEY = "stem-slicer-electron.generate-history.v1"
 const GENERATION_SEQUENCE_STORAGE_KEY = "stem-slicer-electron.generation-sequence.v1"
 const COLLABORATOR_SETTINGS_STORAGE_KEY = "stem-slicer-electron.collaborator-settings.v1"
+const PRODUCER_PROFILES_CHANGED_EVENT = "stem-slicer-producer-profiles-changed"
+
+type ProducerSortDirection = "desc" | "asc"
 
 interface ProducerProfileSettings {
   avatarPath?: string
@@ -311,13 +315,14 @@ interface CollaboratorSettings {
   allowedProducers: string[] | null
   maxProducerCount: number
   pinnedProducers: string[]
+  producerSortDirection: ProducerSortDirection
   profiles: Record<string, ProducerProfileSettings>
 }
 
 function loadCollaboratorSettings(): CollaboratorSettings {
   try {
     const raw = window.localStorage.getItem(COLLABORATOR_SETTINGS_STORAGE_KEY)
-    if (!raw) return { allowedProducers: null, maxProducerCount: 0, pinnedProducers: [], profiles: {} }
+    if (!raw) return { allowedProducers: null, maxProducerCount: 0, pinnedProducers: [], producerSortDirection: "desc", profiles: {} }
     const parsed = JSON.parse(raw)
     return {
       allowedProducers: Array.isArray(parsed.allowedProducers)
@@ -327,10 +332,11 @@ function loadCollaboratorSettings(): CollaboratorSettings {
       pinnedProducers: Array.isArray(parsed.pinnedProducers)
         ? parsed.pinnedProducers.filter((value: unknown): value is string => typeof value === "string")
         : [],
+      producerSortDirection: parsed.producerSortDirection === "asc" ? "asc" : "desc",
       profiles: parsed.profiles && typeof parsed.profiles === "object" ? parsed.profiles : {},
     }
   } catch {
-    return { allowedProducers: null, maxProducerCount: 0, pinnedProducers: [], profiles: {} }
+    return { allowedProducers: null, maxProducerCount: 0, pinnedProducers: [], producerSortDirection: "desc", profiles: {} }
   }
 }
 
@@ -428,10 +434,12 @@ function CollaboratorsDialog({
   maxProducerCount,
   profiles,
   pinnedProducers,
+  producerSortDirection,
   onAllowedProducersChange,
+  onAllowAllProducers,
   onMaxProducerCountChange,
-  onProfilesChange,
   onPinnedProducersChange,
+  onProducerSortDirectionChange,
   disabled,
 }: {
   producers: LibraryProducerSummary[]
@@ -439,22 +447,19 @@ function CollaboratorsDialog({
   maxProducerCount: number
   profiles: Record<string, ProducerProfileSettings>
   pinnedProducers: string[]
+  producerSortDirection: ProducerSortDirection
   onAllowedProducersChange: (producers: string[]) => void
+  onAllowAllProducers: () => void
   onMaxProducerCountChange: (count: number) => void
-  onProfilesChange: (profiles: Record<string, ProducerProfileSettings>) => void
   onPinnedProducersChange: (producers: string[]) => void
+  onProducerSortDirectionChange: (direction: ProducerSortDirection) => void
   disabled: boolean
 }) {
   const allowedSet = new Set(allowedProducers.map((producer) => producer.toLowerCase()))
   const pinnedSet = new Set(pinnedProducers.map((producer) => producer.toLowerCase()))
-  const chooseAvatar = async (producer: string) => {
-    const result = await window.stemSlicer?.pickImageFile()
-    if (!result || result.canceled || !result.paths[0]) return
-    onProfilesChange({
-      ...profiles,
-      [producer.toLowerCase()]: { ...producerProfileFor(profiles, producer), avatarPath: result.paths[0] },
-    })
-  }
+  const selectableProducers = producers.filter((producer) => producer.name.toLowerCase() !== PRIMARY_PRODUCER.toLowerCase())
+  const allSelectableAllowed = selectableProducers.length > 0
+    && selectableProducers.every((producer) => allowedSet.has(producer.name.toLowerCase()))
   const toggleProducer = (producer: string, checked: boolean) => {
     if (producer.toLowerCase() === PRIMARY_PRODUCER.toLowerCase()) return
     onAllowedProducersChange(checked
@@ -469,9 +474,9 @@ function CollaboratorsDialog({
   }
   const countOptions = [
     { value: 1, label: "Solo", detail: "Only you" },
-    { value: 2, label: "Duo", detail: "Up to 2" },
-    { value: 3, label: "Trio", detail: "Up to 3" },
-    { value: 0, label: "Any", detail: "No limit" },
+    { value: 2, label: "Duo", detail: "Exactly 2" },
+    { value: 3, label: "Trio", detail: "Exactly 3" },
+    { value: 0, label: "Any", detail: "Any count" },
   ]
 
   return (
@@ -491,8 +496,8 @@ function CollaboratorsDialog({
               <Dialog.Close className="dialog-close" aria-label="Close collaborators"><X /></Dialog.Close>
             </header>
 
-            <fieldset className="collaborator-limit">
-              <legend>People credited on the final loop</legend>
+            <div className="collaborator-limit" role="radiogroup" aria-labelledby="collaborator-limit-label">
+              <p id="collaborator-limit-label">People credited on the final loop</p>
               <div>
                 {countOptions.map((option) => (
                   <label className={cn(maxProducerCount === option.value && "is-selected")} key={option.label}>
@@ -508,13 +513,31 @@ function CollaboratorsDialog({
                   </label>
                 ))}
               </div>
-            </fieldset>
+            </div>
 
             <div className="collaborator-list-heading">
               <div><strong>Local profiles</strong><small>{allowedProducers.length} allowed</small></div>
               <div className="collaborator-list-tools">
-                <span><SlidersHorizontal aria-hidden="true" /> Most loops first</span>
-                <button type="button" onClick={() => onAllowedProducersChange(producers.map((producer) => producer.name))}>Allow all</button>
+                <button
+                  type="button"
+                  className="collaborator-sort-toggle"
+                  onClick={() => onProducerSortDirectionChange(producerSortDirection === "desc" ? "asc" : "desc")}
+                  aria-label={producerSortDirection === "desc" ? "Sort by fewest loops first" : "Sort by most loops first"}
+                  title="Reverse loop-count order"
+                >
+                  {producerSortDirection === "desc" ? <ArrowDownWideNarrow aria-hidden="true" /> : <ArrowUpNarrowWide aria-hidden="true" />}
+                  {producerSortDirection === "desc" ? "Most loops first" : "Fewest loops first"}
+                </button>
+                {selectableProducers.length > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => allSelectableAllowed
+                      ? onAllowedProducersChange([PRIMARY_PRODUCER])
+                      : onAllowAllProducers()}
+                  >
+                    {allSelectableAllowed ? "Disable all" : "Allow all"}
+                  </button>
+                ) : null}
               </div>
             </div>
             <div className="collaborator-list" role="group" aria-label="Producers available to Generate">
@@ -534,7 +557,7 @@ function CollaboratorsDialog({
                       <ProducerAvatar producer={producer.name} profile={producerProfileFor(profiles, producer.name)} />
                       <span>
                         <strong>{producer.name}{isPrimary ? <em>You</em> : null}</strong>
-                        <small>{formatCount(producer.loopCount)} loops · {formatCount(producer.layerCount)} layers</small>
+                        <small>{formatCount(producer.loopCount)} loops</small>
                       </span>
                     </label>
                     <button
@@ -546,9 +569,6 @@ function CollaboratorsDialog({
                       onClick={() => togglePinned(producer.name)}
                     >
                       <Pin aria-hidden="true" />
-                    </button>
-                    <button type="button" className="producer-photo-button" onClick={() => void chooseAvatar(producer.name)}>
-                      <ImagePlus aria-hidden="true" /> {producerProfileFor(profiles, producer.name)?.avatarPath ? "Change" : "Add photo"}
                     </button>
                   </div>
                 )
@@ -1446,6 +1466,22 @@ function AppSidebar({
   onNavigate: (view: ViewId) => void
   onToggle: () => void
 }) {
+  const [primaryProfile, setPrimaryProfile] = useState<ProducerProfileSettings | undefined>(() => (
+    producerProfileFor(loadCollaboratorSettings().profiles, PRIMARY_PRODUCER)
+  ))
+  const editPrimaryProfile = async () => {
+    const result = await window.stemSlicer?.pickImageFile()
+    if (!result || result.canceled || !result.paths[0]) return
+    const settings = loadCollaboratorSettings()
+    const profiles = {
+      ...settings.profiles,
+      [PRIMARY_PRODUCER.toLowerCase()]: { avatarPath: result.paths[0] },
+    }
+    saveCollaboratorSettings({ ...settings, profiles })
+    setPrimaryProfile(profiles[PRIMARY_PRODUCER.toLowerCase()])
+    window.dispatchEvent(new CustomEvent(PRODUCER_PROFILES_CHANGED_EVENT, { detail: profiles }))
+  }
+
   return (
     <aside className={cn("app-sidebar", collapsed && "is-collapsed")} aria-label="Navigation principale">
       <div className="spectral-stripe" aria-hidden="true">
@@ -1503,6 +1539,21 @@ function AppSidebar({
           )
         })}
       </nav>
+
+      <button
+        type="button"
+        className="sidebar-profile app-no-drag"
+        onClick={() => void editPrimaryProfile()}
+        aria-label="Edit +NRGY profile photo"
+        title={collapsed ? "+NRGY profile" : "Edit profile photo"}
+      >
+        <span className="sidebar-profile-avatar"><ProducerAvatar producer={PRIMARY_PRODUCER} profile={primaryProfile} /></span>
+        <span className="sidebar-copy">
+          <strong>{PRIMARY_PRODUCER}</strong>
+          <span>Edit profile</span>
+        </span>
+        <Pencil aria-hidden="true" />
+      </button>
 
       <div className="sidebar-footer">
         <div className="connection-dot" aria-hidden="true" />
@@ -2034,6 +2085,7 @@ function GenerateView({
   const [configuredAllowedProducers, setConfiguredAllowedProducers] = useState<string[] | null>(initialCollaboratorSettings.allowedProducers)
   const [maxProducerCount, setMaxProducerCount] = useState(initialCollaboratorSettings.maxProducerCount)
   const [pinnedProducers, setPinnedProducers] = useState(initialCollaboratorSettings.pinnedProducers)
+  const [producerSortDirection, setProducerSortDirection] = useState<ProducerSortDirection>(initialCollaboratorSettings.producerSortDirection)
   const [producerProfiles, setProducerProfiles] = useState<Record<string, ProducerProfileSettings>>(initialCollaboratorSettings.profiles)
   const knownLibraryPathsRef = useRef<Set<string>>(new Set())
   const handledGenerationRef = useRef("")
@@ -2067,14 +2119,28 @@ function GenerateView({
     ))
     const withPrimary = relevant.some((producer) => producer.name.toLowerCase() === PRIMARY_PRODUCER.toLowerCase())
       ? relevant
-      : [{ name: PRIMARY_PRODUCER, layerCount: 0, loopCount: 0, libraryRoots: selectedLibraryPaths }, ...relevant]
+      : [{ name: PRIMARY_PRODUCER, layerCount: 0, loopCount: 0, loopCountsByCreditCount: {}, libraryRoots: selectedLibraryPaths }, ...relevant]
+    const matchingMode = withPrimary
+      .map((producer) => ({
+        ...producer,
+        loopCount: maxProducerCount === 0
+          ? producer.loopCount
+          : producer.loopCountsByCreditCount[String(maxProducerCount)] ?? 0,
+      }))
+      .filter((producer) => (
+        producer.name.toLowerCase() === PRIMARY_PRODUCER.toLowerCase()
+        || producer.loopCount > 0
+      ))
     const pinned = new Set(pinnedProducers.map((producer) => producer.toLowerCase()))
-    return [...withPrimary].sort((left, right) => {
+    return matchingMode.sort((left, right) => {
       const leftPinned = pinned.has(left.name.toLowerCase()) ? 1 : 0
       const rightPinned = pinned.has(right.name.toLowerCase()) ? 1 : 0
-      return rightPinned - leftPinned || right.loopCount - left.loopCount || left.name.localeCompare(right.name)
+      const countOrder = producerSortDirection === "desc"
+        ? right.loopCount - left.loopCount
+        : left.loopCount - right.loopCount
+      return rightPinned - leftPinned || countOrder || left.name.localeCompare(right.name)
     })
-  }, [libraryProducers, pinnedProducers, selectedLibraryPaths])
+  }, [libraryProducers, maxProducerCount, pinnedProducers, producerSortDirection, selectedLibraryPaths])
   const allowedProducers = useMemo(() => {
     const configured = configuredAllowedProducers == null
       ? new Set(producerOptions.map((producer) => producer.name.toLowerCase()))
@@ -2096,13 +2162,23 @@ function GenerateView({
   }, [library.databasePath, library.totalLayers])
 
   useEffect(() => {
+    const updateProfiles = (event: Event) => {
+      const profiles = (event as CustomEvent<Record<string, ProducerProfileSettings>>).detail
+      if (profiles) setProducerProfiles(profiles)
+    }
+    window.addEventListener(PRODUCER_PROFILES_CHANGED_EVENT, updateProfiles)
+    return () => window.removeEventListener(PRODUCER_PROFILES_CHANGED_EVENT, updateProfiles)
+  }, [])
+
+  useEffect(() => {
     saveCollaboratorSettings({
       allowedProducers: configuredAllowedProducers,
       maxProducerCount,
       pinnedProducers,
+      producerSortDirection,
       profiles: producerProfiles,
     })
-  }, [configuredAllowedProducers, maxProducerCount, pinnedProducers, producerProfiles])
+  }, [configuredAllowedProducers, maxProducerCount, pinnedProducers, producerProfiles, producerSortDirection])
 
   useEffect(() => {
     if (!currentGenerationResult) return
@@ -2488,6 +2564,7 @@ function GenerateView({
               maxProducerCount={maxProducerCount}
               profiles={producerProfiles}
               pinnedProducers={pinnedProducers}
+              producerSortDirection={producerSortDirection}
               disabled={generateJob.busy}
               onAllowedProducersChange={(nextProducers) => {
                 setConfiguredAllowedProducers(uniqueProducerCredits(nextProducers))
@@ -2495,14 +2572,20 @@ function GenerateView({
                 setRecipeDirty(true)
                 setStatus("Collaborator pool updated")
               }}
+              onAllowAllProducers={() => {
+                setConfiguredAllowedProducers(null)
+                setLayers((current) => current.map((layer) => ({ ...layer, locked: false })))
+                setRecipeDirty(true)
+                setStatus("All matching collaborators enabled")
+              }}
               onMaxProducerCountChange={(nextCount) => {
                 setMaxProducerCount(nextCount)
                 setLayers((current) => current.map((layer) => ({ ...layer, locked: false })))
                 setRecipeDirty(true)
-                setStatus(nextCount === 0 ? "Any collaborator count allowed" : nextCount === 1 ? "Solo generations enabled" : `Up to ${nextCount} credited producers`)
+                setStatus(nextCount === 0 ? "Any collaborator count allowed" : nextCount === 1 ? "Solo generations enabled" : `Exactly ${nextCount} credited producers`)
               }}
-              onProfilesChange={setProducerProfiles}
               onPinnedProducersChange={setPinnedProducers}
+              onProducerSortDirectionChange={setProducerSortDirection}
             />
             <Button variant="outline" className="previous-seed-button" size="sm" disabled={generateJob.busy || previousSeed == null} onClick={() => previousSeed != null && handleGenerate(previousSeed)} title={previousSeed == null ? "No previous seed yet" : `Generate seed ${previousSeed}`}><RotateCcw /> Previous</Button>
           <Button className="hardware-button generate-hardware" size="lg" onClick={() => handleGenerate()} disabled={!generateJob.busy && selectedLibraryPaths.length === 0}>

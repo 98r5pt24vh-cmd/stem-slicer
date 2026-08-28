@@ -50,6 +50,7 @@ export interface LibraryProducerSummary {
   name: string
   layerCount: number
   loopCount: number
+  loopCountsByCreditCount: Record<string, number>
   libraryRoots: string[]
 }
 

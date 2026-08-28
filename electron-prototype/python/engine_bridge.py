@@ -133,46 +133,45 @@ def _filter_records_by_collaborators(
 
     selected_external: list[str] = []
     if max_producer_count > 0:
-        external_slots = max(0, max_producer_count - 1)
-        external_by_key: dict[str, str] = {}
+        records_by_external_group: dict[tuple[str, ...], list[dict]] = {}
+        external_names_by_group: dict[tuple[str, ...], list[str]] = {}
         for record in records:
-            for producer in _record_producers(record):
-                if producer.casefold() != _PRIMARY_PRODUCER.casefold():
-                    external_by_key.setdefault(producer.casefold(), producer)
+            credits = _unique_producers(_record_producers(record), include_primary=True)
+            if len(credits) != max_producer_count:
+                continue
+            external_names = [
+                producer
+                for producer in credits
+                if producer.casefold() != _PRIMARY_PRODUCER.casefold()
+            ]
+            group = tuple(sorted(producer.casefold() for producer in external_names))
+            records_by_external_group.setdefault(group, []).append(record)
+            external_names_by_group.setdefault(group, external_names)
 
-        external_names = list(external_by_key.values())
-        if len(external_names) > external_slots:
-            requested_categories = {category.casefold() for category in categories}
-            coverage = {producer.casefold(): 0 for producer in external_names}
-            for record in records:
-                category = str(
+        groups = list(records_by_external_group)
+        random.Random(seed).shuffle(groups)
+        tie_order = {group: index for index, group in enumerate(groups)}
+        requested_categories = {category.casefold() for category in categories}
+
+        def group_score(group: tuple[str, ...]) -> tuple[int, int, int]:
+            group_records = records_by_external_group[group]
+            covered_categories = {
+                str(
                     record.get("manual_label")
                     or record.get("predicted_label")
                     or ""
                 ).casefold()
-                if requested_categories and category not in requested_categories:
-                    continue
-                for producer in _record_producers(record):
-                    key = producer.casefold()
-                    if key in coverage:
-                        coverage[key] += 1
-            tie_break = list(external_names)
-            random.Random(seed).shuffle(tie_break)
-            tie_order = {producer.casefold(): index for index, producer in enumerate(tie_break)}
-            external_names.sort(
-                key=lambda producer: (-coverage[producer.casefold()], tie_order[producer.casefold()])
-            )
-        selected_external = external_names[:external_slots]
-        selected_keys = {producer.casefold() for producer in selected_external}
-        records = [
-            record
-            for record in records
-            if all(
-                producer.casefold() == _PRIMARY_PRODUCER.casefold()
-                or producer.casefold() in selected_keys
-                for producer in _record_producers(record)
-            )
-        ]
+                for record in group_records
+            }
+            requested_coverage = len(covered_categories & requested_categories)
+            return (-requested_coverage, -len(group_records), tie_order[group])
+
+        if groups:
+            selected_group = min(groups, key=group_score)
+            records = records_by_external_group[selected_group]
+            selected_external = external_names_by_group[selected_group]
+        else:
+            records = []
     return records, selected_external
 
 
