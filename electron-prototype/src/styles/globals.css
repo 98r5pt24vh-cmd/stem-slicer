@@ -3828,6 +3828,7 @@ td strong {
 
 .cloud-page.is-embedded .cloud-grid > .cloud-panel > [data-slot="card-content"] {
   flex: 1;
+  padding-block-end: 0;
 }
 
 .cloud-page.is-embedded .cloud-library-list,
@@ -6146,9 +6147,14 @@ td strong {
   flex: 1;
 }
 
+.cloud-main .cloud-network-grid > .cloud-panel > [data-slot="card-content"] {
+  padding-block-end: 0;
+}
+
 .cloud-network-grid .cloud-connection-list,
 .cloud-activity-list {
   min-height: 0;
+  flex: 1;
   overflow-y: auto;
   overscroll-behavior: contain;
   padding-inline-end: 3px;
