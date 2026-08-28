@@ -6162,6 +6162,7 @@ td strong {
 
 .cloud-activity-list {
   display: grid;
+  align-content: start;
   gap: 6px;
 }
 
@@ -6185,7 +6186,7 @@ td strong {
 
 .cloud-activity-row strong,
 .cloud-activity-row small,
-.cloud-activity-row span {
+.cloud-activity-row > div > span {
   display: block;
 }
 
@@ -6268,6 +6269,7 @@ td strong {
 .cloud-library-list,
 .cloud-shared-grid {
   display: grid;
+  align-content: start;
   gap: 6px;
 }
 
