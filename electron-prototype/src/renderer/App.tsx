@@ -3225,8 +3225,8 @@ function GenerateView({
           </div>
           <div className="catalogue-actions">
             <div className="catalogue-layer-count" aria-label={`${formatCount(selectedLoopCount)} loops and ${formatCount(selectedLayerCount)} layers selected for Generate`}>
-              <strong className="tabular">{formatCount(selectedLayerCount)}</strong>
-              <span>layers · {formatCount(selectedLoopCount)} loops</span>
+              <strong className="tabular">{formatCount(selectedLayerCount)} {selectedLayerCount === 1 ? "layer" : "layers"}</strong>
+              <span className="tabular">{formatCount(selectedLoopCount)} {selectedLoopCount === 1 ? "loop" : "loops"}</span>
             </div>
             <LibraryManager
               library={library}

@@ -922,22 +922,26 @@ main:focus {
 }
 
 .catalogue-actions {
-  display: flex;
+  display: grid;
   flex: 0 0 auto;
+  grid-template-columns: repeat(2, minmax(132px, 1fr));
   align-items: stretch;
   gap: 8px;
 }
 
 .catalogue-layer-count {
   display: grid;
-  min-width: 122px;
+  width: 100%;
+  min-width: 0;
+  height: 40px;
   min-height: 40px;
   align-content: center;
+  justify-items: start;
   border: 1px solid rgb(255 255 255 / 0.075);
   border-radius: 9px;
   background: rgb(0 0 0 / 0.2);
   padding: 4px 9px;
-  text-align: end;
+  text-align: start;
 }
 
 .catalogue-layer-count strong,
@@ -949,6 +953,7 @@ main:focus {
   color: var(--primary);
   font-size: 11px;
   line-height: 13px;
+  white-space: nowrap;
 }
 
 .catalogue-layer-count span {
@@ -963,6 +968,8 @@ main:focus {
 }
 
 .catalogue-actions .manage-library-trigger {
+  width: 100%;
+  min-width: 0;
   height: 40px;
   min-height: 40px;
 }
@@ -2070,11 +2077,11 @@ main:focus {
 }
 
 .generate-action button {
+  width: 132px;
   min-width: 132px;
 }
 
 .generate-action .previous-seed-button {
-  min-width: 78px;
   height: 34px;
   font-size: 8px;
 }
@@ -2117,7 +2124,6 @@ main:focus {
 
 .generate-action .collaborators-trigger {
   display: inline-flex;
-  min-width: 112px;
   align-items: center;
   justify-content: center;
   gap: 6px;
