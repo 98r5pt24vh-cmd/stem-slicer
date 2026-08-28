@@ -3821,6 +3821,9 @@ td strong {
 .cloud-page.is-embedded .cloud-grid > .cloud-panel {
   height: 100%;
   overflow: hidden;
+  border-block-end: 0;
+  border-end-start-radius: 0;
+  border-end-end-radius: 0;
 }
 
 .cloud-page.is-embedded .cloud-grid > .cloud-panel > [data-slot="card-content"] {
