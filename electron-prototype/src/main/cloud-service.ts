@@ -32,6 +32,7 @@ const FREE_PROJECT_OBJECT_LIMIT = 50_000_000
 const UPLOAD_CONCURRENCY = 3
 const INSERT_BATCH_SIZE = 200
 const CATALOG_PAGE_SIZE = 1_000
+const STORAGE_DELETE_BATCH_SIZE = 1_000
 const PROFILE_AVATAR_SOURCE_LIMIT = 25_000_000
 const PROFILE_AVATAR_UPLOAD_LIMIT = 5_000_000
 const PROFILE_AVATAR_EDGE = 512
@@ -181,6 +182,15 @@ export function profileAvatarCropRect(width: number, height: number): { x: numbe
     width: edge,
     height: edge,
   }
+}
+
+export function chunkCloudObjectPaths(paths: string[], batchSize = STORAGE_DELETE_BATCH_SIZE): string[][] {
+  if (!Number.isInteger(batchSize) || batchSize < 1) throw new Error("The Cloud deletion batch size is invalid.")
+  const batches: string[][] = []
+  for (let index = 0; index < paths.length; index += batchSize) {
+    batches.push(paths.slice(index, index + batchSize))
+  }
+  return batches
 }
 
 export function canonicalizeCloudProducerCredits(producers: string[], owner?: CloudProfile): string[] {
@@ -573,6 +583,111 @@ export class CloudService {
     this.settings.enabledLibraryIds = [...ids]
     this.saveSettings()
     return this.getState()
+  }
+
+  private async ownedLibrary(libraryId: string, ownerId: string): Promise<LibraryRow> {
+    const response = await this.supabase()
+      .from("cloud_libraries")
+      .select("id,owner_id,name,status,layer_count,loop_count,total_bytes,updated_at")
+      .eq("id", libraryId)
+      .eq("owner_id", ownerId)
+      .maybeSingle<LibraryRow>()
+    if (response.error) throw response.error
+    if (!response.data) throw new Error("This Cloud library is unavailable or belongs to another producer.")
+    return response.data
+  }
+
+  async setLibrarySharing(libraryId: string, sharing: boolean): Promise<CloudState> {
+    const session = await this.currentSession()
+    const library = await this.ownedLibrary(libraryId, session.user.id)
+    const nextStatus = sharing ? "ready" : "archived"
+    if (library.status === nextStatus) {
+      return {
+        ...(await this.getState()),
+        message: sharing ? `${library.name} is already shared.` : `${library.name} sharing is already paused.`,
+      }
+    }
+    const expectedStatus = sharing ? "archived" : "ready"
+    if (library.status !== expectedStatus) {
+      throw new Error(sharing
+        ? "Only a paused Cloud library can resume sharing."
+        : "Wait for this Cloud library to finish publishing before pausing sharing.")
+    }
+    const updated = await this.supabase()
+      .from("cloud_libraries")
+      .update({ status: nextStatus })
+      .eq("id", library.id)
+      .eq("owner_id", session.user.id)
+      .eq("status", expectedStatus)
+      .select("id")
+      .maybeSingle<{ id: string }>()
+    if (updated.error) throw updated.error
+    if (!updated.data) throw new Error("The Cloud library changed before sharing could be updated. Refresh and try again.")
+    return {
+      ...(await this.getState()),
+      message: sharing
+        ? `${library.name} is available to connected producers again.`
+        : `${library.name} sharing is paused. Cloud files remain stored.`,
+    }
+  }
+
+  private async libraryObjectPaths(libraryId: string): Promise<string[]> {
+    const paths: string[] = []
+    for (let start = 0; ; start += CATALOG_PAGE_SIZE) {
+      const response = await this.supabase()
+        .from("cloud_layers")
+        .select("object_path")
+        .eq("library_id", libraryId)
+        .order("object_path")
+        .range(start, start + CATALOG_PAGE_SIZE - 1)
+      if (response.error) throw response.error
+      const page = response.data as Array<{ object_path: string }>
+      paths.push(...page.map((row) => row.object_path))
+      if (page.length < CATALOG_PAGE_SIZE) break
+    }
+    return paths
+  }
+
+  async removeLibrary(libraryId: string): Promise<CloudState> {
+    const session = await this.currentSession()
+    const library = await this.ownedLibrary(libraryId, session.user.id)
+    if (library.status === "uploading") {
+      throw new Error("Wait for this Cloud library to finish publishing before removing it.")
+    }
+    if (library.status !== "archived") {
+      const paused = await this.supabase()
+        .from("cloud_libraries")
+        .update({ status: "archived" })
+        .eq("id", library.id)
+        .eq("owner_id", session.user.id)
+      if (paused.error) throw paused.error
+    }
+    try {
+      const objectPaths = await this.libraryObjectPaths(library.id)
+      for (const batch of chunkCloudObjectPaths(objectPaths)) {
+        const removed = await this.supabase().storage.from(CLOUD_BUCKET).remove(batch)
+        if (removed.error) throw removed.error
+      }
+      const deleted = await this.supabase()
+        .from("cloud_libraries")
+        .delete()
+        .eq("id", library.id)
+        .eq("owner_id", session.user.id)
+        .select("id")
+        .maybeSingle<{ id: string }>()
+      if (deleted.error) throw deleted.error
+      if (!deleted.data) throw new Error("The Cloud library could not be removed.")
+    } catch (error) {
+      throw new Error(`Sharing was paused, but Cloud removal did not finish. Try again. ${errorMessage(error)}`)
+    }
+    const enabledIds = new Set(this.settings.enabledLibraryIds ?? [])
+    enabledIds.delete(library.id)
+    this.settings.enabledLibraryIds = [...enabledIds]
+    this.saveSettings()
+    return {
+      ...(await this.getState()),
+      message: `${library.name} was removed from Cloud. The local folder is unchanged.`,
+    }
   }
 
   private async profileRows(ids: string[]): Promise<Map<string, CloudProfile>> {

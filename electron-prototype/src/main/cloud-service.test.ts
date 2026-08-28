@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest"
 import type { GenerateJobRequest } from "../shared/contracts"
 import {
   canonicalizeCloudProducerCredits,
+  chunkCloudObjectPaths,
   CloudService,
   normalizeAliases,
   normalizeCloudHandle,
@@ -58,6 +59,20 @@ describe("Cloud generation source isolation", () => {
   it("keeps authentication mandatory for Cloud only", async () => {
     await expect(serviceWithMissingSession().enrichGenerateRequest(request("cloud-only")))
       .rejects.toThrow("Sign in to Slicer Cloud first.")
+  })
+})
+
+describe("Cloud library removal", () => {
+  it("keeps Storage deletion requests within the 1,000-object API limit", () => {
+    const paths = Array.from({ length: 2_305 }, (_, index) => `producer/library/${index}.mp3`)
+    const batches = chunkCloudObjectPaths(paths)
+
+    expect(batches.map((batch) => batch.length)).toEqual([1_000, 1_000, 305])
+    expect(batches.flat()).toEqual(paths)
+  })
+
+  it("does not create an empty deletion request", () => {
+    expect(chunkCloudObjectPaths([])).toEqual([])
   })
 })
 

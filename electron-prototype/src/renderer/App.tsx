@@ -75,6 +75,7 @@ import type {
   AudioJobResult,
   BatchJobResult,
   CategoryCorrection,
+  CloudLibrarySummary,
   CloudPublishEvent,
   CloudProfile,
   CloudState,
@@ -4717,6 +4718,8 @@ function CloudView({ library }: { library: LibraryOverview }) {
   const [profileAvatarFilePath, setProfileAvatarFilePath] = useState("")
   const [sharedLibrarySortDirection, setSharedLibrarySortDirection] = useState<"asc" | "desc">("asc")
   const [pinnedSharedLibraryIds, setPinnedSharedLibraryIds] = useState<Set<string>>(new Set())
+  const [libraryToRemove, setLibraryToRemove] = useState<CloudLibrarySummary | null>(null)
+  const [libraryRemovalError, setLibraryRemovalError] = useState("")
   const sharedSelectAllRef = useRef<HTMLInputElement>(null)
   const cloudProfileId = cloud.profile?.id ?? ""
 
@@ -4783,6 +4786,7 @@ function CloudView({ library }: { library: LibraryOverview }) {
     setBusy(true)
     setError("")
     setNotice("")
+    setLibraryRemovalError("")
     try {
       const state = await action()
       if (state) {
@@ -4875,14 +4879,38 @@ function CloudView({ library }: { library: LibraryOverview }) {
     })
   }
 
+  const removeCloudLibrary = async () => {
+    if (!libraryToRemove) return
+    setBusy(true)
+    setError("")
+    setNotice("")
+    try {
+      const state = await window.stemSlicer?.cloudRemoveLibrary(libraryToRemove.id)
+      if (state) {
+        setCloud(state)
+        window.dispatchEvent(new CustomEvent(CLOUD_STATE_CHANGED_EVENT, { detail: state }))
+        if (state.message) setNotice(state.message)
+      }
+      setLibraryToRemove(null)
+    } catch (reason) {
+      setLibraryRemovalError(cloudErrorMessage(reason, "The Cloud library could not be removed."))
+      void refresh()
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const acceptedConnections = cloud.connections.filter((connection) => connection.status === "accepted")
   const pendingConnections = cloud.connections.filter((connection) => connection.status === "pending")
   const ownLibraries = cloud.libraries.filter((item) => item.own)
-  const sharedLibraries = cloud.libraries.filter((item) => !item.own)
-  const publishedLayerCount = ownLibraries.reduce((sum, item) => sum + item.layerCount, 0)
-  const publishedLoopCount = ownLibraries.reduce((sum, item) => sum + item.loopCount, 0)
+  const sharedLibraries = cloud.libraries.filter((item) => !item.own && item.status === "ready")
+  const ownLibraryNames = new Set(ownLibraries.map((item) => item.name))
+  const unpublishedRoots = library.roots.filter((root) => !ownLibraryNames.has(root.name))
+  const sharedOwnLibraries = ownLibraries.filter((item) => item.status === "ready")
+  const publishedLayerCount = sharedOwnLibraries.reduce((sum, item) => sum + item.layerCount, 0)
+  const publishedLoopCount = sharedOwnLibraries.reduce((sum, item) => sum + item.loopCount, 0)
   const localAvatarPreview = profileAvatarFilePath ? window.stemSlicer?.mediaUrl(profileAvatarFilePath) : ""
-  const readySharedLibraries = sharedLibraries.filter((item) => item.status === "ready")
+  const readySharedLibraries = sharedLibraries
   const enabledReadyLibraryCount = readySharedLibraries.filter((item) => item.enabledForGenerate).length
   const allReadyLibrariesEnabled = readySharedLibraries.length > 0 && enabledReadyLibraryCount === readySharedLibraries.length
   const someReadyLibrariesEnabled = enabledReadyLibraryCount > 0 && !allReadyLibrariesEnabled
@@ -5107,19 +5135,50 @@ function CloudView({ library }: { library: LibraryOverview }) {
           {activeSection === "libraries" ? (
             <div className="cloud-grid">
               <Card className="cloud-panel">
-                <CardHeader><div><CardTitle>Your published libraries</CardTitle><CardDescription>Only active indexed layers are uploaded. Source folders stay untouched.</CardDescription></div><Badge>{ownLibraries.length} online</Badge></CardHeader>
+                <CardHeader><div><CardTitle>Your Cloud libraries</CardTitle><CardDescription>Pause sharing without reuploading, or remove Cloud files permanently. Local folders always stay untouched.</CardDescription></div><Badge>{sharedOwnLibraries.length} shared</Badge></CardHeader>
                 <CardContent>
                   <div className="cloud-library-list">
-                    {library.roots.map((root) => {
-                      const published = ownLibraries.find((item) => item.name === root.name && item.status === "ready")
+                    {ownLibraries.map((item) => {
+                      const sharing = item.status === "ready"
+                      const paused = item.status === "archived"
+                      const statusLabel = sharing ? "Shared" : paused ? "Paused" : item.status === "uploading" ? "Publishing" : "Upload failed"
                       return (
-                        <div className="cloud-list-row cloud-library-row" key={root.path}>
-                          <span><strong>{root.name}</strong><small>{formatCount(root.layerCount)} indexed layers</small></span>
-                          {published ? <Badge variant="success">Published</Badge> : <Button variant="outline" size="sm" disabled={Boolean(publishEvent && publishEvent.type === "progress")} onClick={() => void publishLibrary(root.path)}><UploadCloud aria-hidden="true" /> Publish</Button>}
+                        <div className={cn("cloud-list-row cloud-library-row", paused && "is-paused")} key={item.id}>
+                          <span><strong>{item.name}</strong><small>{formatCount(item.loopCount)} loops · {formatCount(item.layerCount)} layers · {formatDecimalBytes(item.totalBytes)} stored</small></span>
+                          <div className="cloud-owner-library-actions">
+                            <Badge variant={sharing ? "success" : paused ? "warning" : "secondary"}>{statusLabel}</Badge>
+                            {sharing || paused ? (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                disabled={busy}
+                                onClick={() => void perform(() => window.stemSlicer?.cloudSetLibrarySharing(item.id, paused) ?? Promise.resolve(undefined))}
+                              >
+                                {paused ? <RefreshCw aria-hidden="true" /> : <Pause aria-hidden="true" />}
+                                {paused ? "Resume sharing" : "Pause sharing"}
+                              </Button>
+                            ) : null}
+                            <Button
+                              type="button"
+                              variant="destructive"
+                              size="sm"
+                              disabled={busy || item.status === "uploading"}
+                              onClick={() => { setLibraryRemovalError(""); setLibraryToRemove(item) }}
+                            >
+                              <Trash2 aria-hidden="true" /> Remove from Cloud
+                            </Button>
+                          </div>
                         </div>
                       )
                     })}
-                    {library.roots.length === 0 ? <p className="cloud-empty-copy">Index a small test folder in Generate before publishing it.</p> : null}
+                    {unpublishedRoots.map((root) => (
+                      <div className="cloud-list-row cloud-library-row" key={root.path}>
+                        <span><strong>{root.name}</strong><small>{formatCount(root.layerCount)} indexed layers · only on this Mac</small></span>
+                        <Button variant="outline" size="sm" disabled={Boolean(publishEvent && publishEvent.type === "progress")} onClick={() => void publishLibrary(root.path)}><UploadCloud aria-hidden="true" /> Publish</Button>
+                      </div>
+                    ))}
+                    {ownLibraries.length === 0 && unpublishedRoots.length === 0 ? <p className="cloud-empty-copy">Index a small test folder in Generate before publishing it.</p> : null}
                   </div>
                   {publishEvent ? (
                     <div className={cn("cloud-upload-progress", publishEvent.type === "failed" && "is-error")}>
@@ -5132,7 +5191,7 @@ function CloudView({ library }: { library: LibraryOverview }) {
               </Card>
 
               <Card className="cloud-panel cloud-shared-panel">
-                <CardHeader><div><CardTitle>Libraries available to Generate</CardTitle><CardDescription>Ready libraries can be enabled. Archived libraries remain visible but are unavailable to Generate.</CardDescription></div><Badge variant={sharedLibraries.some((item) => item.enabledForGenerate) ? "success" : "warning"}>{sharedLibraries.filter((item) => item.enabledForGenerate).length} enabled</Badge></CardHeader>
+                <CardHeader><div><CardTitle>Libraries available to Generate</CardTitle><CardDescription>Choose which libraries from connected producers Generate may use.</CardDescription></div><Badge variant={sharedLibraries.some((item) => item.enabledForGenerate) ? "success" : "warning"}>{sharedLibraries.filter((item) => item.enabledForGenerate).length} enabled</Badge></CardHeader>
                 <CardContent>
                   {sharedLibraries.length > 0 ? (
                     <div className="cloud-library-toolbar">
@@ -5167,7 +5226,6 @@ function CloudView({ library }: { library: LibraryOverview }) {
                           <label className="cloud-shared-library-main" htmlFor={libraryInputId}>
                             <CloudProfileAvatar profile={item.owner} />
                             <span><strong>{item.name}</strong><small>{item.owner.displayName} · {formatCount(item.loopCount)} loops · {formatCount(item.layerCount)} layers · {formatDecimalBytes(item.totalBytes)}</small></span>
-                            <Badge variant={item.status === "ready" ? "success" : "warning"} title={item.status === "ready" ? "Available to Generate" : item.status === "archived" ? "Unavailable to Generate" : undefined}>{item.status === "ready" ? "Ready" : item.status === "archived" ? "Archived" : item.status}</Badge>
                           </label>
                           <button
                             type="button"
@@ -5191,11 +5249,41 @@ function CloudView({ library }: { library: LibraryOverview }) {
                       )
                     })}
                   </div>
-                  {sharedLibraries.length === 0 ? <p className="cloud-empty-copy">Accepted producers’ ready libraries will appear here.</p> : null}
+                  {sharedLibraries.length === 0 ? <p className="cloud-empty-copy">Shared libraries from connected producers will appear here.</p> : null}
                 </CardContent>
               </Card>
             </div>
           ) : null}
+
+          <Dialog.Root
+            open={Boolean(libraryToRemove)}
+            onOpenChange={(open) => {
+              if (!open && !busy) {
+                setLibraryToRemove(null)
+                setLibraryRemovalError("")
+              }
+            }}
+          >
+            <Dialog.Portal>
+              <Dialog.Backdrop className="dialog-backdrop" />
+              <Dialog.Viewport className="dialog-viewport">
+                <Dialog.Popup className="confirmation-dialog destructive-confirmation-dialog">
+                  <span className="confirmation-dialog-icon"><Trash2 aria-hidden="true" /></span>
+                  <Dialog.Title>Remove {libraryToRemove?.name} from Cloud?</Dialog.Title>
+                  <Dialog.Description>
+                    This permanently deletes {libraryToRemove ? formatCount(libraryToRemove.layerCount) : "the"} uploaded layers and frees their Cloud storage. The local folder and indexed library on this Mac remain unchanged.
+                  </Dialog.Description>
+                  {libraryRemovalError ? <p className="dialog-inline-error" role="alert">{libraryRemovalError}</p> : null}
+                  <footer>
+                    <Dialog.Close className="dialog-cancel" disabled={busy}>Cancel</Dialog.Close>
+                    <Button variant="destructive" disabled={busy} onClick={() => void removeCloudLibrary()}>
+                      <Trash2 aria-hidden="true" /> {busy ? "Removing…" : "Remove from Cloud"}
+                    </Button>
+                  </footer>
+                </Dialog.Popup>
+              </Dialog.Viewport>
+            </Dialog.Portal>
+          </Dialog.Root>
         </>
       )}
     </div>

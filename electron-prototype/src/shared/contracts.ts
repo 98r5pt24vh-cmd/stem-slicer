@@ -501,6 +501,8 @@ export interface StemSlicerDesktopApi {
   cloudAcceptConnection: (connectionId: string) => Promise<CloudState>
   cloudPublishLibrary: (libraryRoot: string) => Promise<CloudPublishStart>
   cloudSetLibraryEnabled: (libraryId: string, enabled: boolean) => Promise<CloudState>
+  cloudSetLibrarySharing: (libraryId: string, sharing: boolean) => Promise<CloudState>
+  cloudRemoveLibrary: (libraryId: string) => Promise<CloudState>
   onCloudPublishEvent: (listener: (event: CloudPublishEvent) => void) => () => void
   pickLibraryFolder: () => Promise<AudioSelection>
   pickAudioFiles: () => Promise<AudioSelection>

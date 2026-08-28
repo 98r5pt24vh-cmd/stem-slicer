@@ -29,6 +29,8 @@ const api: StemSlicerDesktopApi = {
   cloudAcceptConnection: (connectionId) => ipcRenderer.invoke("cloud:accept-connection", connectionId),
   cloudPublishLibrary: (libraryRoot) => ipcRenderer.invoke("cloud:publish-library", libraryRoot),
   cloudSetLibraryEnabled: (libraryId, enabled) => ipcRenderer.invoke("cloud:set-library-enabled", libraryId, enabled),
+  cloudSetLibrarySharing: (libraryId, sharing) => ipcRenderer.invoke("cloud:set-library-sharing", libraryId, sharing),
+  cloudRemoveLibrary: (libraryId) => ipcRenderer.invoke("cloud:remove-library", libraryId),
   onCloudPublishEvent: (listener) => {
     const handler = (_event: IpcRendererEvent, payload: CloudPublishEvent) => listener(payload)
     ipcRenderer.on("cloud:publish-event", handler)

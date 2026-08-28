@@ -5717,6 +5717,21 @@ td strong {
   grid-template-columns: minmax(0, 1fr) auto;
 }
 
+.cloud-library-row.is-paused {
+  background: rgb(225 213 0 / 0.025);
+}
+
+.cloud-owner-library-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.cloud-owner-library-actions [data-slot="button"] {
+  white-space: nowrap;
+}
+
 .cloud-empty-copy {
   margin: 8px 2px;
   color: var(--muted-foreground);
@@ -5851,7 +5866,7 @@ td strong {
 .cloud-shared-library-main {
   display: grid;
   min-width: 0;
-  grid-template-columns: 38px minmax(0, 1fr) auto;
+  grid-template-columns: 38px minmax(0, 1fr);
   align-items: center;
   gap: 11px;
   border-radius: 7px;
@@ -5996,6 +6011,15 @@ td strong {
 
   .cloud-config-form > button {
     justify-self: start;
+  }
+
+  .cloud-library-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cloud-owner-library-actions {
+    justify-content: flex-start;
+    flex-wrap: wrap;
   }
 }
 

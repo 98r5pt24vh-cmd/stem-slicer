@@ -317,6 +317,18 @@ function registerIpc(): void {
     }
     return cloudService.setLibraryEnabled(libraryId, enabled)
   })
+  ipcMain.handle("cloud:set-library-sharing", (_event: IpcMainInvokeEvent, libraryId: unknown, sharing: unknown) => {
+    if (typeof libraryId !== "string" || typeof sharing !== "boolean") {
+      throw new Error("The Cloud library sharing request is invalid.")
+    }
+    return cloudService.setLibrarySharing(libraryId, sharing)
+  })
+  ipcMain.handle("cloud:remove-library", (_event: IpcMainInvokeEvent, libraryId: unknown) => {
+    if (typeof libraryId !== "string") {
+      throw new Error("The Cloud library removal request is invalid.")
+    }
+    return cloudService.removeLibrary(libraryId)
+  })
   ipcMain.handle("cloud:publish-library", (event: IpcMainInvokeEvent, libraryRoot: unknown) => {
     if (typeof libraryRoot !== "string") throw new Error("The local library path is invalid.")
     const sender = event.sender
