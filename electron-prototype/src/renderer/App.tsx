@@ -4935,6 +4935,24 @@ function LibraryView({
     onSetKeyIssueActive,
     onEditSourceLoop,
   }
+  const correctionSectionDetails: Record<CorrectionSection, { title: string; description: string; status: string }> = {
+    "wrong-key": {
+      title: "Wrong key history",
+      description: "Review reported key mismatches without mixing them into activity history.",
+      status: `${wrongKeyIssues.filter((issue) => issue.active).length} active`,
+    },
+    "wrong-category": {
+      title: "Wrong category history",
+      description: "Every validated manual category remains traceable and editable from its source loop.",
+      status: `${categoryCorrections.length} saved`,
+    },
+    "wrong-cut": {
+      title: "Wrong cut history",
+      description: "Open quarantined source loops in Studio and repair their extraction timeline.",
+      status: `${wrongCutIssues.filter((issue) => issue.active).length} active`,
+    },
+  }
+  const activeCorrectionDetails = correctionSection ? correctionSectionDetails[correctionSection] : null
 
   return (
     <div className="page-stack library-page">
@@ -4963,41 +4981,31 @@ function LibraryView({
         ))}
       </div>
 
-      {correctionSection ? (
-        <div className="library-selection-toolbar app-no-drag">
-          <span>{selectedCorrectionCount > 0 ? `${selectedCorrectionCount} selected` : `${availableCorrectionIds.length} saved`}</span>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={availableCorrectionIds.length === 0}
-            aria-pressed={allCorrectionsSelected}
-            onClick={() => setSelectedBySection((current) => ({
-              ...current,
-              [correctionSection]: allCorrectionsSelected ? new Set() : new Set(availableCorrectionIds),
-            }))}
-          >
-            {allCorrectionsSelected ? <Square aria-hidden="true" /> : <CheckSquare2 aria-hidden="true" />}
-            {allCorrectionsSelected ? "Clear selection" : "Select all"}
-          </Button>
-          <Button variant="destructive" size="sm" disabled={selectedCorrectionCount === 0} onClick={() => setDeleteOpen(true)}>
-            <Trash2 aria-hidden="true" /> Remove from history
-          </Button>
+      {correctionSection && activeCorrectionDetails ? <section id={`library-panel-${correctionSection}`} role="tabpanel" className="library-correction-panel">
+        <div className="history-section-heading library-correction-heading">
+          <div><h2>{activeCorrectionDetails.title}</h2><p>{activeCorrectionDetails.description}</p></div>
+          <div className="library-selection-toolbar app-no-drag">
+            <span>{selectedCorrectionCount > 0 ? `${selectedCorrectionCount} selected` : activeCorrectionDetails.status}</span>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={availableCorrectionIds.length === 0}
+              aria-pressed={allCorrectionsSelected}
+              onClick={() => setSelectedBySection((current) => ({
+                ...current,
+                [correctionSection]: allCorrectionsSelected ? new Set() : new Set(availableCorrectionIds),
+              }))}
+            >
+              {allCorrectionsSelected ? <Square aria-hidden="true" /> : <CheckSquare2 aria-hidden="true" />}
+              {allCorrectionsSelected ? "Clear selection" : "Select all"}
+            </Button>
+            <Button variant="destructive" size="sm" disabled={selectedCorrectionCount === 0} onClick={() => setDeleteOpen(true)}>
+              <Trash2 aria-hidden="true" /> Remove from history
+            </Button>
+          </div>
         </div>
-      ) : null}
 
-      {activeSection === "wrong-key" ? <section id="library-panel-wrong-key" role="tabpanel" className="library-correction-panel">
-        <div className="history-section-heading"><div><h2>Wrong key history</h2><p>Review reported key mismatches without mixing them into activity history.</p></div><Badge variant={wrongKeyIssues.some((issue) => issue.active) ? "warning" : "secondary"}>{wrongKeyIssues.filter((issue) => issue.active).length} active</Badge></div>
-        <LibraryIssueList issues={wrongKeyIssues} {...correctionProps} />
-      </section> : null}
-
-      {activeSection === "wrong-cut" ? <section id="library-panel-wrong-cut" role="tabpanel" className="library-correction-panel">
-        <div className="history-section-heading"><div><h2>Wrong cut history</h2><p>Open quarantined source loops in Studio and repair their extraction timeline.</p></div><Badge variant={wrongCutIssues.some((issue) => issue.active) ? "warning" : "secondary"}>{wrongCutIssues.filter((issue) => issue.active).length} active</Badge></div>
-        <LibraryIssueList issues={wrongCutIssues} {...correctionProps} />
-      </section> : null}
-
-      {activeSection === "wrong-category" ? <section id="library-panel-wrong-category" role="tabpanel" className="library-correction-panel">
-        <div className="history-section-heading"><div><h2>Wrong category history</h2><p>Every validated manual category remains traceable and editable from its source loop.</p></div><Badge variant="secondary">{categoryCorrections.length} saved</Badge></div>
-        {categoryCorrections.length > 0 ? <div className="category-correction-list library-category-correction-list">
+        {correctionSection === "wrong-category" ? categoryCorrections.length > 0 ? <div className="category-correction-list library-category-correction-list">
           {categoryCorrections.map((correction) => {
             const provenance = provenanceForLayer({ sourceFile: correction.filename, sourceLoopId: correction.sourceLoopId })
             const relatedIssue = keyIssues.find((issue) => sourceLoopKey(issue.libraryRoot, issue.sourceLoopId) === sourceLoopKey(correction.libraryRoot, correction.sourceLoopId))
@@ -5020,7 +5028,8 @@ function LibraryView({
               </Card>
             )
           })}
-        </div> : <p className="key-issues-empty">No category correction has been saved yet.</p>}
+        </div> : <p className="key-issues-empty">No category correction has been saved yet.</p>
+          : <LibraryIssueList issues={correctionSection === "wrong-key" ? wrongKeyIssues : wrongCutIssues} {...correctionProps} />}
       </section> : null}
 
       {issueError ? <p className="dialog-inline-error" role="alert">{issueError}</p> : null}
