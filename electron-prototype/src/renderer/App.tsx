@@ -151,6 +151,7 @@ interface HistoryEntry {
   displayName: string
   producers: string[]
   createdAt: string
+  createdAtIso?: string
   layerCount: number
   generation: GenerateResult
   layers: GeneratedLayer[]
@@ -2741,6 +2742,7 @@ function GenerateView({
       displayName,
       producers,
       createdAt: new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit" }).format(new Date()),
+      createdAtIso: new Date().toISOString(),
       layerCount: generationResult.layers.length,
       generation: generationResult,
       layers: nextLayers,
@@ -5070,6 +5072,18 @@ function cloudErrorMessage(reason: unknown, fallback: string): string {
   return message && !/^(?:<none>|none|null|undefined|\[object Object\])$/i.test(message) ? message : fallback
 }
 
+function formatCloudActivityDate(value: string): string {
+  const date = new Date(value)
+  if (!Number.isFinite(date.getTime())) return value
+  return new Intl.DateTimeFormat("fr-FR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date)
+}
+
 function CloudProfileAvatar({ profile, large = false }: { profile?: CloudProfile; large?: boolean }) {
   const [failedUrl, setFailedUrl] = useState("")
   const avatarUrl = profile?.avatarUrl || ""
@@ -5492,11 +5506,13 @@ function CloudView({ library, section, embedded = false, generationHistory = [] 
                       <label><span>Instagram</span><Input value={profileInstagram} onChange={(event) => setProfileInstagram(event.target.value)} placeholder="nrgyloops" maxLength={30} /></label>
                       <label><span>Producer aliases</span><Input value={profileAliases} onChange={(event) => setProfileAliases(event.target.value)} placeholder="XT, Tnex is R" /><small>Separate aliases with commas.</small></label>
                     </div>
-                    <label className="cloud-opportunity-toggle">
-                      <input type="checkbox" checked={profileOpenToCollaborate} onChange={(event) => setProfileOpenToCollaborate(event.target.checked)} />
-                      <span><strong>Open to collaborate</strong><small>Show trusted producers that you welcome loop and placement opportunities.</small></span>
-                    </label>
-                    <Button type="submit" disabled={busy}><Check aria-hidden="true" />{busy ? "Saving…" : "Save profile"}</Button>
+                    <footer className="cloud-profile-form-footer">
+                      <label className="cloud-opportunity-toggle">
+                        <input type="checkbox" checked={profileOpenToCollaborate} onChange={(event) => setProfileOpenToCollaborate(event.target.checked)} />
+                        <span><strong>Open to collaborate</strong><small>Welcome loop and placement opportunities.</small></span>
+                      </label>
+                      <Button type="submit" disabled={busy}><Check aria-hidden="true" />{busy ? "Saving…" : "Save profile"}</Button>
+                    </footer>
                   </form>
                 </section>
               </Card>
@@ -5546,27 +5562,47 @@ function CloudView({ library, section, embedded = false, generationHistory = [] 
                   <div className="cloud-activity-list">
                     {cloudActivity.map((activity) => {
                       const createdHere = activity.createdBy.id === cloud.profile?.id
+                      const outsideContributors = activity.contributors.filter((producer) => producer.id !== activity.createdBy.id)
                       const ownedSourceCount = activity.sources.filter((source) => source.sourceOwner.id === cloud.profile?.id).length
                       const localHistoryEntry = generationHistory.find((entry) => entry.cloudRunId === activity.id)
+                      const activityTitle = createdHere
+                        ? `You generated with ${outsideContributors.map((producer) => producer.displayName).join(", ") || "your Cloud library"}`
+                        : ownedSourceCount > 0
+                          ? `${activity.createdBy.displayName} used your shared layers`
+                          : `${activity.createdBy.displayName} generated with ${outsideContributors.map((producer) => producer.displayName).join(", ") || "Cloud layers"}`
                       return (
                         <article className="cloud-activity-row" key={activity.id}>
                           <CloudProfileAvatar profile={activity.createdBy} />
                           <div>
-                            <strong>{createdHere ? `You generated with ${activity.contributors.map((producer) => producer.displayName).join(", ") || "Cloud layers"}` : `${activity.createdBy.displayName} used your shared layers`}</strong>
-                            <small>{new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(activity.createdAt))} · {activity.sources.length} Cloud layers · {activity.targetBpm} BPM · {activity.targetKey}</small>
+                            <strong>{activityTitle}</strong>
+                            <small>{formatCloudActivityDate(activity.createdAt)} · {activity.sources.length} Cloud layers · {activity.targetBpm} BPM · {activity.targetKey}</small>
                             {!createdHere ? <span>{ownedSourceCount} of your layers contributed</span> : null}
                           </div>
                           <Badge variant={localHistoryEntry?.exportedAt ? "success" : "secondary"}>{localHistoryEntry?.exportedAt ? "Exported" : "Generated"}</Badge>
                         </article>
                       )
                     })}
-                    {localOnlyCloudHistory.map((entry) => (
-                      <article className="cloud-activity-row" key={`local-${entry.id}`}>
-                        <CloudProfileAvatar profile={cloud.profile} />
-                        <div><strong>{entry.displayName}</strong><small>This Mac · {entry.layers.filter((layer) => sourceOriginForLayer(layer) === "cloud").length} Cloud layers · {entry.bpm} BPM · {entry.keyName}</small></div>
-                        <Badge variant={entry.exportedAt ? "success" : "secondary"}>{entry.exportedAt ? "Exported" : "Generated"}</Badge>
-                      </article>
-                    ))}
+                    {localOnlyCloudHistory.map((entry) => {
+                      const cloudLayers = entry.layers.filter((layer) => sourceOriginForLayer(layer) === "cloud")
+                      const contributors = uniqueProducerCredits(cloudLayers.flatMap((layer) => provenanceForLayer(layer).producers))
+                        .filter((producer) => producer.toLocaleLowerCase() !== PRIMARY_PRODUCER.toLocaleLowerCase())
+                      const contributorName = contributors.join(", ") || "a connected producer"
+                      const contributorProfile: CloudProfile = {
+                        id: `local-${contributorName}`,
+                        handle: contributorName.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "-") || "cloud",
+                        displayName: contributorName,
+                        aliases: [],
+                        openToCollaborate: false,
+                      }
+                      const savedDate = entry.createdAtIso ? formatCloudActivityDate(entry.createdAtIso) : `Saved at ${entry.createdAt}`
+                      return (
+                        <article className="cloud-activity-row" key={`local-${entry.id}`}>
+                          <CloudProfileAvatar profile={contributorProfile} />
+                          <div><strong>This Mac used Cloud layers from {contributorName}</strong><small>{savedDate} · {cloudLayers.length} Cloud layers · {entry.bpm} BPM · {entry.keyName}</small></div>
+                          <Badge variant={entry.exportedAt ? "success" : "secondary"}>{entry.exportedAt ? "Exported" : "Generated"}</Badge>
+                        </article>
+                      )
+                    })}
                     {cloudActivity.length === 0 && localOnlyCloudHistory.length === 0 ? <p className="cloud-empty-copy">Cloud generation activity will appear here after a shared layer is selected.</p> : null}
                   </div>
                 </CardContent>
@@ -6215,7 +6251,7 @@ export function App() {
       <a className="skip-link" href="#main-content">Aller au contenu principal</a>
       <AppSidebar activeView={activeView} collapsed={sidebarCollapsed} onNavigate={navigateToView} onToggle={() => setSidebarCollapsed((value) => !value)} />
       <div className="app-workspace">
-        <main id="main-content" tabIndex={-1} ref={mainRef} className={cn(activeView === "generate" && "generate-main", activeView === "quick-tools" && "quick-tools-main", activeView === "stem-slicer" && "stem-slicer-main", activeView === "library" && !studioActive && "library-main", activeView === "cloud" && "cloud-main", activeView === "profile" && "profile-main", studioActive && "studio-main")}>
+        <main id="main-content" tabIndex={-1} ref={mainRef} className={cn(activeView === "generate" && "generate-main", activeView === "quick-tools" && "quick-tools-main", activeView === "stem-slicer" && "stem-slicer-main", activeView === "history" && "history-main", activeView === "library" && !studioActive && "library-main", activeView === "cloud" && "cloud-main", activeView === "profile" && "profile-main", studioActive && "studio-main")}>
           <div hidden={activeView !== "stem-slicer"}><StemSlicerView onExtractionCompleted={addExtractionHistory} /></div>
           <div hidden={activeView !== "generate"}><GenerateView library={library} layers={layers} setLayers={setLayers} currentGenerationResult={currentGenerationResult} setCurrentGenerationResult={setCurrentGenerationResult} onAddHistory={addHistory} onUpdateHistory={updateHistory} onMarkCurrentGenerationExported={markCurrentGenerationExported} keyIssues={keyIssues} onReportKeyIssue={reportKeyIssue} onSetKeyIssueActive={updateKeyIssueState} onLibraryRefresh={refreshLibrary} onCategoryCorrectionsRefresh={refreshCategoryCorrections} nextGenerationNumber={nextGenerationNumber} playback={playback} /></div>
           <div hidden={activeView !== "quick-tools"}><QuickToolsView previewLayers={quickPreviewLayers} setPreviewLayers={setQuickPreviewLayers} playback={playback} onActiveToolChange={setActiveQuickTool} onExtractionCompleted={addExtractionHistory} onConvertCompleted={addConvertHistory} /></div>

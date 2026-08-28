@@ -685,12 +685,14 @@ main.studio-main {
   overflow: hidden;
 }
 
+main.history-main,
 main.library-main,
 main.cloud-main,
 main.profile-main {
   overflow: hidden;
 }
 
+main.history-main > :not([hidden]),
 main.library-main > :not([hidden]),
 main.cloud-main > :not([hidden]),
 main.profile-main > :not([hidden]) {
@@ -3450,8 +3452,11 @@ td strong {
 .history-page,
 .library-page {
   display: flex;
-  min-height: 100%;
+  min-height: 0;
+  height: 100%;
   flex-direction: column;
+  overflow: hidden;
+  padding-block-end: 0;
 }
 
 .library-main .library-workspace,
@@ -3593,7 +3598,25 @@ td strong {
 .library-correction-panel,
 .library-cloud-panel {
   display: grid;
+  min-height: 0;
+  flex: 1;
   gap: 12px;
+  overflow: hidden;
+}
+
+.history-panel > .history-list,
+.history-panel > .activity-history-list {
+  min-height: 0;
+  height: 100%;
+  align-content: start;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-inline-end: 3px;
+}
+
+.history-panel > .empty-state {
+  min-height: 0;
+  height: 100%;
 }
 
 .activity-history-list {
@@ -3603,6 +3626,7 @@ td strong {
 
 .activity-history-item > div {
   display: grid;
+  min-height: 60px;
   grid-template-columns: 28px 38px minmax(220px, 1fr) auto minmax(150px, auto) auto;
   align-items: center;
   gap: 12px;
@@ -3728,14 +3752,18 @@ td strong {
 .library-correction-panel > .key-issue-list,
 .library-correction-panel > .category-correction-list {
   min-height: 0;
+  height: 100%;
+  align-content: start;
   max-height: none;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-inline-end: 3px;
 }
 
 .library-cloud-panel {
   min-height: 0;
   flex: 1;
-  overflow-y: auto;
+  overflow: hidden;
 }
 
 .library-selection-toolbar {
@@ -3769,9 +3797,44 @@ td strong {
 }
 
 .library-cloud-panel > .cloud-page.is-embedded {
+  display: flex;
+  min-height: 0;
+  height: 100%;
   width: 100%;
+  flex-direction: column;
   margin: 0;
   padding: 0;
+}
+
+.cloud-page.is-embedded .cloud-grid {
+  min-height: 0;
+  flex: 1;
+}
+
+.cloud-page.is-embedded .cloud-grid > .cloud-panel,
+.cloud-page.is-embedded .cloud-grid > .cloud-panel > [data-slot="card-content"] {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.cloud-page.is-embedded .cloud-grid > .cloud-panel {
+  height: 100%;
+  overflow: hidden;
+}
+
+.cloud-page.is-embedded .cloud-grid > .cloud-panel > [data-slot="card-content"] {
+  flex: 1;
+}
+
+.cloud-page.is-embedded .cloud-library-list,
+.cloud-page.is-embedded .cloud-shared-grid {
+  min-height: 0;
+  flex: 1;
+  align-content: start;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-inline-end: 3px;
 }
 
 .cloud-page.is-embedded > *:first-child {
@@ -3837,10 +3900,11 @@ td strong {
 
 .category-correction-item > div {
   display: grid;
+  min-height: 62px;
   grid-template-columns: auto minmax(150px, 1fr) auto auto auto;
   align-items: center;
   gap: 9px;
-  padding: 6px 8px;
+  padding: 8px 10px;
 }
 
 .category-correction-icon {
@@ -4039,10 +4103,11 @@ td strong {
 
 .key-issue-item > div {
   display: grid;
+  min-height: 62px;
   grid-template-columns: auto minmax(190px, 1fr) auto auto;
   align-items: center;
   gap: 8px;
-  padding: 6px 8px;
+  padding: 8px 10px;
 }
 
 .key-issue-icon {
@@ -4176,10 +4241,16 @@ td strong {
 
 .history-item > div {
   display: grid;
+  min-height: 60px;
   grid-template-columns: auto auto minmax(230px, 1fr) minmax(155px, auto) auto;
   align-items: center;
   gap: 12px;
-  padding-block-start: 14px;
+  padding: 11px 12px;
+}
+
+.history-item .history-icon {
+  width: 38px;
+  height: 38px;
 }
 
 .history-item.is-selected {
@@ -4356,6 +4427,7 @@ td strong {
 
 .history-actions button {
   min-width: 0;
+  min-height: 32px;
   padding-inline: 8px;
 }
 
@@ -5934,7 +6006,7 @@ td strong {
 }
 
 .cloud-profile-editor textarea {
-  min-height: 92px;
+  min-height: 78px;
   resize: vertical;
   border: 1px solid var(--input);
   border-radius: 8px;
@@ -5944,6 +6016,10 @@ td strong {
   font: inherit;
   font-size: 12px;
   line-height: 1.5;
+}
+
+.cloud-profile-editor .cloud-form {
+  gap: 10px;
 }
 
 .cloud-profile-editor textarea:focus-visible {
@@ -5968,6 +6044,23 @@ td strong {
   background: rgb(90 151 4 / 0.055);
   padding: 9px 11px;
   cursor: pointer;
+}
+
+.cloud-profile-form-footer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.cloud-profile-form-footer .cloud-opportunity-toggle {
+  min-height: 44px;
+  padding-block: 7px;
+}
+
+.cloud-profile-form-footer > button {
+  min-height: 44px;
+  align-self: stretch;
 }
 
 .cloud-opportunity-toggle input {
@@ -6006,12 +6099,18 @@ td strong {
   height: 100%;
   flex-direction: column;
   overflow: hidden;
-  padding-block-end: clamp(16px, 2vw, 24px);
+  padding-block-end: 0;
 }
 
 .cloud-main .cloud-page > .page-header,
 .profile-main .cloud-page > .page-header {
   flex: 0 0 auto;
+}
+
+.cloud-main .cloud-page > .cloud-hero,
+.profile-main .cloud-page > .cloud-hero {
+  min-height: 0;
+  flex: 1;
 }
 
 .cloud-network-grid {
@@ -6342,7 +6441,7 @@ td strong {
 .cloud-library-toolbar {
   display: grid;
   min-height: 38px;
-  grid-template-columns: 38px minmax(0, 1fr) 34px auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   column-gap: 11px;
   margin-block-end: 9px;
@@ -6367,12 +6466,12 @@ td strong {
 }
 
 .cloud-library-sort-control {
-  grid-column: 2;
+  grid-column: 1;
   justify-self: start;
 }
 
 .cloud-select-all-control {
-  grid-column: 4;
+  grid-column: 2;
   justify-self: end;
   margin-inline-end: -5px;
   padding-inline: 9px 5px !important;
@@ -6578,8 +6677,13 @@ td strong {
 @media (max-width: 760px) {
   .cloud-section-nav,
   .cloud-profile-stats,
-  .cloud-form-pair {
+  .cloud-form-pair,
+  .cloud-profile-form-footer {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cloud-profile-form-footer > button {
+    justify-self: end;
   }
 
   .cloud-profile-identity {
