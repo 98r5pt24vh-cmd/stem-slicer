@@ -75,6 +75,7 @@ describe("Cloud producer profiles", () => {
 
   it("deduplicates aliases without losing their display spelling", () => {
     expect(normalizeAliases(["Tnex is R", " tnex   is   r ", "XT"])).toEqual(["Tnex is R", "XT"])
+    expect(normalizeAliases(["+NRGY", "NRGY", "+nrgy"])).toEqual(["+NRGY", "NRGY"])
   })
 
   it("maps an owner's aliases back to the canonical Cloud identity", () => {

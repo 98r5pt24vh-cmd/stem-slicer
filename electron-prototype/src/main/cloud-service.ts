@@ -480,7 +480,6 @@ export class CloudService {
     const bio = request.bio.trim().replace(/\s+/g, " ")
     const instagramHandle = normalizeInstagramHandle(request.instagramHandle)
     const aliases = normalizeAliases(request.aliases)
-      .filter((alias) => alias.toLocaleLowerCase() !== displayName.toLocaleLowerCase())
 
     assertValidCloudHandle(handle)
     if (!displayName || displayName.length > 64) throw new Error("Use a producer name between 1 and 64 characters.")
