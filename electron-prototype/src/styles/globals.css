@@ -5435,7 +5435,7 @@ td strong {
   padding: 10px;
 }
 
-.cloud-avatar-editor > span,
+.cloud-avatar-editor > span:not(.cloud-profile-mark),
 .cloud-avatar-editor strong,
 .cloud-avatar-editor small {
   display: block;
