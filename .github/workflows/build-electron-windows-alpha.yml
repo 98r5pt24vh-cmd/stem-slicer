@@ -28,7 +28,8 @@ jobs:
         shell: pwsh
         run: |
           git status --short
-          if (-not (git diff --quiet)) { throw "The checkout is not clean." }
+          git diff --quiet
+          if ($LASTEXITCODE -ne 0) { throw "The checkout is not clean." }
           git rev-parse HEAD | Set-Content electron-prototype/build-revision.txt
 
       - name: Set up Node.js 24 and pnpm 11.19.0
