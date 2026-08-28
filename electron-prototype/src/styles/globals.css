@@ -5723,6 +5723,7 @@ td strong {
   align-content: center;
   justify-items: start;
   gap: 4px;
+  transform: translateY(-2px);
 }
 
 .cloud-owner-library-copy > strong {
