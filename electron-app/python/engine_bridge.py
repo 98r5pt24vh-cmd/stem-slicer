@@ -395,7 +395,8 @@ def _load_generation_catalog(
     if cached is not None and cached["snapshot"] == snapshot:
         return cached, True
 
-    with sqlite3.connect(f"file:{database}?mode=ro", uri=True) as connection:
+    connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True)
+    try:
         connection.row_factory = sqlite3.Row
         columns = {
             str(row["name"])
@@ -412,6 +413,12 @@ def _load_generation_catalog(
         if conditions:
             query += " WHERE " + " AND ".join(conditions)
         records = [dict(row) for row in connection.execute(query, parameters)]
+    finally:
+        # sqlite3.Connection.__exit__ only commits or rolls back; it does not
+        # close the handle. Windows consequently keeps the catalogue locked
+        # until garbage collection, which prevents temporary workspaces and
+        # real library databases from being moved or replaced predictably.
+        connection.close()
     records = _filter_records_by_allowed_producers(
         records,
         allowed_producers=allowed_producers,

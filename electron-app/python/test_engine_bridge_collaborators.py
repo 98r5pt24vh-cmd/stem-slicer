@@ -297,7 +297,8 @@ class GenerationCatalogCacheTests(unittest.TestCase):
             database = root_path / "library.sqlite3"
             first_audio = root_path / "first.mp3"
             first_audio.write_bytes(b"audio")
-            with sqlite3.connect(database) as connection:
+            connection = sqlite3.connect(database)
+            try:
                 connection.execute(
                     "CREATE TABLE layer_cache (path TEXT, library_root TEXT, manual_excluded INTEGER)"
                 )
@@ -305,18 +306,38 @@ class GenerationCatalogCacheTests(unittest.TestCase):
                     "INSERT INTO layer_cache VALUES (?, ?, 0)",
                     (str(first_audio), str(root_path)),
                 )
+                connection.commit()
+            finally:
+                connection.close()
+
+            opened_connections = []
+            real_connect = sqlite3.connect
+
+            class TrackingConnection(sqlite3.Connection):
+                closed = False
+
+                def close(self) -> None:
+                    self.closed = True
+                    super().close()
+
+            def tracking_connect(*args, **kwargs):
+                kwargs["factory"] = TrackingConnection
+                connection = real_connect(*args, **kwargs)
+                opened_connections.append(connection)
+                return connection
 
             bridge._invalidate_generation_catalog(database)
-            first, first_cached = bridge._load_generation_catalog(
-                database,
-                [str(root_path)],
-                self.FakeCandidate,
-            )
-            second, second_cached = bridge._load_generation_catalog(
-                database,
-                [str(root_path)],
-                self.FakeCandidate,
-            )
+            with patch.object(bridge.sqlite3, "connect", side_effect=tracking_connect):
+                first, first_cached = bridge._load_generation_catalog(
+                    database,
+                    [str(root_path)],
+                    self.FakeCandidate,
+                )
+                second, second_cached = bridge._load_generation_catalog(
+                    database,
+                    [str(root_path)],
+                    self.FakeCandidate,
+                )
 
             self.assertFalse(first_cached)
             self.assertTrue(second_cached)
@@ -324,19 +345,26 @@ class GenerationCatalogCacheTests(unittest.TestCase):
 
             second_audio = root_path / "second.mp3"
             second_audio.write_bytes(b"audio")
-            with sqlite3.connect(database) as connection:
+            connection = sqlite3.connect(database)
+            try:
                 connection.execute(
                     "INSERT INTO layer_cache VALUES (?, ?, 0)",
                     (str(second_audio), str(root_path)),
                 )
+                connection.commit()
+            finally:
+                connection.close()
 
-            refreshed, refreshed_cached = bridge._load_generation_catalog(
-                database,
-                [str(root_path)],
-                self.FakeCandidate,
-            )
+            with patch.object(bridge.sqlite3, "connect", side_effect=tracking_connect):
+                refreshed, refreshed_cached = bridge._load_generation_catalog(
+                    database,
+                    [str(root_path)],
+                    self.FakeCandidate,
+                )
             self.assertFalse(refreshed_cached)
             self.assertEqual(len(refreshed["candidates_by_path"]), 2)
+            self.assertTrue(opened_connections)
+            self.assertTrue(all(connection.closed for connection in opened_connections))
             bridge._invalidate_generation_catalog(database)
 
 
