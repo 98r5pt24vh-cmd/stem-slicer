@@ -574,7 +574,7 @@ export interface AudioJobEvent {
 
 export type EngineState = "idle" | "starting" | "ready" | "failed" | "unavailable"
 
-export type EngineComponentState = EngineState | "on-demand"
+export type EngineComponentState = EngineState
 
 export interface EngineComponentStatus {
   state: EngineComponentState

@@ -1,6 +1,7 @@
-import { useId, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { memo, useId, useLayoutEffect, useMemo, useRef, useState } from "react"
 
 import { cn } from "@/lib/utils"
+import { clampPlaybackProgress, type PlaybackProgressSource } from "@/lib/playback-progress"
 import { downsampleWaveformPeaks, waveformBarCapacity } from "@/lib/waveform"
 
 const DEFAULT_BARS = [
@@ -10,13 +11,15 @@ const DEFAULT_BARS = [
 ]
 
 interface WaveformProps {
-  progress: number
+  progress?: number
+  progressSource?: PlaybackProgressSource
+  progressActive?: boolean
   label: string
   compact?: boolean
   bars?: number[]
 }
 
-function WaveBars({ className, bars }: { className?: string; bars: number[] }) {
+const WaveBars = memo(function WaveBars({ className, bars }: { className?: string; bars: number[] }) {
   return (
     <div className={cn("wave-bars", className)} aria-hidden="true">
       {bars.map((height, index) => (
@@ -24,32 +27,67 @@ function WaveBars({ className, bars }: { className?: string; bars: number[] }) {
       ))}
     </div>
   )
-}
+})
 
 export function Waveform({
-  progress,
+  progress = 0,
+  progressSource,
+  progressActive = true,
   label,
   compact = false,
   bars = DEFAULT_BARS,
 }: WaveformProps) {
   const descriptionId = useId()
   const waveformRef = useRef<HTMLDivElement>(null)
+  const progressRef = useRef<HTMLDivElement>(null)
+  const playheadRef = useRef<HTMLSpanElement>(null)
+  const descriptionRef = useRef<HTMLSpanElement>(null)
+  const waveformWidthRef = useRef(0)
+  const lastAccessiblePercentRef = useRef(-1)
   const [visibleBarCount, setVisibleBarCount] = useState(bars.length)
-  const clampedProgress = Math.max(0, Math.min(progress, 1))
   const visibleBars = useMemo(
     () => downsampleWaveformPeaks(bars, visibleBarCount),
     [bars, visibleBarCount],
   )
 
   useLayoutEffect(() => {
+    const applyProgress = () => {
+      const nextProgress = progressActive
+        ? clampPlaybackProgress(progressSource?.getProgress() ?? progress)
+        : 0
+      if (progressRef.current) {
+        progressRef.current.style.clipPath = `inset(0 ${100 - nextProgress * 100}% 0 0)`
+      }
+      if (playheadRef.current) {
+        playheadRef.current.style.transform = `translate3d(${nextProgress * waveformWidthRef.current - 0.5}px, 0, 0)`
+      }
+      const accessiblePercent = Math.round(nextProgress * 100)
+      if (descriptionRef.current && accessiblePercent !== lastAccessiblePercentRef.current) {
+        descriptionRef.current.textContent = `${label}, lecture à ${accessiblePercent} pour cent`
+        lastAccessiblePercentRef.current = accessiblePercent
+      }
+    }
+
+    applyProgress()
+    return progressSource?.subscribe(applyProgress)
+  }, [label, progress, progressActive, progressSource])
+
+  useLayoutEffect(() => {
     const waveform = waveformRef.current
     if (!waveform) return
 
     const updateCapacity = (width: number) => {
+      waveformWidthRef.current = width
       const nextCount = waveformBarCapacity(width, bars.length)
       setVisibleBarCount((currentCount) =>
         currentCount === nextCount ? currentCount : nextCount,
       )
+      const nextProgress = progressActive
+        ? clampPlaybackProgress(progressSource?.getProgress() ?? progress)
+        : 0
+      if (playheadRef.current) {
+        playheadRef.current.style.transform = `translate3d(${nextProgress * width - 0.5}px, 0, 0)`
+      }
     }
 
     updateCapacity(waveform.getBoundingClientRect().width)
@@ -61,7 +99,7 @@ export function Waveform({
     resizeObserver.observe(waveform)
 
     return () => resizeObserver.disconnect()
-  }, [bars.length])
+  }, [bars.length, progress, progressActive, progressSource])
 
   return (
     <div
@@ -70,19 +108,17 @@ export function Waveform({
       role="img"
       aria-labelledby={descriptionId}
     >
-      <span id={descriptionId} className="sr-only">
-        {label}, lecture à {Math.round(clampedProgress * 100)} pour cent
-      </span>
+      <span ref={descriptionRef} id={descriptionId} className="sr-only" />
       <WaveBars bars={visibleBars} className="text-wave-idle" />
       <div
+        ref={progressRef}
         className="wave-progress"
-        style={{ clipPath: `inset(0 ${100 - clampedProgress * 100}% 0 0)` }}
       >
         <WaveBars bars={visibleBars} className="text-success" />
       </div>
       <span
+        ref={playheadRef}
         className="wave-playhead"
-        style={{ insetInlineStart: `${clampedProgress * 100}%` }}
         aria-hidden="true"
       />
     </div>

@@ -5,6 +5,7 @@ import {
   AudioLines,
   Archive,
   AlertTriangle,
+  ArrowRightLeft,
   ArrowDownWideNarrow,
   ArrowUpNarrowWide,
   Check,
@@ -71,6 +72,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { basename, cn, extractionFolderNameForSource, formatCount, formatDecimalBytes, joinPath, outputFolderNameError } from "@/lib/utils"
 import { GENERATE_CATEGORY_OPTIONS, mergeGenerateCategories } from "@/lib/generate-categories"
+import { createPlaybackProgressStore, type PlaybackProgressSource, type PlaybackProgressStore } from "@/lib/playback-progress"
 import {
   parseConvertHistory,
   parseExtractionHistory,
@@ -217,7 +219,7 @@ function SourceOriginIcon({ origin }: { origin: "local" | "cloud" }) {
 }
 
 type SlicerToolId = "slicer" | "extract" | "scan" | "convert"
-type PlaybackContext = "generate" | "quick-extract" | "history"
+type PlaybackContext = "generate" | "quick-extract" | "quick-convert" | "history"
 
 const NAVIGATION: NavItem[] = [
   { id: "stem-slicer", label: "Slicer", icon: Layers3 },
@@ -921,7 +923,6 @@ type PlaybackMode = "idle" | "solo" | "mix"
 
 function usePlaybackClock(layers: GeneratedLayer[], stackPlayback: boolean) {
   const [playing, setPlaying] = useState(false)
-  const [progress, setProgress] = useState(0)
   const [masterVolume, setMasterVolume] = useState(78)
   const [error, setError] = useState("")
   const [mode, setMode] = useState<PlaybackMode>(stackPlayback ? "mix" : "idle")
@@ -942,6 +943,10 @@ function usePlaybackClock(layers: GeneratedLayer[], stackPlayback: boolean) {
   const mutedIdsRef = useRef(new Set<string>())
   const syncSoloIdRef = useRef<string | null>(null)
   const playingRef = useRef(false)
+  const progressStoreRef = useRef<PlaybackProgressStore | null>(null)
+  if (!progressStoreRef.current) progressStoreRef.current = createPlaybackProgressStore()
+  const progressSource = progressStoreRef.current
+  const setProgress = progressSource.setProgress
   const positionRef = useRef(0)
   const startedAtRef = useRef(0)
   const startedOffsetSecondsRef = useRef(0)
@@ -1118,7 +1123,7 @@ function usePlaybackClock(layers: GeneratedLayer[], stackPlayback: boolean) {
     commitSyncSoloId(null)
     commitLastSoloId(null)
     commitMode(stackPlayback ? "mix" : "idle", null)
-  }, [commitLastSoloId, commitMode, commitMutedIds, commitPlaying, commitSyncEnabled, commitSyncSoloId, stackPlayback])
+  }, [commitLastSoloId, commitMode, commitMutedIds, commitPlaying, commitSyncEnabled, commitSyncSoloId, setProgress, stackPlayback])
 
   useEffect(() => () => {
     void engineRef.current?.close()
@@ -1161,7 +1166,7 @@ function usePlaybackClock(layers: GeneratedLayer[], stackPlayback: boolean) {
       setError(playError instanceof Error ? playError.message : "Audio playback failed.")
       return false
     }
-  }, [commitPlaying])
+  }, [commitPlaying, setProgress])
 
   const pausePlayback = useCallback(() => {
     const nextProgress = getCurrentProgress()
@@ -1170,7 +1175,7 @@ function usePlaybackClock(layers: GeneratedLayer[], stackPlayback: boolean) {
     positionRef.current = nextProgress
     setProgress(nextProgress)
     commitPlaying(false)
-  }, [commitPlaying, getCurrentProgress])
+  }, [commitPlaying, getCurrentProgress, setProgress])
 
   useEffect(() => {
     let frame = 0
@@ -1199,7 +1204,7 @@ function usePlaybackClock(layers: GeneratedLayer[], stackPlayback: boolean) {
     }
     frame = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(frame)
-  }, [commitPlaying, getCurrentProgress])
+  }, [commitPlaying, getCurrentProgress, setProgress])
 
   const toggleMix = useCallback(async () => {
     if (!syncEnabledRef.current) return
@@ -1225,7 +1230,7 @@ function usePlaybackClock(layers: GeneratedLayer[], stackPlayback: boolean) {
       return
     }
     await startPlayback(activeIds, startingMix ? 0 : positionRef.current)
-  }, [commitMode, commitMutedIds, commitSyncSoloId, pausePlayback, startPlayback])
+  }, [commitMode, commitMutedIds, commitSyncSoloId, pausePlayback, setProgress, startPlayback])
 
   const toggleLayer = useCallback(async (id: string) => {
     if (!playableIdsRef.current.includes(id)) {
@@ -1260,7 +1265,7 @@ function usePlaybackClock(layers: GeneratedLayer[], stackPlayback: boolean) {
     commitMode("solo", id)
     commitMutedIds(new Set())
     await startPlayback([id], 0)
-  }, [commitLastSoloId, commitMode, commitMutedIds, commitSyncSoloId, pausePlayback, startPlayback])
+  }, [commitLastSoloId, commitMode, commitMutedIds, commitSyncSoloId, pausePlayback, setProgress, startPlayback])
 
   const toggleSynchronizedSolo = useCallback(async (id: string) => {
     if (!playableIdsRef.current.includes(id)) {
@@ -1293,7 +1298,7 @@ function usePlaybackClock(layers: GeneratedLayer[], stackPlayback: boolean) {
     commitSyncSoloId(id)
     commitMutedIds(nextMutedIds)
     if (shouldResume) await startPlayback(playableIdsRef.current, nextProgress)
-  }, [commitMode, commitMutedIds, commitPlaying, commitSyncEnabled, commitSyncSoloId, getCurrentProgress, startPlayback])
+  }, [commitMode, commitMutedIds, commitPlaying, commitSyncEnabled, commitSyncSoloId, getCurrentProgress, setProgress, startPlayback])
 
   const setLayerMuted = useCallback((id: string, muted: boolean) => {
     if (!playableIdsRef.current.includes(id)) return
@@ -1334,7 +1339,7 @@ function usePlaybackClock(layers: GeneratedLayer[], stackPlayback: boolean) {
     positionRef.current = 0
     setProgress(0)
     commitPlaying(false)
-  }, [commitPlaying])
+  }, [commitPlaying, setProgress])
 
   const toggleLoopMode = useCallback(async () => {
     const nextEnabled = !loopEnabledRef.current
@@ -1369,7 +1374,7 @@ function usePlaybackClock(layers: GeneratedLayer[], stackPlayback: boolean) {
     commitSyncSoloId(null)
     commitLastSoloId(null)
     commitMode(stackPlayback ? "mix" : "idle", null)
-  }, [commitLastSoloId, commitLoopEnabled, commitMode, commitMutedIds, commitPlaying, commitSyncEnabled, commitSyncSoloId, stackPlayback])
+  }, [commitLastSoloId, commitLoopEnabled, commitMode, commitMutedIds, commitPlaying, commitSyncEnabled, commitSyncSoloId, setProgress, stackPlayback])
 
   const beginScrub = useCallback((id: string) => {
     scrubSessionRef.current += 1
@@ -1389,14 +1394,14 @@ function usePlaybackClock(layers: GeneratedLayer[], stackPlayback: boolean) {
       commitLastSoloId(id)
       commitMutedIds(new Set())
     }
-  }, [commitLastSoloId, commitMode, commitMutedIds, commitPlaying, getCurrentProgress])
+  }, [commitLastSoloId, commitMode, commitMutedIds, commitPlaying, getCurrentProgress, setProgress])
 
   const previewScrub = useCallback((id: string, nextProgress: number) => {
     const clampedProgress = Math.max(0, Math.min(nextProgress, 1))
     scrubTargetRef.current = { id, progress: clampedProgress }
     positionRef.current = clampedProgress
     setProgress(clampedProgress)
-  }, [])
+  }, [setProgress])
 
   const endScrub = useCallback(async () => {
     if (!scrubbingRef.current || scrubEndingRef.current) return
@@ -1426,12 +1431,12 @@ function usePlaybackClock(layers: GeneratedLayer[], stackPlayback: boolean) {
     }
 
     await startPlayback(activeIds, target?.progress ?? positionRef.current)
-  }, [commitPlaying, startPlayback])
+  }, [commitPlaying, setProgress, startPlayback])
 
   const mutedIdSet = useMemo(() => new Set(mutedIds), [mutedIds])
   return useMemo(() => ({
     playing,
-    progress,
+    progressSource,
     mode,
     soloId,
     lastSoloId,
@@ -1464,7 +1469,7 @@ function usePlaybackClock(layers: GeneratedLayer[], stackPlayback: boolean) {
     mutedIdSet,
     playing,
     previewScrub,
-    progress,
+    progressSource,
     reset,
     setLayerMuted,
     soloId,
@@ -1599,69 +1604,70 @@ function useAudioJob(kind: AudioJobKind) {
   return { ...state, start, cancel }
 }
 
-function AudioArtifactCard({ artifact, compact = false }: { artifact: AudioArtifact; compact?: boolean }) {
-  const audioRef = useRef<HTMLAudioElement>(null)
-  const [playing, setPlaying] = useState(false)
-  const [progress, setProgress] = useState(0)
-  const [playbackError, setPlaybackError] = useState("")
-  const mediaUrl = window.stemSlicer?.mediaUrl(artifact.path) ?? ""
-
-  const togglePlayback = async () => {
-    const audio = audioRef.current
-    if (!audio) return
-    if (!audio.paused) {
-      audio.pause()
-      return
-    }
-    setPlaybackError("")
-    try {
-      await audio.play()
-    } catch (error) {
-      setPlaybackError(error instanceof Error ? error.message : "Audio playback failed.")
-    }
-  }
-
+function AudioArtifactCard({ artifact, layer, playback }: { artifact: AudioArtifact; layer: GeneratedLayer; playback: PlaybackClock }) {
+  const isCurrent = playback.mode === "solo" && playback.soloId === layer.id
+  const playing = playback.playing && isCurrent
+  const { scrubberRef, clockRef } = usePlaybackProgressElements(playback.progressSource, isCurrent, artifact.duration)
   const beginDrag = (event: React.DragEvent, path: string) => {
     event.preventDefault()
     window.stemSlicer?.startFileDrag(path)
   }
+  const seekWaveformFromPointer = (event: React.PointerEvent<HTMLDivElement>) => {
+    const bounds = event.currentTarget.getBoundingClientRect()
+    if (bounds.width <= 0) return
+    playback.previewScrub(layer.id, (event.clientX - bounds.left) / bounds.width)
+  }
 
   return (
-    <article className={cn("audio-artifact-card", compact && "is-compact")}>
-      <audio
-        ref={audioRef}
-        src={mediaUrl}
-        preload="auto"
-        onPlay={() => setPlaying(true)}
-        onPause={() => setPlaying(false)}
-        onError={() => setPlaybackError(`Audio file could not be loaded: ${artifact.name}`)}
-        onEnded={() => { setPlaying(false); setProgress(0) }}
-        onTimeUpdate={(event) => {
-          const audio = event.currentTarget
-          setProgress(audio.duration > 0 ? audio.currentTime / audio.duration : 0)
-        }}
-      />
-      <div className="audio-artifact-main">
-        <header title={playbackError || undefined}>
-          <div>
-            <strong title={artifact.name}>{artifact.displayName}</strong>
-            {playbackError ? <small>{playbackError}</small> : <div className="artifact-metadata">
-              <span><MetronomeIcon /> {artifact.bpm} BPM</span>
-              <span><Music2 aria-hidden="true" /> {artifact.key}</span>
-            </div>}
-          </div>
-          <span className="artifact-duration">{artifact.duration.toFixed(1)}s</span>
-        </header>
-        <div className="artifact-wave-row">
-          <button type="button" onClick={togglePlayback} aria-label={playing ? `Pause ${artifact.displayName}` : `Play ${artifact.displayName}`}>{playing ? <Pause aria-hidden="true" /> : <Play className="play-glyph" aria-hidden="true" />}</button>
-          <Waveform progress={progress} compact label={`Waveform for ${artifact.displayName}`} bars={artifact.peaks.map((value) => Math.max(8, value * 100))} />
+    <Card className={cn("layer-card layer-tone-convert convert-artifact-card", isCurrent && "is-audible")} title={playback.error || undefined}>
+      <CardHeader>
+        <div className="layer-heading">
+          <CardTitle className="layer-category-static convert-category"><ArrowRightLeft aria-hidden="true" />Converted</CardTitle>
+          <CardDescription className="truncate" title={artifact.name}>{artifact.displayName}</CardDescription>
         </div>
-      </div>
-      <div className="artifact-side-actions">
-        <button type="button" draggable onDragStart={(event) => beginDrag(event, artifact.path)}><AudioLines aria-hidden="true" />Audio</button>
-        <button type="button" onClick={() => void window.stemSlicer?.revealPath(artifact.path)}><FolderOpen aria-hidden="true" />Location</button>
-      </div>
-    </article>
+        <div className="convert-card-actions">
+          <button type="button" className="layer-mini-action" draggable onDragStart={(event) => beginDrag(event, artifact.path)}><AudioLines aria-hidden="true" /><span>Audio</span></button>
+          <button type="button" className="layer-mini-action location-button" onClick={() => void window.stemSlicer?.revealPath(artifact.path)}><FolderOpen aria-hidden="true" /><span>Location</span></button>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <div className="layer-transport">
+          <button className="card-play-button" type="button" onClick={() => void playback.toggleLayer(layer.id)} aria-pressed={playing} aria-label={playing ? `Pause ${artifact.displayName}` : `Play ${artifact.displayName}`}>{playing ? <Pause aria-hidden="true" /> : <Play className="play-glyph" aria-hidden="true" />}</button>
+          <div
+            className="waveform-reader"
+            onPointerDown={(event) => {
+              if (event.button !== 0) return
+              event.preventDefault()
+              scrubberRef.current?.focus({ preventScroll: true })
+              playback.beginScrub(layer.id)
+              event.currentTarget.setPointerCapture(event.pointerId)
+              seekWaveformFromPointer(event)
+            }}
+            onPointerMove={(event) => {
+              if (event.currentTarget.hasPointerCapture(event.pointerId)) seekWaveformFromPointer(event)
+            }}
+            onPointerUp={(event) => {
+              if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
+              event.currentTarget.releasePointerCapture(event.pointerId)
+              void playback.endScrub()
+            }}
+            onPointerCancel={(event) => {
+              if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+              void playback.endScrub()
+            }}
+          >
+            <Waveform progressSource={playback.progressSource} progressActive={isCurrent} label={`Waveform for ${artifact.displayName}`} bars={layer.bars} />
+            <input ref={scrubberRef} className="waveform-scrubber" type="range" min="0" max="1000" defaultValue="0" aria-label={`Playback position for ${artifact.displayName}`} tabIndex={-1} onChange={(event) => playback.previewScrub(layer.id, Number(event.target.value) / 1000)} />
+            <span ref={clockRef} className="wave-time tabular" aria-hidden="true">0.0 / {artifact.duration.toFixed(1)} s</span>
+            <span className="wave-musical-info">
+              <span className="wave-bpm tabular"><MetronomeIcon /> {artifact.bpm} BPM</span>
+              <span className="wave-key"><Music2 aria-hidden="true" /> {artifact.key}</span>
+            </span>
+          </div>
+        </div>
+        {playback.error ? <p className="convert-playback-error" role="alert">{playback.error}</p> : null}
+      </CardContent>
+    </Card>
   )
 }
 
@@ -1911,7 +1917,6 @@ function AppSidebar({
     idle: "Waiting",
     starting: "Starting…",
     ready: "Ready",
-    "on-demand": "On demand",
     failed: "Unavailable",
     unavailable: "Unavailable",
   })[state]
@@ -2200,10 +2205,37 @@ function WrongLayerAction({
   )
 }
 
+function usePlaybackProgressElements(
+  progressSource: PlaybackProgressSource,
+  progressActive: boolean,
+  duration: number,
+) {
+  const scrubberRef = useRef<HTMLInputElement>(null)
+  const clockRef = useRef<HTMLSpanElement>(null)
+  const lastClockTextRef = useRef("")
+
+  useEffect(() => {
+    const applyProgress = () => {
+      const progress = progressActive ? progressSource.getProgress() : 0
+      if (scrubberRef.current) scrubberRef.current.value = String(Math.round(progress * 1000))
+      const clockText = `${(progress * duration).toFixed(1)} / ${duration.toFixed(1)} s`
+      if (clockRef.current && clockText !== lastClockTextRef.current) {
+        clockRef.current.textContent = clockText
+        lastClockTextRef.current = clockText
+      }
+    }
+
+    applyProgress()
+    return progressSource.subscribe(applyProgress)
+  }, [duration, progressActive, progressSource])
+
+  return { scrubberRef, clockRef }
+}
+
 function LayerCard({
   layer,
   primaryProducer = PRIMARY_PRODUCER,
-  progress,
+  progressSource,
   playing,
   isAudible,
   mixActive,
@@ -2229,7 +2261,7 @@ function LayerCard({
 }: {
   layer: GeneratedLayer
   primaryProducer?: string
-  progress: number
+  progressSource: PlaybackProgressSource
   playing: boolean
   isAudible: boolean
   mixActive: boolean
@@ -2253,13 +2285,17 @@ function LayerCard({
   libraryIssueType?: LibraryIssueType
   variant?: "generate" | "extract"
 }) {
-  const waveformScrubberRef = useRef<HTMLInputElement>(null)
   const isGenerateCard = variant === "generate"
   const provenance = layer.identity
     ? provenanceForLayer(layer, primaryProducer)
     : { loopName: "Ready to generate", producers: [primaryProducer] }
   const sourceOrigin = layer.identity || layer.sourcePath ? sourceOriginForLayer(layer) : null
-  const visibleProgress = mixActive || isAudible ? progress : 0
+  const progressActive = mixActive || isAudible
+  const { scrubberRef: waveformScrubberRef, clockRef: waveformClockRef } = usePlaybackProgressElements(
+    progressSource,
+    progressActive,
+    layer.duration,
+  )
   const seekWaveformFromPointer = (event: React.PointerEvent<HTMLDivElement>) => {
     const bounds = event.currentTarget.getBoundingClientRect()
     if (bounds.width <= 0) return
@@ -2357,7 +2393,8 @@ function LayerCard({
             }}
           >
             <Waveform
-              progress={visibleProgress}
+              progressSource={progressSource}
+              progressActive={progressActive}
               label={`Forme d’onde de ${layer.role}`}
               bars={layer.bars}
             />
@@ -2367,14 +2404,12 @@ function LayerCard({
               type="range"
               min="0"
               max="1000"
-              value={Math.round(visibleProgress * 1000)}
+              defaultValue="0"
               aria-label={`Position de lecture de ${layer.role}`}
               tabIndex={-1}
               onChange={(event) => onSeek(Number(event.target.value) / 1000)}
             />
-            <span className="wave-time tabular" aria-hidden="true">
-              {(visibleProgress * layer.duration).toFixed(1)} / {layer.duration.toFixed(1)} s
-            </span>
+            <span ref={waveformClockRef} className="wave-time tabular" aria-hidden="true">0.0 / {layer.duration.toFixed(1)} s</span>
             <span className="wave-musical-info">
               <span className="wave-bpm tabular"><MetronomeIcon /> {layer.bpm} BPM</span>
               <span className="wave-key"><Music2 aria-hidden="true" /> {layer.keyName}</span>
@@ -3604,7 +3639,7 @@ function GenerateView({
                 key={layer.id}
                 layer={layer}
                 primaryProducer={primaryProducer}
-                progress={playback.progress}
+                progressSource={playback.progressSource}
                 playing={playback.playing}
                 mixActive={mixActive}
                 isMuted={playback.mode === "mix" && playback.mutedIds.has(layer.id)}
@@ -3674,6 +3709,23 @@ function StemSlicerView({ embedded = false, onExtractionCompleted }: { embedded?
   const showOutputNameError = Boolean(sourceFolder && outputNameError)
   const outputFolder = outputRoot && !outputNameError ? joinPath(outputRoot, outputFolderName.trim()) : ""
   const currentBatchResult = batchResult?.outputFolder === outputFolder ? batchResult : null
+  const batchErrorCount = batchJob.busy
+    ? (batchJob.error ? 1 : 0)
+    : currentBatchResult?.failures.length ?? (batchJob.error ? 1 : 0)
+  const batchCompletedSuccessfully = Boolean(
+    currentBatchResult
+    && !batchJob.busy
+    && !batchJob.error
+    && batchJob.percent >= 100
+    && batchErrorCount === 0,
+  )
+  const batchStatusMessage = batchJob.error || (batchJob.busy
+    ? batchJob.message
+    : currentBatchResult
+      ? `${currentBatchResult.outputs.length} audio ${currentBatchResult.outputs.length === 1 ? "file" : "files"} ready`
+      : sourceFolder
+        ? `${basename(sourceFolder)} ready`
+        : "Choose a source folder to begin")
 
   useEffect(() => {
     let active = true
@@ -3822,7 +3874,7 @@ function StemSlicerView({ embedded = false, onExtractionCompleted }: { embedded?
               </label>
               <div className="unified-output-label"><span>Output location</span><small>Destination for extracted layers</small></div>
               <div className="unified-output-path"><FolderOpen aria-hidden="true" /><strong title={outputFolder || outputRoot}>{outputFolder || outputRoot || "Loading default location…"}</strong></div>
-              <div className="unified-output-actions"><Button variant="outline" size="sm" onClick={pickOutputRoot}>Change location</Button><Button variant="outline" size="sm" disabled={!outputRoot} onClick={() => void window.stemSlicer?.revealPath(outputRoot)}>Location</Button></div>
+              <div className="unified-output-actions"><Button variant="outline" size="sm" onClick={pickOutputRoot}>Change location</Button><Button className="location-button" variant="outline" size="sm" disabled={!outputRoot} onClick={() => void window.stemSlicer?.revealPath(outputRoot)}><FolderOpen aria-hidden="true" />Location</Button></div>
               <div className="unified-operation-note"><span>Input</span><strong>{sourceFolder ? basename(sourceFolder) : "Waiting for source"}</strong></div>
             </div>
           </section>
@@ -3888,22 +3940,32 @@ function StemSlicerView({ embedded = false, onExtractionCompleted }: { embedded?
           </section>
           </div>
 
-          <div className="batch-process-bar" aria-label="Batch process status">
-            <div className="batch-process-copy" role="status"><span>Process status</span><strong>{batchJob.error || (batchJob.busy ? batchJob.message : batchResult ? `${batchResult.outputs.length} outputs ready` : sourceFolder ? `${basename(sourceFolder)} ready` : "Choose a source folder to begin")}</strong></div>
-            <div className="batch-progress" role="progressbar" aria-label="Batch progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={batchJob.percent}><span style={{ width: `${batchJob.percent}%` }} /></div>
-            <div className="batch-process-stats"><span>{batchResult?.files ?? batchJob.total ?? 0} files</span><span>{batchJob.percent}%</span><span>{batchResult?.failures.length ?? (batchJob.error ? 1 : 0)} errors</span></div>
+          <div className="batch-process-bar" aria-labelledby="batch-process-status-heading">
+            <div className="batch-process-copy">
+              <h3 id="batch-process-status-heading">Process status</h3>
+            </div>
+            <div className="batch-process-progress">
+              <div className="batch-process-stats">
+                <span role="status" title={batchStatusMessage}>{batchStatusMessage}</span>
+                <span className="batch-process-result">
+                  {batchCompletedSuccessfully ? <Check className="batch-process-complete" aria-hidden="true" /> : null}
+                  {batchJob.percent}% · {batchErrorCount} {batchErrorCount === 1 ? "error" : "errors"}
+                </span>
+              </div>
+              <div className="batch-progress" role="progressbar" aria-label="Batch progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={batchJob.percent} aria-valuetext={`${batchJob.percent}% complete`}><span style={{ transform: `scaleX(${Math.max(0, Math.min(batchJob.percent, 100)) / 100})` }} /></div>
+            </div>
             <div className="batch-process-actions">
-              <Button className="hardware-button" onClick={processBatch} disabled={!batchJob.busy && (!sourceFolder || !outputFolder || enabledOperationCount === 0)}>{batchJob.busy ? "Cancel" : "Process loops"}</Button>
+              <Button className="hardware-button" aria-label={batchJob.busy ? "Cancel batch processing" : "Start batch processing"} onClick={processBatch} disabled={!batchJob.busy && (!sourceFolder || !outputFolder || enabledOperationCount === 0)}>{batchJob.busy ? "Cancel" : "Start"}</Button>
             </div>
             <div className="batch-process-meta">
               <button
                 type="button"
-                className="batch-process-location"
+                className="batch-process-location location-button"
                 disabled={!currentBatchResult || batchJob.busy}
                 title={currentBatchResult?.outputFolder || outputFolder}
                 onClick={() => currentBatchResult && void window.stemSlicer?.revealPath(currentBatchResult.outputFolder)}
               >
-                <span>Location</span>
+                <span><FolderOpen aria-hidden="true" />Location</span>
                 <strong>{currentBatchResult ? basename(currentBatchResult.outputFolder) : outputFolder ? basename(outputFolder) : "Waiting for source"}</strong>
               </button>
               <div><span>Operations</span><strong>{enabledOperationCount} enabled</strong></div>
@@ -3942,6 +4004,8 @@ function QuickToolsView({
   activeTool,
   previewLayers,
   setPreviewLayers,
+  convertLayer,
+  setConvertLayer,
   playback,
   onActiveToolChange,
   onExtractionCompleted,
@@ -3950,6 +4014,8 @@ function QuickToolsView({
   activeTool: SlicerToolId
   previewLayers: GeneratedLayer[]
   setPreviewLayers: React.Dispatch<React.SetStateAction<GeneratedLayer[]>>
+  convertLayer: GeneratedLayer | null
+  setConvertLayer: (layer: GeneratedLayer | null) => void
   playback: PlaybackClock
   onActiveToolChange: (tool: SlicerToolId) => void
   onExtractionCompleted: (entry: ExtractionHistoryEntry) => void
@@ -3959,7 +4025,7 @@ function QuickToolsView({
     { id: "slicer", label: "Slicer", description: "Process a complete loop folder", icon: Layers3 },
     { id: "extract", label: "Quick Extract", description: "Split one loop into playable layers", icon: AudioLines },
     { id: "scan", label: "Quick Scan", description: "Read BPM, key and relative modes", icon: ScanLine },
-    { id: "convert", label: "Quick Convert", description: "Retune and time-stretch one loop", icon: Repeat2 },
+    { id: "convert", label: "Quick Convert", description: "Retune and time-stretch one loop", icon: ArrowRightLeft },
   ]
 
   const [scanFile, setScanFile] = useState("")
@@ -4012,7 +4078,22 @@ function QuickToolsView({
       targetKey: convertResult.targetKey,
       elapsedSeconds: convertResult.elapsedSeconds,
     })
-  }, [convertFile, convertResult, onConvertCompleted])
+    const artifact = convertResult.artifact
+    setConvertLayer({
+      id: `quick-convert-${artifact.path}`,
+      role: "Converted loop",
+      file: artifact.name,
+      category: "Converted",
+      bpm: artifact.bpm,
+      keyName: artifact.key || "—",
+      octave: 0,
+      volume: 78,
+      duration: artifact.duration,
+      path: artifact.path,
+      sourcePath: artifact.sourcePath,
+      bars: artifact.peaks.map((value) => Math.max(8, Math.round(value * 100))),
+    })
+  }, [convertFile, convertResult, onConvertCompleted, setConvertLayer])
 
   const selectTool = (tool: SlicerToolId) => {
     if (tool === activeTool) return
@@ -4077,6 +4158,7 @@ function QuickToolsView({
       return
     }
     if (!convertFile) return
+    setConvertLayer(null)
     void convertJob.start({
       source: convertFile,
       targetBpmEnabled: true,
@@ -4117,7 +4199,7 @@ function QuickToolsView({
         {activeTool === "extract" ? (
           <div id="quick-tool-panel-extract" className="quick-tool-panel extract-panel" role="region" aria-labelledby="quick-tool-tab-extract">
             <header className="quick-panel-heading">
-              <div><span className="quick-panel-kicker">One loop · multiple layers</span><h2>Extract layers</h2></div>
+              <div className="quick-panel-heading-copy"><span className="quick-panel-kicker">One loop · multiple layers</span><h2>Extract layers</h2></div>
               <span className="quick-panel-status">{extractJob.busy ? `${extractJob.percent}% · ${extractJob.message}` : `${previewLayers.length} layers`}</span>
             </header>
 
@@ -4152,7 +4234,7 @@ function QuickToolsView({
                 key={layer.id}
                 layer={layer}
                 variant="extract"
-                progress={playback.progress}
+                progressSource={playback.progressSource}
                 playing={playback.playing}
                 mixActive={extractedMixActive}
                 isMuted={playback.mode === "mix" && playback.mutedIds.has(layer.id)}
@@ -4176,11 +4258,9 @@ function QuickToolsView({
 
         {activeTool === "scan" ? (
           <div id="quick-tool-panel-scan" className="quick-tool-panel scan-panel" role="region" aria-labelledby="quick-tool-tab-scan">
-            <header className="quick-panel-heading quick-scan-heading">
-              <div className="quick-scan-heading-title">
-                <div><span className="quick-panel-kicker">One loop · full musical readout</span><h2>Scan BPM and key</h2></div>
-                <span className="quick-panel-status">{scanJob.busy ? `${scanJob.percent}% · ${scanJob.message}` : scanJob.error || (scanResult ? "Analysis complete" : scanFile ? "File selected" : "Ready to scan")}</span>
-              </div>
+            <header className="quick-panel-heading">
+              <div className="quick-panel-heading-copy"><span className="quick-panel-kicker">One loop · full musical readout</span><h2>Scan BPM and key</h2></div>
+              <span className="quick-panel-status">{scanJob.busy ? `${scanJob.percent}% · ${scanJob.message}` : scanJob.error || (scanResult ? "Analysis complete" : scanFile ? "File selected" : "Ready to scan")}</span>
             </header>
 
             <div className="quick-scan-body">
@@ -4232,26 +4312,22 @@ function QuickToolsView({
         {activeTool === "convert" ? (
           <div id="quick-tool-panel-convert" className="quick-tool-panel convert-panel" role="region" aria-labelledby="quick-tool-tab-convert">
             <header className="quick-panel-heading">
-              <div><span className="quick-panel-kicker">One loop · new BPM and key</span><h2>Convert audio</h2></div>
+              <div className="quick-panel-heading-copy"><span className="quick-panel-kicker">One loop · new BPM and key</span><h2>Convert audio</h2></div>
               <span className="quick-panel-status">{convertJob.busy ? `${convertJob.percent}% · ${convertJob.message}` : convertJob.error || (convertResult ? "1 conversion" : "0 conversions")}</span>
             </header>
 
             <div className="quick-convert-controls">
               <button type="button" className="quick-file-source" onClick={() => pickAudio(setConvertFile)} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { const path = pathFromDrop(event); if (path) setConvertFile(path) }}>
-                <span className="quick-source-icon"><Repeat2 aria-hidden="true" /></span>
+                <span className="quick-source-icon"><ArrowRightLeft aria-hidden="true" /></span>
                 <span className="quick-source-copy"><strong>{convertFile ? basename(convertFile) : "Choose one loop"}</strong><small>{convertFile || "Drop a loop here or browse your files"}</small></span>
                 <span className="quick-source-action">Browse loop</span>
               </button>
               <label className="quick-convert-field"><span>Target BPM</span><Input aria-label="Quick Convert target BPM" type="number" min="40" max="300" value={convertBpm} onChange={(event) => setConvertBpm(Number(event.target.value))} /></label>
               <Select id="quick-convert-key" label="Target key" value={convertKey} onChange={setConvertKey} options={TARGET_KEY_FAMILIES} optionLabel={compactKeyFamilyLabel} className="key-family-select" />
-              <Button className="quick-run-button" onClick={runConvert} disabled={!convertJob.busy && !convertFile}>{convertJob.busy ? <X /> : <Repeat2 />} {convertJob.busy ? "Cancel" : "Convert"}</Button>
+              <Button className="quick-run-button" onClick={runConvert} disabled={!convertJob.busy && !convertFile}>{convertJob.busy ? <X /> : <ArrowRightLeft />} {convertJob.busy ? "Cancel" : "Convert"}</Button>
             </div>
 
-            <div className="quick-convert-result" aria-live="polite">
-              {convertResult ? <AudioArtifactCard artifact={convertResult.artifact} /> : <><span className="quick-empty-icon"><AudioLines aria-hidden="true" /></span>
-              <div><strong>{convertJob.error || (convertJob.busy ? convertJob.message : "No converted file yet")}</strong><small>{convertJob.busy ? `${convertJob.percent}% complete` : "The converted result will remain playable and individually draggable."}</small></div>
-              <div className="quick-result-actions"><Button variant="outline" size="sm" disabled>Location</Button><Button variant="outline" size="sm" disabled>Manage files</Button></div></>}
-            </div>
+            {convertResult && convertLayer ? <div className="quick-convert-result" aria-live="polite"><AudioArtifactCard artifact={convertResult.artifact} layer={convertLayer} playback={playback} /></div> : null}
           </div>
         ) : null}
       </section>
@@ -5055,7 +5131,7 @@ function HistoryView({
         eyebrow="Workspace"
         title="Activity history"
         description="Reopen, export or remove generated loops, extraction jobs and conversions from one consistent workspace."
-        titleActions={<Button variant="outline" size="sm" onClick={() => void window.stemSlicer?.openHistoryRoot()}><FolderOpen aria-hidden="true" /> Location</Button>}
+        titleActions={<Button className="location-button" variant="outline" size="sm" onClick={() => void window.stemSlicer?.openHistoryRoot()}><FolderOpen aria-hidden="true" /> Location</Button>}
       />
 
       <div className="workspace-filter-bar" role="group" aria-label="Filter activity history">
@@ -5155,9 +5231,9 @@ function HistoryView({
                   </div>
                   <div className="history-actions">
                     <HistoryPlayButton entry={entry} playing={playback.playing && playback.mode === "solo" && playback.soloId === historyLayerId(entry.id)} onToggle={() => onTogglePlayback(entry)} />
-                    <Button variant="outline" size="sm" onClick={() => void window.stemSlicer?.revealPath(entry.generation.outputDirectory)}><FolderOpen aria-hidden="true" /> Location</Button>
+                    <Button className="location-button" variant="outline" size="sm" onClick={() => void window.stemSlicer?.revealPath(entry.generation.outputDirectory)}><FolderOpen aria-hidden="true" /> Location</Button>
                     <Button variant="outline" className="history-reload" size="sm" onClick={() => onReopen(entry)}><RefreshCw aria-hidden="true" /> Reload</Button>
-                    <Button variant="outline" size="sm" draggable onClick={() => void window.stemSlicer?.revealPath(entry.generation.masterPath)} onDragStart={(event) => { event.preventDefault(); onMarkExported(entry); window.stemSlicer?.startFileDrag(entry.generation.masterPath) }}><Layers3 aria-hidden="true" /> Drag</Button>
+                    <Button variant="outline" size="sm" draggable onClick={() => void window.stemSlicer?.revealPath(entry.generation.masterPath)} onDragStart={(event) => { event.preventDefault(); onMarkExported(entry); window.stemSlicer?.startFileDrag(entry.generation.masterPath) }}><AudioLines aria-hidden="true" /> Drag</Button>
                   </div>
                 </CardContent>
               </Card>
@@ -5191,8 +5267,8 @@ function HistoryView({
                   {entry.elapsedSeconds != null ? <span><b>{entry.elapsedSeconds.toFixed(1)} s</b> elapsed</span> : null}
                 </div>
                 <div className="activity-history-actions">
-                  <Button variant="outline" size="sm" onClick={() => void window.stemSlicer?.revealPath(entry.outputFolder)}><FolderOpen aria-hidden="true" /> Location</Button>
-                  {entry.outputs.length > 0 ? <Button variant="outline" size="sm" onClick={() => window.stemSlicer?.startFilesDrag(entry.outputs)}><Layers3 aria-hidden="true" /> Drag outputs</Button> : null}
+                  <Button className="location-button" variant="outline" size="sm" onClick={() => void window.stemSlicer?.revealPath(entry.outputFolder)}><FolderOpen aria-hidden="true" /> Location</Button>
+                  {entry.outputs.length > 0 ? <Button variant="outline" size="sm" onClick={() => window.stemSlicer?.startFilesDrag(entry.outputs)}><AudioLines aria-hidden="true" /> Drag</Button> : null}
                 </div>
               </CardContent>
             </Card>
@@ -5221,8 +5297,8 @@ function HistoryView({
                 </div>}
                 <div className="activity-history-metrics">{entry.artifact.duration > 0 ? <span><b>{entry.artifact.duration.toFixed(1)} s</b> audio</span> : null}<span><b>{formatDecimalBytes(entry.artifact.bytes)}</b> file</span></div>
                 <div className="activity-history-actions">
-                  <Button variant="outline" size="sm" onClick={() => void window.stemSlicer?.revealPath(entry.artifact.path)}><FolderOpen aria-hidden="true" /> Location</Button>
-                  <Button variant="outline" size="sm" draggable onDragStart={(event) => { event.preventDefault(); window.stemSlicer?.startFileDrag(entry.artifact.path) }}><AudioLines aria-hidden="true" /> Drag audio</Button>
+                  <Button className="location-button" variant="outline" size="sm" onClick={() => void window.stemSlicer?.revealPath(entry.artifact.path)}><FolderOpen aria-hidden="true" /> Location</Button>
+                  <Button variant="outline" size="sm" draggable onDragStart={(event) => { event.preventDefault(); window.stemSlicer?.startFileDrag(entry.artifact.path) }}><AudioLines aria-hidden="true" /> Drag</Button>
                 </div>
               </CardContent>
             </Card>
@@ -5296,7 +5372,7 @@ function LibraryIssueList({
               <span>{issue.issueType === "wrong-slice" ? "Extraction review" : `Generated in · ${issue.targetKey}`}</span>
             </div>
             <div className="key-issue-actions">
-              <Button variant="outline" size="sm" onClick={() => void window.stemSlicer?.revealPath(issue.reportedPath)}><FolderOpen aria-hidden="true" /> Location</Button>
+              <Button className="location-button" variant="outline" size="sm" onClick={() => void window.stemSlicer?.revealPath(issue.reportedPath)}><FolderOpen aria-hidden="true" /> Location</Button>
               <Button variant={issue.active ? "outline" : "ghost"} size="sm" onClick={() => void onSetKeyIssueActive(issue.id, !issue.active)}>
                 {issue.active ? <Check aria-hidden="true" /> : <CircleX aria-hidden="true" />}
                 {issue.active ? "Restore" : "Exclude again"}
@@ -5483,7 +5559,7 @@ function LibraryView({
                   <div className="category-correction-change"><span>{correction.previousCategory || "Unassigned"}</span><ChevronDown aria-hidden="true" /><b>{correction.correctedCategory}</b></div>
                   <time dateTime={correction.validatedAt}>{new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(correction.validatedAt))}</time>
                   <div className="category-correction-actions">
-                    <Button variant="outline" size="sm" onClick={() => void window.stemSlicer?.revealPath(correction.path)}><FolderOpen aria-hidden="true" /> Location</Button>
+                    <Button className="location-button" variant="outline" size="sm" onClick={() => void window.stemSlicer?.revealPath(correction.path)}><FolderOpen aria-hidden="true" /> Location</Button>
                     <Button variant="outline" size="sm" onClick={() => onEditSourceLoop({ libraryRoot: correction.libraryRoot, sourceLoopId: correction.sourceLoopId, issueId: relatedIssue?.id ?? "", issueActive: relatedIssue?.active ?? false })}><Pencil aria-hidden="true" /> Studio</Button>
                     <label className="library-history-select">
                       <input type="checkbox" checked={selectedBySection["wrong-category"].has(correction.identity)} onChange={(event) => toggleCorrectionSelected("wrong-category", correction.identity, event.target.checked)} />
@@ -6548,7 +6624,6 @@ function ScrollingPlayerTitle({ title }: { title: string }) {
 }
 
 function GlobalPlayer({ layers, playback, contextLabel, displayName }: { layers: GeneratedLayer[]; playback: PlaybackClock; contextLabel: string; displayName?: string }) {
-  const timelineScrubberRef = useRef<HTMLInputElement>(null)
   const soloLayer = layers.find((layer) => layer.id === playback.soloId)
   const audibleMixLayers = layers.filter((layer) => !playback.mutedIds.has(layer.id))
   const activeLayers = playback.playing
@@ -6564,6 +6639,11 @@ function GlobalPlayer({ layers, playback, contextLabel, displayName }: { layers:
   const primaryPlaying = playback.playing && (syncEnabled ? playback.mode === "mix" : playback.mode === "solo")
   const timelineLayer = syncEnabled ? layers.find((layer) => layer.path) : soloLayer
   const duration = timelineLayer?.duration ?? currentLayer?.duration ?? 0
+  const { scrubberRef: timelineScrubberRef, clockRef: timelineClockRef } = usePlaybackProgressElements(
+    playback.progressSource,
+    Boolean(timelineLayer),
+    duration,
+  )
   const generatedName = displayName?.trim()
   const playerTitle = generatedName
     || (activeLayers.length === 1 ? stripAudioExtension(activeLayers[0].file) : "No generation loaded")
@@ -6621,7 +6701,7 @@ function GlobalPlayer({ layers, playback, contextLabel, displayName }: { layers:
               void playback.endScrub()
             }}
           >
-            <Waveform progress={timelineLayer ? playback.progress : 0} compact label={`${contextLabel} waveform`} />
+            <Waveform progressSource={playback.progressSource} progressActive={Boolean(timelineLayer)} compact label={`${contextLabel} waveform`} />
             <input
               ref={timelineScrubberRef}
               className="global-waveform-scrubber"
@@ -6629,13 +6709,13 @@ function GlobalPlayer({ layers, playback, contextLabel, displayName }: { layers:
               min="0"
               max="1000"
               disabled={!timelineLayer}
-              value={Math.round((timelineLayer ? playback.progress : 0) * 1000)}
+              defaultValue="0"
               aria-label={`Position de lecture ${contextLabel}`}
               tabIndex={-1}
               onChange={(event) => timelineLayer && playback.previewScrub(timelineLayer.id, Number(event.target.value) / 1000)}
             />
           </div>
-          <span className="tabular">{((timelineLayer ? playback.progress : 0) * duration).toFixed(1)} / {duration.toFixed(1)} s</span>
+          <span ref={timelineClockRef} className="tabular">0.0 / {duration.toFixed(1)} s</span>
         </div>
       </div>
       <label className="player-volume app-no-drag"><Volume2 aria-hidden="true" /><span className="sr-only">Preview volume</span><span className="volume-range"><input type="range" min="0" max="125" value={playback.masterVolume} onChange={(event) => playback.setMasterVolume(Number(event.target.value))} /><span className="volume-unity-marker" aria-hidden="true" /></span><output className="tabular">{playback.masterVolume}%</output></label>
@@ -6656,6 +6736,7 @@ export function App() {
   const [library, setLibrary] = useState<LibraryOverview>(FALLBACK_LIBRARY)
   const [layers, setLayers] = useState(INITIAL_LAYERS)
   const [quickPreviewLayers, setQuickPreviewLayers] = useState<GeneratedLayer[]>([])
+  const [quickConvertLayer, setQuickConvertLayer] = useState<GeneratedLayer | null>(null)
   const [activeSlicerTool, setActiveSlicerTool] = useState<SlicerToolId>("slicer")
   const [history, setHistory] = useState<HistoryEntry[]>(loadGenerateHistory)
   const [extractionHistory, setExtractionHistory] = useState<ExtractionHistoryEntry[]>(loadExtractionHistory)
@@ -6674,15 +6755,18 @@ export function App() {
     const entry = history.find((item) => historyLayerId(item.id) === historyPlaybackLayerId)
     return entry ? [historyEntryToLayer(entry)] : []
   }, [history, historyPlaybackLayerId])
-  const playerLayers = useMemo(() => playbackContext === "history" ? historyPlayerLayers : playbackContext === "quick-extract" ? quickPreviewLayers : layers, [historyPlayerLayers, layers, playbackContext, quickPreviewLayers])
-  const stackPlayback = playbackContext !== "history"
+  const playerLayers = useMemo(() => {
+    if (playbackContext === "history") return historyPlayerLayers
+    if (playbackContext === "quick-extract") return quickPreviewLayers
+    if (playbackContext === "quick-convert") return quickConvertLayer ? [quickConvertLayer] : []
+    return layers
+  }, [historyPlayerLayers, layers, playbackContext, quickConvertLayer, quickPreviewLayers])
+  const stackPlayback = playbackContext !== "history" && playbackContext !== "quick-convert"
   const playback = usePlaybackClock(playerLayers, stackPlayback)
   const resetPlayback = playback.reset
   const mainRef = useRef<HTMLElement>(null)
   const initialViewRef = useRef(true)
   const activeGenerationPathRef = useRef(currentGenerationResult?.outputDirectory ?? "")
-  const quickPreviewSignature = quickPreviewLayers.map((layer) => `${layer.id}:${layer.path ?? ""}`).join("|")
-  const quickPreviewSignatureRef = useRef(quickPreviewSignature)
   const nextGenerationNumber = Math.max(generationSequence, 0, ...history.map((entry) => entry.generationNumber)) + 1
   const currentGenerationDisplayName = currentGenerationResult
     ? displayNameForGeneration(currentGenerationResult, layers, Math.max(1, nextGenerationNumber - 1))
@@ -6690,6 +6774,10 @@ export function App() {
   const historyPlaybackName = playbackContext === "history"
     ? history.find((entry) => historyLayerId(entry.id) === historyPlaybackLayerId)?.displayName
     : undefined
+  const updateQuickConvertLayer = useCallback((nextLayer: GeneratedLayer | null) => {
+    setQuickConvertLayer(nextLayer)
+    if (nextLayer) setPlaybackContext("quick-convert")
+  }, [])
 
   const addHistory = useCallback((entry: HistoryEntry) => {
     setHistory((items) => [entry, ...items.filter((item) => item.generation.outputDirectory !== entry.generation.outputDirectory)])
@@ -6866,10 +6954,17 @@ export function App() {
   }, [currentGenerationResult])
 
   useEffect(() => {
-    if (quickPreviewSignature === quickPreviewSignatureRef.current) return
-    quickPreviewSignatureRef.current = quickPreviewSignature
-    if (activeView === "stem-slicer" && activeSlicerTool === "extract") setPlaybackContext("quick-extract")
-  }, [activeSlicerTool, activeView, quickPreviewSignature])
+    if (activeView === "generate") {
+      setPlaybackContext("generate")
+      return
+    }
+    if (activeView !== "stem-slicer") return
+    if (activeSlicerTool === "extract" && quickPreviewLayers.length > 0) {
+      setPlaybackContext("quick-extract")
+    } else if (activeSlicerTool === "convert" && quickConvertLayer) {
+      setPlaybackContext("quick-convert")
+    }
+  }, [activeSlicerTool, activeView, quickConvertLayer, quickPreviewLayers.length])
 
   useEffect(() => {
     if (studioActive) return
@@ -6982,7 +7077,7 @@ export function App() {
       <AppSidebar activeView={activeView} collapsed={sidebarCollapsed} onNavigate={navigateToView} onToggle={() => setSidebarCollapsed((value) => !value)} />
       <div className="app-workspace">
         <main id="main-content" tabIndex={-1} ref={mainRef} className={cn(activeView === "generate" && "generate-main", activeView === "stem-slicer" && "quick-tools-main", activeView === "history" && "history-main", activeView === "library" && !studioActive && "library-main", activeView === "cloud" && "cloud-main", activeView === "profile" && "profile-main", studioActive && "studio-main")}>
-          <div className={cn("workspace-view-slicer", activeView === "stem-slicer" && "is-active")} aria-hidden={activeView !== "stem-slicer"}><StableQuickToolsView activeTool={activeSlicerTool} previewLayers={quickPreviewLayers} setPreviewLayers={setQuickPreviewLayers} playback={playback} onActiveToolChange={setActiveSlicerTool} onExtractionCompleted={addExtractionHistory} onConvertCompleted={addConvertHistory} /></div>
+          <div className={cn("workspace-view-slicer", activeView === "stem-slicer" && "is-active")} aria-hidden={activeView !== "stem-slicer"}><StableQuickToolsView activeTool={activeSlicerTool} previewLayers={quickPreviewLayers} setPreviewLayers={setQuickPreviewLayers} convertLayer={quickConvertLayer} setConvertLayer={updateQuickConvertLayer} playback={playback} onActiveToolChange={setActiveSlicerTool} onExtractionCompleted={addExtractionHistory} onConvertCompleted={addConvertHistory} /></div>
           <div hidden={activeView !== "generate"}><StableGenerateView library={library} layers={layers} setLayers={setLayers} currentGenerationResult={currentGenerationResult} setCurrentGenerationResult={setCurrentGenerationResult} onAddHistory={addHistory} onUpdateHistory={updateHistory} onMarkCurrentGenerationExported={markCurrentGenerationExported} keyIssues={keyIssues} onReportKeyIssue={reportKeyIssue} onSetKeyIssueActive={updateKeyIssueState} onLibraryRefresh={refreshLibrary} onCategoryCorrectionsRefresh={refreshCategoryCorrections} nextGenerationNumber={nextGenerationNumber} playback={playback} /></div>
           <div hidden={activeView !== "history"}><StableHistoryView history={history} extractionHistory={extractionHistory} convertHistory={convertHistory} playback={playback} onReopen={reopenHistory} onTrashGenerated={trashHistoryEntries} onTrashExtractions={trashExtractionEntries} onTrashConversions={trashConvertEntries} onMarkExported={markHistoryExported} onTogglePlayback={toggleHistoryPlayback} /></div>
           <div hidden={activeView !== "library"} className={cn("library-workspace", studioActive && "is-studio")}>
@@ -6993,7 +7088,7 @@ export function App() {
             <StableCloudView library={library} section={activeView === "profile" ? "profile" : "producers"} generationHistory={history} />
           </div>
         </main>
-        {!studioActive ? <StableGlobalPlayer layers={playerLayers} playback={playback} contextLabel={playbackContext === "history" ? "History generation" : playbackContext === "quick-extract" ? "Extracted stack" : "Generated stack"} displayName={playbackContext === "generate" ? currentGenerationDisplayName : historyPlaybackName} /> : null}
+        {!studioActive ? <StableGlobalPlayer layers={playerLayers} playback={playback} contextLabel={playbackContext === "history" ? "History generation" : playbackContext === "quick-extract" ? "Extracted stack" : playbackContext === "quick-convert" ? "Converted loop" : "Generated stack"} displayName={playbackContext === "generate" ? currentGenerationDisplayName : playbackContext === "quick-convert" ? stripAudioExtension(quickConvertLayer?.file ?? "") : historyPlaybackName} /> : null}
       </div>
     </div>
   )

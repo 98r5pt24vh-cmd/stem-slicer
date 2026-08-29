@@ -513,8 +513,13 @@ app.whenReady().then(() => {
     return createMediaResponse(request, targetPath)
   })
   registerIpc()
+  // Start the persistent bridge before renderer creation so its warm-up runs
+  // in parallel with the window loading instead of waiting behind first paint.
+  void audioEngine.start().catch((error: unknown) => {
+    const detail = error instanceof Error ? error.message : String(error)
+    console.error(`[Slicer engine] startup failed: ${detail}`)
+  })
   createWindow()
-  void audioEngine.start().catch(() => undefined)
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

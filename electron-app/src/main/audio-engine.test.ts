@@ -56,7 +56,7 @@ describe("AudioEngineService", () => {
 
     const starting = service.start()
     ;(child.stdout as PassThrough).write(`${JSON.stringify({ type: "ready" })}\n`)
-    await starting
+    const status = await starting
 
     expect(spawnMock).toHaveBeenCalledWith(
       expect.any(String),
@@ -66,6 +66,11 @@ describe("AudioEngineService", () => {
         windowsHide: true,
       }),
     )
+    expect(status.components).toEqual({
+      musicalAnalysis: { state: "ready", message: "Ready for key and tempo analysis." },
+      midi: { state: "ready", message: "Ready for audio-to-MIDI conversion." },
+      categorization: { state: "ready", message: "Ready for layer categorization." },
+    })
 
     Object.assign(child, { exitCode: 0 })
     child.emit("exit", 0, null)

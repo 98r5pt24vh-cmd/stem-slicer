@@ -12,6 +12,45 @@ import engine_bridge as bridge
 
 
 class EngineBridgeWorkflowTests(unittest.TestCase):
+    def test_processing_runtime_warmup_resolves_shared_audio_tools(self) -> None:
+        import engine
+
+        with (
+            patch.object(engine, "find_ffmpeg", return_value="/runtime/ffmpeg") as find_ffmpeg,
+            patch.object(engine, "find_ffprobe", return_value="/runtime/ffprobe") as find_ffprobe,
+        ):
+            bridge.warm_processing_runtime()
+
+        find_ffmpeg.assert_called_once_with()
+        find_ffprobe.assert_called_once_with("/runtime/ffmpeg")
+
+    def test_processing_runtime_warmup_fails_when_ffmpeg_is_unavailable(self) -> None:
+        import engine
+
+        with patch.object(engine, "find_ffmpeg", return_value=None):
+            with self.assertRaisesRegex(FileNotFoundError, "FFmpeg is unavailable"):
+                bridge.warm_processing_runtime()
+
+    def test_categorization_runtime_warmup_starts_the_persistent_worker(self) -> None:
+        fake_classifier = SimpleNamespace(start=lambda: None)
+        with patch.object(bridge, "classifier", return_value=fake_classifier) as classifier_factory:
+            with patch.object(fake_classifier, "start") as start:
+                bridge.warm_categorization_runtime()
+
+        classifier_factory.assert_called_once_with()
+        start.assert_called_once_with()
+
+    def test_engine_shutdown_stops_the_persistent_classifier(self) -> None:
+        fake_classifier = SimpleNamespace(stop=lambda: None)
+        with (
+            patch.object(bridge, "_analyzer", None),
+            patch.object(bridge, "_classifier", fake_classifier),
+            patch.object(fake_classifier, "stop") as stop,
+        ):
+            bridge.close_engines()
+
+        stop.assert_called_once_with()
+
     def test_target_pair_follows_the_detected_source_mode(self) -> None:
         self.assertEqual(
             bridge.target_key_for_source("C minor", "D major / B minor"),

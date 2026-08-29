@@ -7,6 +7,13 @@ nodeLinker: hoisted
 # Electron Forge 7.11.2 depends on the official @electron/node-gyp Git source.
 blockExoticSubdeps: false
 
+# Keep Electron Forge 7 on patched, API-compatible transitive tooling without
+# forcing an incompatible Forge 8 prerelease into the release toolchain.
+overrides:
+  extract-zip: npm:@electron-internal/extract-zip@1.0.5
+  tar: 7.5.21
+  tmp: 0.2.7
+
 # Only the native binaries required by this development toolchain may execute
 # install scripts. All other dependencies keep pnpm 11's secure default.
 allowBuilds:

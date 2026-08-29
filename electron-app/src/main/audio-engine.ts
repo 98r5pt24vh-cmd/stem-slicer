@@ -78,7 +78,7 @@ export class AudioEngineService {
   private components: EngineStatus["components"] = {
     musicalAnalysis: { state: "idle", message: "Waiting to start." },
     midi: { state: "idle", message: "Waiting to start." },
-    categorization: { state: "on-demand", message: "Loads when a library needs categorization." },
+    categorization: { state: "idle", message: "Waiting to start." },
   }
 
   constructor(
@@ -164,7 +164,7 @@ export class AudioEngineService {
     this.components = {
       musicalAnalysis: { state: "idle", message: "Waiting to start." },
       midi: { state: "idle", message: "Waiting to start." },
-      categorization: { state: "on-demand", message: "Loads when a library needs categorization." },
+      categorization: { state: "idle", message: "Waiting to start." },
     }
     this.emitStatus()
     await this.ensureStarted()
@@ -226,7 +226,7 @@ export class AudioEngineService {
     this.components = {
       musicalAnalysis: { state: "starting", message: "Starting musical analysis…" },
       midi: { state: "starting", message: "Loading MIDI conversion…" },
-      categorization: { state: "on-demand", message: "Loads when a library needs categorization." },
+      categorization: { state: "starting", message: "Loading layer categorization…" },
     }
 
     this.startupPromise = new Promise<void>((resolve, reject) => {
@@ -307,6 +307,7 @@ export class AudioEngineService {
         ...this.components,
         musicalAnalysis: { state: "ready", message: "Ready for key and tempo analysis." },
         midi: { state: "ready", message: "Ready for audio-to-MIDI conversion." },
+        categorization: { state: "ready", message: "Ready for layer categorization." },
       }
       this.resolveStartup?.()
       this.resolveStartup = null
@@ -390,15 +391,22 @@ export class AudioEngineService {
     this.components = {
       musicalAnalysis: { state: "idle", message: "Waiting to restart." },
       midi: { state: "idle", message: "Waiting to restart." },
-      categorization: { state: "on-demand", message: "Loads when a library needs categorization." },
+      categorization: { state: "idle", message: "Waiting to restart." },
     }
     this.emitStatus()
     if (child) {
-      child.once("exit", () => void this.start().catch(() => undefined))
+      child.once("exit", () => this.startInBackground("restart after cancellation"))
       child.kill("SIGTERM")
     } else {
-      void this.start().catch(() => undefined)
+      this.startInBackground("restart after cancellation")
     }
+  }
+
+  private startInBackground(context: string): void {
+    void this.start().catch((error: unknown) => {
+      const detail = error instanceof Error ? error.message : String(error)
+      console.error(`[Slicer engine] ${context} failed: ${detail}`)
+    })
   }
 
   private handleProcessFailure(error: Error): void {

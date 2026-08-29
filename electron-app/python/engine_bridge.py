@@ -2367,16 +2367,44 @@ def close_engines() -> None:
         _analyzer.close()
     if _classifier is not None:
         try:
-            _classifier.close()
+            _classifier.stop()
         except Exception:
-            pass
+            traceback.print_exc(file=sys.stderr)
+
+
+def warm_processing_runtime() -> None:
+    """Preload the modules shared by extraction, conversion and Generate.
+
+    Importing these modules on the bridge thread before reporting ``ready``
+    prevents the first user job from paying Python and native-library import
+    costs.  The categorization model intentionally remains on demand: loading
+    MERT here would consume substantial memory even when no library scan is
+    requested.
+    """
+    import audio_convert  # noqa: F401
+    import engine
+    import filename_templates  # noqa: F401
+    import generation_policy  # noqa: F401
+    import generation_renderer  # noqa: F401
+    import key_detection  # noqa: F401
+
+    ffmpeg = engine.find_ffmpeg()
+    if not ffmpeg:
+        raise FileNotFoundError("FFmpeg is unavailable in the local engine runtime.")
+    # Resolve the probe path now as well. Some packaged runtimes deliberately
+    # use FFmpeg's duration fallback, so a missing FFprobe is not an error.
+    engine.find_ffprobe(ffmpeg)
+
+
+def warm_categorization_runtime() -> None:
+    """Start the persistent category worker before the first library scan."""
+    classifier().start()
 
 
 def main() -> int:
-    # Load Basic Pitch/ONNX before render engines alter the process-wide native
-    # library environment, then perform a real OpenKeyScan warm-up. The
-    # Electron window remains visible while this background process starts.
-    engine_status("categorization", "on-demand", "Loads when a library needs categorization.")
+    # Load Basic Pitch/ONNX first, then start the isolated MERT worker and
+    # perform a real OpenKeyScan warm-up. The Electron window remains visible
+    # while every persistent engine starts in the background.
     engine_status("midi", "starting", "Loading MIDI conversion…")
     try:
         midi_converter()
@@ -2385,9 +2413,18 @@ def main() -> int:
         raise
     engine_status("midi", "ready", "Ready for audio-to-MIDI conversion.")
 
-    engine_status("musicalAnalysis", "starting", "Warming up key and tempo analysis…")
+    engine_status("categorization", "starting", "Loading layer categorization…")
+    try:
+        warm_categorization_runtime()
+    except Exception as error:
+        engine_status("categorization", "failed", str(error))
+        raise
+    engine_status("categorization", "ready", "Ready for layer categorization.")
+
+    engine_status("musicalAnalysis", "starting", "Preparing audio processing and musical analysis…")
     warmup_audio = SOURCE_ROOT / "assets" / "key-and-bpm-engine-warmup.wav"
     try:
+        warm_processing_runtime()
         if not warmup_audio.is_file():
             raise FileNotFoundError(f"Musical-analysis warm-up audio is missing: {warmup_audio}")
         analyzer().analyze(warmup_audio)
