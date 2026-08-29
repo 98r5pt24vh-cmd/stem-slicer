@@ -29,6 +29,21 @@ class CollaboratorGenerationTests(unittest.TestCase):
         self.assertEqual(options["startupinfo"].dwFlags, 1)
         self.assertEqual(options["startupinfo"].wShowWindow, 0)
 
+    def test_waveform_ffmpeg_inherits_hidden_windows_process_options(self) -> None:
+        hidden = {"creationflags": 0x08000000}
+        with (
+            patch("engine.find_ffmpeg", return_value="ffmpeg.exe"),
+            patch.object(bridge, "_hidden_process_kwargs", return_value=hidden),
+            patch.object(
+                bridge.subprocess,
+                "run",
+                return_value=SimpleNamespace(stdout=b"\x00\x00\x00\x00"),
+            ) as run,
+        ):
+            bridge.waveform_peaks(Path("loop.wav"), points=2)
+
+        self.assertEqual(run.call_args.kwargs["creationflags"], 0x08000000)
+
     def test_source_pool_can_exclude_every_local_candidate(self) -> None:
         local = [{"identity": "local"}]
         cloud = [{"identity": "cloud"}]
