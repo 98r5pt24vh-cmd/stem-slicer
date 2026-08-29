@@ -8,6 +8,7 @@ import {
   canonicalizeCloudProducerCredits,
   chunkCloudObjectPaths,
   cloudErrorMessage,
+  cloudUploadConcurrency,
   CloudService,
   loadCloudBootstrapConfiguration,
   normalizeAliases,
@@ -108,6 +109,17 @@ describe("Cloud library removal", () => {
   })
 })
 
+describe("Cloud library upload", () => {
+  it("uses six workers when every layer fits the standard-upload fast path", () => {
+    expect(cloudUploadConcurrency([310_000, 2_500_000, 6_000_000])).toBe(6)
+  })
+
+  it("keeps conservative concurrency when a layer is large or the manifest is empty", () => {
+    expect(cloudUploadConcurrency([310_000, 6_000_001])).toBe(3)
+    expect(cloudUploadConcurrency([])).toBe(3)
+  })
+})
+
 describe("Cloud error copy", () => {
   it("replaces empty provider errors with an actionable fallback", () => {
     expect(cloudErrorMessage({ message: "<none>" }, "Check the connection and retry.")).toBe("Check the connection and retry.")
@@ -144,7 +156,6 @@ describe("Cloud producer profiles", () => {
         handle: "xt",
         displayName: "XT",
         aliases: ["Tnex is R"],
-        openToCollaborate: true,
       },
     )).toEqual(["+NRGY", "XT"])
   })

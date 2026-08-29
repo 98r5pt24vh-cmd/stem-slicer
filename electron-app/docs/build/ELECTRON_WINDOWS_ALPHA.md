@@ -15,6 +15,9 @@ This document covers the Electron application and its private Windows alpha.
 - Produce an unsigned ZIP for the private alpha. This is not a public release and Windows SmartScreen may warn when it opens.
 - Audit the packaged directory, expand the final ZIP, audit it again, and launch the exact extracted `Slicer.exe` before retaining the artifact.
 - Record the clean Git revision in the artifact.
+- Run the source roster and strict MIDI gate before expensive native builds.
+  Verify the complete Windows engine manifest only after the pinned Bungee,
+  FFmpeg and MERT payloads exist, and before packaging.
 
 ## Resource layout
 

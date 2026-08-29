@@ -3777,7 +3777,7 @@ td strong {
 
 .category-correction-item > div {
   display: grid;
-  min-height: 68px;
+  min-height: 72px;
   grid-template-columns: auto minmax(150px, 1fr) auto auto auto;
   align-items: center;
   gap: 9px;
@@ -3930,7 +3930,7 @@ td strong {
 
 .key-issue-item > div {
   display: grid;
-  min-height: 68px;
+  min-height: 72px;
   grid-template-columns: auto minmax(190px, 1fr) auto auto;
   align-items: center;
   gap: 8px;
@@ -4017,9 +4017,10 @@ td strong {
 .key-issue-spec {
   display: grid;
   justify-items: start;
-  gap: 3px;
+  gap: 2px;
   color: #9da695;
   font-size: 9px;
+  line-height: 1.2;
 }
 
 .key-issue-actions {
@@ -4209,9 +4210,23 @@ td strong {
 .history-spec {
   display: grid;
   justify-items: start;
-  gap: 3px;
+  gap: 1px;
   color: #9da695;
   font-size: 9px;
+  line-height: 1.15;
+}
+
+@media (min-width: 1081px) {
+  .category-correction-item > div,
+  .key-issue-item:not(:has(details[open])) > div {
+    height: 72px;
+  }
+}
+
+@media (min-width: 781px) {
+  .history-item:not(:has(.history-generation-details[open])) > div {
+    height: 60px;
+  }
 }
 
 .history-credit-line {
@@ -5851,57 +5866,15 @@ td strong {
   text-align: end;
 }
 
-.cloud-opportunity-toggle {
-  display: grid !important;
-  min-height: 58px;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: 11px !important;
-  border: 1px solid rgb(137 217 19 / 0.18);
-  border-radius: 10px;
-  background: rgb(90 151 4 / 0.055);
-  padding: 9px 11px;
-  cursor: pointer;
-}
-
 .cloud-profile-form-footer {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 12px;
-}
-
-.cloud-profile-form-footer .cloud-opportunity-toggle {
-  min-height: 44px;
-  padding-block: 7px;
 }
 
 .cloud-profile-form-footer > button {
   min-height: 44px;
-  align-self: stretch;
-}
-
-.cloud-opportunity-toggle input {
-  width: 18px;
-  height: 18px;
-  accent-color: var(--primary);
-}
-
-.cloud-opportunity-toggle strong,
-.cloud-opportunity-toggle small {
-  display: block;
-}
-
-.cloud-opportunity-toggle strong {
-  color: var(--foreground);
-  font-size: 10px;
-}
-
-.cloud-opportunity-toggle small {
-  margin-block-start: 3px;
-  color: var(--muted-foreground);
-  font-size: 8px;
-  line-height: 1.45;
 }
 
 .cloud-grid {
@@ -6298,6 +6271,11 @@ td strong {
   background: rgb(225 213 0 / 0.025);
 }
 
+.cloud-library-row.is-removing {
+  border-color: rgb(230 57 0 / 0.2);
+  background: linear-gradient(100deg, rgb(230 57 0 / 0.045), transparent 48%), rgb(2 6 4 / 0.38);
+}
+
 .cloud-owner-library-actions {
   min-width: 0;
   justify-self: end;
@@ -6324,6 +6302,67 @@ td strong {
   min-width: 36px;
   height: 36px;
   padding: 0;
+}
+
+.cloud-library-removing {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid rgb(230 57 0 / 0.22);
+  border-radius: 8px;
+  background: rgb(230 57 0 / 0.075);
+  color: #ff8d6d;
+  padding-inline: 10px;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.cloud-library-removing > svg {
+  width: 15px;
+  height: 15px;
+}
+
+.cloud-library-removing-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.cloud-library-removing-dots > i {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.42;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .cloud-library-removing-dots > i {
+    animation: cloud-library-removing-dot 900ms ease-in-out infinite;
+  }
+
+  .cloud-library-removing-dots > i:nth-child(2) {
+    animation-delay: 120ms;
+  }
+
+  .cloud-library-removing-dots > i:nth-child(3) {
+    animation-delay: 240ms;
+  }
+}
+
+@keyframes cloud-library-removing-dot {
+  0%,
+  60%,
+  100% {
+    opacity: 0.3;
+    transform: translateY(0);
+  }
+
+  30% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
 }
 
 .cloud-library-icon-action svg {
@@ -6649,23 +6688,14 @@ td strong {
 
 @media (max-width: 760px) {
   .cloud-profile-stats,
-.cloud-form-pair,
-.cloud-profile-form-footer {
+  .cloud-form-pair {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .cloud-profile-form-footer > button {
-    justify-self: end;
   }
 
   .cloud-profile-identity {
     grid-template-columns: auto minmax(0, 1fr);
   }
 
-  .cloud-profile-identity > .badge {
-    grid-column: 1 / -1;
-    justify-self: start;
-  }
 }
 
 .glass-panel {

@@ -18,7 +18,8 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:python": "node scripts/run-python-tests.mjs",
-    "validate": "pnpm run typecheck && pnpm run lint && pnpm test && pnpm run engine:check && pnpm run test:python"
+    "validate:source": "pnpm run typecheck && pnpm run lint && pnpm test && pnpm run test:python",
+    "validate": "pnpm run validate:source && pnpm run engine:check"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",

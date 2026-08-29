@@ -101,10 +101,26 @@ class ElectronEngineManifestTests(unittest.TestCase):
         workflow = (ROOT / ".github" / "workflows" / "build-electron-windows-alpha.yml").read_text(encoding="utf-8")
         self.assertIn("stage-engine-resources.mjs", workflow)
         self.assertIn("smoke-electron-midi.py", workflow)
+        self.assertIn("pnpm run validate:source", workflow)
+        self.assertIn("pnpm run engine:check", workflow)
         self.assertNotIn("Get-ChildItem -Path . -Filter *.py", workflow)
         self.assertNotIn("PySide6==", workflow)
         self.assertNotIn("diagnose_midi_startup.py", workflow)
         self.assertNotIn("Build the validated OpenKeyScan analyzer", workflow)
+
+        source_roster = workflow.index("pnpm run validate:source")
+        midi_gate = workflow.index("smoke-electron-midi.py")
+        bungee_build = workflow.index("- name: Build static Bungee")
+        ffmpeg_fetch = workflow.index("- name: Download and verify pinned FFmpeg")
+        mert_fetch = workflow.index("- name: Fetch and verify the pinned offline MERT payload")
+        engine_inventory = workflow.index("pnpm run engine:check")
+        packaging = workflow.index("- name: Assemble Electron sidecar resources")
+        self.assertLess(source_roster, midi_gate)
+        self.assertLess(midi_gate, bungee_build)
+        self.assertLess(bungee_build, engine_inventory)
+        self.assertLess(ffmpeg_fetch, engine_inventory)
+        self.assertLess(mert_fetch, engine_inventory)
+        self.assertLess(engine_inventory, packaging)
 
 
 if __name__ == "__main__":

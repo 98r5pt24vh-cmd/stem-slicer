@@ -67,9 +67,9 @@ jobs:
           SLICER_BOOTSTRAP_PYTHON: python
         run: pnpm run runtime:setup
 
-      - name: Run the complete Electron and Python validation roster
+      - name: Run the complete Electron and Python source roster
         working-directory: electron-app
-        run: pnpm run validate
+        run: pnpm run validate:source
 
       - name: Validate the strict Electron MIDI lifecycle
         shell: pwsh
@@ -127,6 +127,10 @@ jobs:
 
       - name: Fetch and verify the pinned offline MERT payload
         run: python scripts/fetch_mert_payload.py
+
+      - name: Verify the complete Windows engine inventory
+        working-directory: electron-app
+        run: pnpm run engine:check
 
       - name: Assemble Electron sidecar resources
         shell: pwsh

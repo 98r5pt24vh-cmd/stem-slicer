@@ -365,7 +365,6 @@ function registerIpc(): void {
       || typeof request.instagramHandle !== "string"
       || !Array.isArray(request.aliases)
       || request.aliases.some((alias) => typeof alias !== "string")
-      || typeof request.openToCollaborate !== "boolean"
       || (request.avatarFilePath != null && typeof request.avatarFilePath !== "string")
     ) {
       throw new Error("The Cloud profile form is invalid.")

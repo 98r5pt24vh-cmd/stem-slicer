@@ -38,7 +38,6 @@ export interface CloudProfile {
   bio?: string
   instagramHandle?: string
   aliases: string[]
-  openToCollaborate: boolean
 }
 
 export interface CloudConnection {
@@ -137,7 +136,6 @@ export interface CloudProfileUpdateRequest {
   bio: string
   instagramHandle: string
   aliases: string[]
-  openToCollaborate: boolean
   avatarFilePath?: string
 }
 

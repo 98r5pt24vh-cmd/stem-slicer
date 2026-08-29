@@ -31,7 +31,9 @@ import {
 const CLOUD_BUCKET = "cloud-layers"
 const PROFILE_AVATAR_BUCKET = "profile-avatars"
 const FREE_PROJECT_OBJECT_LIMIT = 50_000_000
-const UPLOAD_CONCURRENCY = 3
+const STANDARD_UPLOAD_FAST_PATH_LIMIT = 6_000_000
+const DEFAULT_UPLOAD_CONCURRENCY = 3
+const SMALL_LAYER_UPLOAD_CONCURRENCY = 6
 const INSERT_BATCH_SIZE = 200
 const CATALOG_PAGE_SIZE = 1_000
 const STORAGE_LIST_PAGE_SIZE = 1_000
@@ -65,11 +67,10 @@ interface ProfileRow {
   bio: string | null
   instagram_handle: string | null
   aliases: string[] | null
-  open_to_collaborate: boolean | null
   updated_at: string
 }
 
-const PROFILE_COLUMNS = "id,handle,display_name,avatar_path,bio,instagram_handle,aliases,open_to_collaborate,updated_at"
+const PROFILE_COLUMNS = "id,handle,display_name,avatar_path,bio,instagram_handle,aliases,updated_at"
 
 interface ConnectionRow {
   id: string
@@ -161,7 +162,6 @@ function profileFromRow(row: ProfileRow, avatarUrl?: string): CloudProfile {
     bio: row.bio || undefined,
     instagramHandle: row.instagram_handle || undefined,
     aliases: Array.isArray(row.aliases) ? row.aliases : [],
-    openToCollaborate: row.open_to_collaborate === true,
   }
 }
 
@@ -171,7 +171,6 @@ function fallbackProfile(id: string): CloudProfile {
     handle: "producer",
     displayName: "Producer",
     aliases: [],
-    openToCollaborate: false,
   }
 }
 
@@ -353,6 +352,13 @@ async function parallelMap<T>(items: T[], concurrency: number, task: (item: T, i
   })
   await Promise.all(workers)
   if (firstError !== undefined) throw firstError
+}
+
+export function cloudUploadConcurrency(byteSizes: number[]): number {
+  const allLayersUseStandardUploadFastPath = byteSizes.length > 0 && byteSizes.every((byteSize) => (
+    Number.isFinite(byteSize) && byteSize >= 0 && byteSize <= STANDARD_UPLOAD_FAST_PATH_LIMIT
+  ))
+  return allLayersUseStandardUploadFastPath ? SMALL_LAYER_UPLOAD_CONCURRENCY : DEFAULT_UPLOAD_CONCURRENCY
 }
 
 export class CloudService {
@@ -592,7 +598,6 @@ export class CloudService {
       bio: bio || null,
       instagram_handle: instagramHandle || null,
       aliases,
-      open_to_collaborate: request.openToCollaborate,
     }
     if (avatarPath) update.avatar_path = avatarPath
 
@@ -1115,6 +1120,7 @@ export class CloudService {
     })
     const storedPaths = new Set(await this.storedLibraryObjectPaths(library.id, profile.id))
     const resumableCount = preparedLayers.reduce((total, item) => total + Number(storedPaths.has(item.objectPath)), 0)
+    const pendingLayers = preparedLayers.filter((item) => !storedPaths.has(item.objectPath))
     let completed = resumableCount
     if (resumableCount > 0) {
       listener({
@@ -1127,8 +1133,8 @@ export class CloudService {
       })
     }
     try {
-      await parallelMap(preparedLayers, UPLOAD_CONCURRENCY, async ({ layer, objectPath }) => {
-        if (storedPaths.has(objectPath)) return
+      const uploadConcurrency = cloudUploadConcurrency(pendingLayers.map(({ layer }) => layer.byteSize))
+      await parallelMap(pendingLayers, uploadConcurrency, async ({ layer, objectPath }) => {
         let body: Buffer
         try {
           body = await readFile(layer.path)

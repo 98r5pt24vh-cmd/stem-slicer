@@ -57,6 +57,7 @@ import {
   type LucideIcon,
 } from "lucide-react"
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
+import { flushSync } from "react-dom"
 
 import { Waveform } from "@/components/waveform"
 import { StudioWaveform } from "@/components/studio-waveform"
@@ -73,6 +74,7 @@ import { Input } from "@/components/ui/input"
 import { basename, cn, extractionFolderNameForSource, formatCount, formatDecimalBytes, joinPath, outputFolderNameError } from "@/lib/utils"
 import { GENERATE_CATEGORY_OPTIONS, mergeGenerateCategories } from "@/lib/generate-categories"
 import { createPlaybackProgressStore, type PlaybackProgressSource, type PlaybackProgressStore } from "@/lib/playback-progress"
+import { quickFileToolFromDragHover } from "@/lib/quick-tool-drag"
 import {
   parseConvertHistory,
   parseExtractionHistory,
@@ -4100,6 +4102,17 @@ function QuickToolsView({
     onActiveToolChange(tool)
   }
 
+  const selectToolFromFileDrag = (event: React.DragEvent<HTMLButtonElement>, hoveredTool: SlicerToolId) => {
+    const fileTool = quickFileToolFromDragHover(hoveredTool, Array.from(event.dataTransfer.types))
+    if (!fileTool) return false
+    event.preventDefault()
+    event.dataTransfer.dropEffect = "copy"
+    if (fileTool !== activeTool) {
+      flushSync(() => onActiveToolChange(fileTool))
+    }
+    return true
+  }
+
   useEffect(() => {
     setPreviewLayers((current) => {
       const currentByPath = new Map(current.map((layer) => [layer.path, layer]))
@@ -4183,6 +4196,11 @@ function QuickToolsView({
               aria-pressed={activeTool === id}
               aria-controls={`quick-tool-panel-${id}`}
               onClick={() => selectTool(id)}
+              onDragEnter={(event) => selectToolFromFileDrag(event, id)}
+              onDragOver={(event) => selectToolFromFileDrag(event, id)}
+              onDrop={(event) => {
+                if (quickFileToolFromDragHover(id, Array.from(event.dataTransfer.types))) event.preventDefault()
+              }}
             >
               <span className="quick-tab-icon"><Icon aria-hidden="true" /></span>
               <span><strong>{label}</strong><small>{description}</small></span>
@@ -5678,13 +5696,12 @@ function CloudView({ library, section, embedded = false, generationHistory = [] 
   const [profileBio, setProfileBio] = useState("")
   const [profileInstagram, setProfileInstagram] = useState("")
   const [profileAliases, setProfileAliases] = useState("")
-  const [profileOpenToCollaborate, setProfileOpenToCollaborate] = useState(false)
   const [profileAvatarFilePath, setProfileAvatarFilePath] = useState("")
   const [sharedLibrarySortDirection, setSharedLibrarySortDirection] = useState<"asc" | "desc">("asc")
   const [pinnedSharedLibraryIds, setPinnedSharedLibraryIds] = useState<Set<string>>(new Set())
   const [pinnedProducerIds, setPinnedProducerIds] = useState<Set<string>>(new Set())
   const [libraryToRemove, setLibraryToRemove] = useState<CloudLibrarySummary | null>(null)
-  const [libraryRemovalError, setLibraryRemovalError] = useState("")
+  const [removingLibraryIds, setRemovingLibraryIds] = useState<Set<string>>(new Set())
   const [connectionToRemoveId, setConnectionToRemoveId] = useState("")
   const [connectionRemovalError, setConnectionRemovalError] = useState("")
   const [libraryAccessTargetId, setLibraryAccessTargetId] = useState("")
@@ -5753,7 +5770,6 @@ function CloudView({ library, section, embedded = false, generationHistory = [] 
     setProfileBio(cloud.profile.bio ?? "")
     setProfileInstagram(cloud.profile.instagramHandle ?? "")
     setProfileAliases(cloud.profile.aliases.join(", "))
-    setProfileOpenToCollaborate(cloud.profile.openToCollaborate)
     setProfileAvatarFilePath("")
   }, [cloud.profile])
 
@@ -5787,7 +5803,6 @@ function CloudView({ library, section, embedded = false, generationHistory = [] 
     setBusy(true)
     setError("")
     setNotice("")
-    setLibraryRemovalError("")
     try {
       const state = await action()
       if (state) {
@@ -5864,7 +5879,6 @@ function CloudView({ library, section, embedded = false, generationHistory = [] 
       bio: profileBio,
       instagramHandle: profileInstagram,
       aliases,
-      openToCollaborate: profileOpenToCollaborate,
       avatarFilePath: profileAvatarFilePath || undefined,
     }) ?? Promise.resolve(undefined))
   }
@@ -5893,14 +5907,14 @@ function CloudView({ library, section, embedded = false, generationHistory = [] 
     })
   }
 
-  const removeCloudLibrary = async () => {
-    if (!libraryToRemove) return
-    const removedLibraryId = libraryToRemove.id
-    setBusy(true)
+  const removeCloudLibrary = async (targetLibrary: CloudLibrarySummary) => {
+    const removedLibraryId = targetLibrary.id
+    setLibraryToRemove(null)
+    setRemovingLibraryIds((currentIds) => new Set(currentIds).add(removedLibraryId))
     setError("")
     setNotice("")
     try {
-      const state = await window.stemSlicer?.cloudRemoveLibrary(libraryToRemove.id)
+      const state = await window.stemSlicer?.cloudRemoveLibrary(removedLibraryId)
       if (state) {
         setCloud(state)
         window.dispatchEvent(new CustomEvent(CLOUD_STATE_CHANGED_EVENT, { detail: state }))
@@ -5911,12 +5925,15 @@ function CloudView({ library, section, embedded = false, generationHistory = [] 
           ? current
           : null
       ))
-      setLibraryToRemove(null)
     } catch (reason) {
-      setLibraryRemovalError(cloudErrorMessage(reason, "The Cloud library could not be removed."))
+      setError(cloudErrorMessage(reason, "The Cloud library could not be removed."))
       void refresh()
     } finally {
-      setBusy(false)
+      setRemovingLibraryIds((currentIds) => {
+        const nextIds = new Set(currentIds)
+        nextIds.delete(removedLibraryId)
+        return nextIds
+      })
     }
   }
 
@@ -6129,7 +6146,6 @@ function CloudView({ library, section, embedded = false, generationHistory = [] 
                       <h2 id="cloud-profile-preview-title">{profileDisplayName || cloud.profile?.displayName}</h2>
                       <p>@{profileHandle || cloud.profile?.handle}</p>
                     </div>
-                    {profileOpenToCollaborate ? <Badge variant="success">Open to collaborate</Badge> : <Badge>Private profile</Badge>}
                   </div>
                   <p className={cn("cloud-profile-bio", !profileBio && "is-empty")}>{profileBio || "Add a short bio so trusted producers know your sound and what you are building."}</p>
                   <div className="cloud-profile-links">
@@ -6167,10 +6183,6 @@ function CloudView({ library, section, embedded = false, generationHistory = [] 
                       <label><span>Producer aliases</span><Input value={profileAliases} onChange={(event) => setProfileAliases(event.target.value)} placeholder="XT, T-Next Is Here" /><small>Add every producer name used in your loop filenames. Slicer merges matching PC and Cloud credits into this profile. Separate aliases with commas.</small></label>
                     </div>
                     <footer className="cloud-profile-form-footer">
-                      <label className="cloud-opportunity-toggle">
-                        <input type="checkbox" checked={profileOpenToCollaborate} onChange={(event) => setProfileOpenToCollaborate(event.target.checked)} />
-                        <span><strong>Open to collaborate</strong><small>Welcome loop and placement opportunities.</small></span>
-                      </label>
                       <Button type="submit" disabled={busy}><Check aria-hidden="true" />{busy ? "Saving…" : "Save profile"}</Button>
                     </footer>
                   </form>
@@ -6290,7 +6302,6 @@ function CloudView({ library, section, embedded = false, generationHistory = [] 
                         handle: contributorName.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "-") || "cloud",
                         displayName: contributorName,
                         aliases: [],
-                        openToCollaborate: false,
                       }
                       const savedDate = entry.createdAtIso ? formatCloudActivityDate(entry.createdAtIso) : `Saved at ${entry.createdAt}`
                       return (
@@ -6317,17 +6328,24 @@ function CloudView({ library, section, embedded = false, generationHistory = [] 
                     {ownLibraries.map((item) => {
                       const sharing = item.status === "ready"
                       const paused = item.status === "archived"
+                      const removing = removingLibraryIds.has(item.id)
                       const localRoot = library.roots.find((root) => root.name === item.name)
                       const statusLabel = sharing ? "Shared" : paused ? "Paused" : item.status === "uploading" ? "Publishing" : "Upload failed"
                       return (
-                        <div className={cn("cloud-list-row cloud-library-row", sharing && "is-shared", paused && "is-paused")} key={item.id}>
+                        <div className={cn("cloud-list-row cloud-library-row", sharing && "is-shared", paused && "is-paused", removing && "is-removing")} key={item.id}>
                           <span className="cloud-owner-library-copy">
                             <strong title={item.name}>{item.name}</strong>
                             <small>{formatCount(item.loopCount)} loops · {formatCount(item.layerCount)} layers · {formatDecimalBytes(item.totalBytes)} stored</small>
                             {!sharing && !paused ? <Badge className="cloud-library-status" variant="secondary">{statusLabel}</Badge> : null}
                           </span>
                           <div className="cloud-owner-library-actions">
-                            <div className="cloud-owner-library-buttons">
+                            {removing ? (
+                              <span className="cloud-library-removing" role="status" aria-label={`Removing ${item.name} from Cloud`}>
+                                <Trash2 aria-hidden="true" />
+                                <span aria-hidden="true">Removing</span>
+                                <span className="cloud-library-removing-dots" aria-hidden="true"><i /><i /><i /></span>
+                              </span>
+                            ) : <div className="cloud-owner-library-buttons">
                               <Button
                                 type="button"
                                 className="cloud-library-icon-action"
@@ -6373,11 +6391,11 @@ function CloudView({ library, section, embedded = false, generationHistory = [] 
                                 disabled={busy || item.status === "uploading"}
                                 aria-label={`Remove ${item.name} from Cloud`}
                                 title="Remove from Cloud"
-                                onClick={() => { setLibraryRemovalError(""); setLibraryToRemove(item) }}
+                                onClick={() => setLibraryToRemove(item)}
                               >
                                 <Trash2 aria-hidden="true" />
                               </Button>
-                            </div>
+                            </div>}
                           </div>
                         </div>
                       )
@@ -6554,9 +6572,8 @@ function CloudView({ library, section, embedded = false, generationHistory = [] 
           <Dialog.Root
             open={Boolean(libraryToRemove)}
             onOpenChange={(open) => {
-              if (!open && !busy) {
+              if (!open) {
                 setLibraryToRemove(null)
-                setLibraryRemovalError("")
               }
             }}
           >
@@ -6569,11 +6586,10 @@ function CloudView({ library, section, embedded = false, generationHistory = [] 
                   <Dialog.Description>
                     This permanently deletes {libraryToRemove ? formatCount(libraryToRemove.layerCount) : "the"} uploaded layers and frees their Cloud storage. The local folder and indexed library on this PC remain unchanged.
                   </Dialog.Description>
-                  {libraryRemovalError ? <p className="dialog-inline-error" role="alert">{libraryRemovalError}</p> : null}
                   <footer>
-                    <Dialog.Close className="dialog-cancel" disabled={busy}>Cancel</Dialog.Close>
-                    <Button variant="destructive" disabled={busy} onClick={() => void removeCloudLibrary()}>
-                      <Trash2 aria-hidden="true" /> {busy ? "Removing…" : "Remove from Cloud"}
+                    <Dialog.Close className="dialog-cancel">Cancel</Dialog.Close>
+                    <Button variant="destructive" onClick={() => libraryToRemove && void removeCloudLibrary(libraryToRemove)}>
+                      <Trash2 aria-hidden="true" /> Remove from Cloud
                     </Button>
                   </footer>
                 </Dialog.Popup>
