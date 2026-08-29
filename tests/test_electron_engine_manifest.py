@@ -115,6 +115,7 @@ class ElectronEngineManifestTests(unittest.TestCase):
         mert_fetch = workflow.index("- name: Fetch and verify the pinned offline MERT payload")
         engine_inventory = workflow.index("pnpm run engine:check")
         packaging = workflow.index("- name: Assemble Electron sidecar resources")
+        self.assertLess(mert_fetch, source_roster)
         self.assertLess(source_roster, midi_gate)
         self.assertLess(midi_gate, bungee_build)
         self.assertLess(bungee_build, engine_inventory)
