@@ -40,6 +40,21 @@ if not SOURCE_ROOT.is_dir():
     raise SystemExit(f"Stem Slicer source root is unavailable: {SOURCE_ROOT}")
 sys.path.insert(0, str(SOURCE_ROOT))
 
+
+def _default_accepted_cache_root() -> Path:
+    if os.name == "nt":
+        cache_base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+    elif sys.platform == "darwin":
+        cache_base = Path.home() / "Library" / "Caches"
+    else:
+        cache_base = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+    return cache_base / "Stem Slicer" / "1.9"
+
+
+ACCEPTED_CACHE_ROOT = Path(
+    os.environ.get("STEM_SLICER_ACCEPTED_CACHE_ROOT", _default_accepted_cache_root())
+).expanduser().resolve()
+
 _write_lock = threading.Lock()
 _analyzer = None
 _classifier = None
@@ -565,6 +580,17 @@ def send(payload: dict) -> None:
         sys.stdout.flush()
 
 
+def engine_status(component: str, state: str, message: str) -> None:
+    send(
+        {
+            "type": "engine-status",
+            "component": component,
+            "state": state,
+            "message": message,
+        }
+    )
+
+
 def progress(job_id: str, message: str, current: int, total: int, phase: str) -> None:
     percent = 100 if total <= 0 else round(100 * max(0, min(current, total)) / total)
     send(
@@ -763,15 +789,7 @@ def classifier():
             python_executable=sys.executable,
             artifact_path=SOURCE_ROOT / "models" / "layer_roles_v4_2.joblib",
             hf_cache_dir=SOURCE_ROOT / "models" / "huggingface",
-            feature_cache_path=(
-                Path.home()
-                / "Library"
-                / "Caches"
-                / "Stem Slicer"
-                / "1.9"
-                / "generate"
-                / "features.sqlite3"
-            ),
+            feature_cache_path=ACCEPTED_CACHE_ROOT / "generate" / "features.sqlite3",
             device=os.environ.get("STEM_SLICER_MERT_DEVICE", "cpu"),
         )
     return _classifier
@@ -980,7 +998,7 @@ def add_midi(
 
 def quick_scan(job_id: str, payload: dict) -> dict:
     source = require_file(payload.get("source"))
-    progress(job_id, "Loading the musical analysis engine", 1, 20, "engine")
+    progress(job_id, "Analyzing musical key and tempo", 1, 20, "engine")
     raw = analyzer().analyze(source)
     result = scan_payload(source, raw)
     progress(job_id, f"Detected {result['bpm']} BPM · {result['detectedKey']}", 1, 1, "analysis")
@@ -1278,7 +1296,7 @@ def library_scan(job_id: str, payload: dict) -> dict:
 
     root = require_folder(payload.get("root"))
     database = Path(str(payload.get("databasePath") or "")).expanduser().resolve()
-    accepted_root = Path.home() / "Library" / "Caches" / "Stem Slicer" / "1.9"
+    accepted_root = ACCEPTED_CACHE_ROOT
     try:
         database.relative_to(accepted_root)
     except ValueError as error:
@@ -1999,9 +2017,29 @@ def close_engines() -> None:
 
 def main() -> int:
     # Load the accepted Basic Pitch/ONNX stack before render engines alter the
-    # process-wide native-library environment. Generate must also work as the
-    # very first action in a fresh Electron session.
-    midi_converter()
+    # process-wide native-library environment. Then perform the same real
+    # OpenKeyScan warm-up used by the accepted Python app. The Electron window
+    # remains visible while these engines start in this background process.
+    engine_status("categorization", "on-demand", "Loads when a library needs categorization.")
+    engine_status("midi", "starting", "Loading MIDI conversion…")
+    try:
+        midi_converter()
+    except Exception as error:
+        engine_status("midi", "failed", str(error))
+        raise
+    engine_status("midi", "ready", "Ready for audio-to-MIDI conversion.")
+
+    engine_status("musicalAnalysis", "starting", "Warming up key and tempo analysis…")
+    warmup_audio = SOURCE_ROOT / "assets" / "key-and-bpm-engine-warmup.wav"
+    try:
+        if not warmup_audio.is_file():
+            raise FileNotFoundError(f"Musical-analysis warm-up audio is missing: {warmup_audio}")
+        analyzer().analyze(warmup_audio)
+    except Exception as error:
+        engine_status("musicalAnalysis", "failed", str(error))
+        raise
+    engine_status("musicalAnalysis", "ready", "Ready for key and tempo analysis.")
+
     send(
         {
             "type": "ready",

@@ -19,6 +19,8 @@ jobs:
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
       TOKENIZERS_PARALLELISM: "false"
       SLICER_PACKAGE_RUNTIME: "1"
+      SLICER_CLOUD_PROJECT_URL: ${{ vars.SLICER_CLOUD_PROJECT_URL }}
+      SLICER_CLOUD_PUBLISHABLE_KEY: ${{ secrets.SLICER_CLOUD_PUBLISHABLE_KEY }}
 
     steps:
       - name: Check out the recorded revision
@@ -160,7 +162,14 @@ jobs:
           $engine = "$packaging/engine"
           $runtime = "$packaging/.runtime/python"
           $bridge = "$packaging/python"
-          New-Item -ItemType Directory -Force $engine, $runtime, $bridge | Out-Null
+          $cloud = "$packaging/cloud"
+          New-Item -ItemType Directory -Force $engine, $runtime, $bridge, $cloud | Out-Null
+          if ([string]::IsNullOrWhiteSpace($env:SLICER_CLOUD_PROJECT_URL)) { throw "SLICER_CLOUD_PROJECT_URL is not configured." }
+          if ([string]::IsNullOrWhiteSpace($env:SLICER_CLOUD_PUBLISHABLE_KEY)) { throw "SLICER_CLOUD_PUBLISHABLE_KEY is not configured." }
+          @{
+            projectUrl = $env:SLICER_CLOUD_PROJECT_URL
+            publishableKey = $env:SLICER_CLOUD_PUBLISHABLE_KEY
+          } | ConvertTo-Json | Set-Content "$cloud/project.json" -Encoding utf8NoBOM
           Get-ChildItem -Path . -Filter *.py -File | Copy-Item -Destination $engine
           foreach ($directory in @("assets", "basic_pitch", "bin", "licenses", "models", "vendor-windows")) {
             Copy-Item -Recurse -Force $directory $engine

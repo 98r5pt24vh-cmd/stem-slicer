@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest"
+import { mkdtempSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import path from "node:path"
 
 import type { GenerateJobRequest } from "../shared/contracts"
 import {
@@ -6,11 +9,39 @@ import {
   chunkCloudObjectPaths,
   cloudErrorMessage,
   CloudService,
+  loadCloudBootstrapConfiguration,
   normalizeAliases,
   normalizeCloudHandle,
   normalizeInstagramHandle,
   profileAvatarCropRect,
 } from "./cloud-service"
+
+describe("Cloud bootstrap configuration", () => {
+  it("loads only a public Supabase project configuration", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "slicer-cloud-config-"))
+    const configurationPath = path.join(root, "project.json")
+    writeFileSync(configurationPath, JSON.stringify({
+      projectUrl: "https://example.supabase.co/",
+      publishableKey: "sb_publishable_test",
+    }))
+
+    expect(loadCloudBootstrapConfiguration(configurationPath)).toEqual({
+      projectUrl: "https://example.supabase.co",
+      publishableKey: "sb_publishable_test",
+    })
+  })
+
+  it("rejects secret keys from a packaged configuration", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "slicer-cloud-config-"))
+    const configurationPath = path.join(root, "project.json")
+    writeFileSync(configurationPath, JSON.stringify({
+      projectUrl: "https://example.supabase.co",
+      publishableKey: "sb_secret_forbidden",
+    }))
+
+    expect(loadCloudBootstrapConfiguration(configurationPath)).toBeNull()
+  })
+})
 
 function request(sourcePool: GenerateJobRequest["sourcePool"]): GenerateJobRequest {
   return {

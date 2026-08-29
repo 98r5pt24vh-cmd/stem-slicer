@@ -272,6 +272,20 @@ function validateConfiguration(request: ConfigureCloudRequest): ConfigureCloudRe
   return { projectUrl, publishableKey }
 }
 
+export function loadCloudBootstrapConfiguration(configurationPath?: string): ConfigureCloudRequest | null {
+  if (!configurationPath || !existsSync(configurationPath)) return null
+  try {
+    const parsed = JSON.parse(readFileSync(configurationPath, "utf8")) as Partial<ConfigureCloudRequest>
+    if (typeof parsed.projectUrl !== "string" || typeof parsed.publishableKey !== "string") return null
+    return validateConfiguration({
+      projectUrl: parsed.projectUrl,
+      publishableKey: parsed.publishableKey,
+    })
+  } catch {
+    return null
+  }
+}
+
 class EncryptedAuthStorage {
   private readonly memory = new Map<string, string>()
 
@@ -348,6 +362,7 @@ export class CloudService {
   constructor(
     private readonly acceptedCachePath: string,
     prototypeCachePath: string,
+    private readonly bootstrapConfigurationPath?: string,
   ) {
     const root = path.join(prototypeCachePath, "cloud")
     this.settingsPath = path.join(root, "settings.json")
@@ -359,16 +374,20 @@ export class CloudService {
   }
 
   private loadSettings(): CloudLocalSettings {
+    let stored: CloudLocalSettings = {}
     try {
-      const parsed = JSON.parse(readFileSync(this.settingsPath, "utf8")) as CloudLocalSettings
-      return {
-        projectUrl: typeof parsed.projectUrl === "string" ? parsed.projectUrl : undefined,
-        publishableKey: typeof parsed.publishableKey === "string" ? parsed.publishableKey : undefined,
-        enabledLibraryIds: Array.isArray(parsed.enabledLibraryIds) ? parsed.enabledLibraryIds.filter((item): item is string => typeof item === "string") : [],
-        pendingProfiles: parsed.pendingProfiles && typeof parsed.pendingProfiles === "object" ? parsed.pendingProfiles : {},
-      }
+      stored = JSON.parse(readFileSync(this.settingsPath, "utf8")) as CloudLocalSettings
     } catch {
-      return { enabledLibraryIds: [], pendingProfiles: {} }
+      stored = {}
+    }
+    const storedConfiguration = typeof stored.projectUrl === "string" && typeof stored.publishableKey === "string"
+      ? { projectUrl: stored.projectUrl, publishableKey: stored.publishableKey }
+      : null
+    const configuration = storedConfiguration ?? loadCloudBootstrapConfiguration(this.bootstrapConfigurationPath)
+    return {
+      ...(configuration ?? {}),
+      enabledLibraryIds: Array.isArray(stored.enabledLibraryIds) ? stored.enabledLibraryIds.filter((item): item is string => typeof item === "string") : [],
+      pendingProfiles: stored.pendingProfiles && typeof stored.pendingProfiles === "object" ? stored.pendingProfiles : {},
     }
   }
 

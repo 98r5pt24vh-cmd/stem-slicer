@@ -1,4 +1,5 @@
 import { Dialog } from "@base-ui/react/dialog"
+import { Popover } from "@base-ui/react/popover"
 import { Select as BaseSelect } from "@base-ui/react/select"
 import {
   AudioLines,
@@ -94,6 +95,8 @@ import type {
   CloudState,
   GenerateResult,
   GenerationStorageUsage,
+  EngineComponentState,
+  EngineStatus,
   KeyIssueReport,
   LibraryIssueType,
   LibraryOverview,
@@ -1794,22 +1797,72 @@ function AppSidebar({
   ))
   const [primaryProfileName, setPrimaryProfileName] = useState(PRIMARY_PRODUCER)
   const [applicationLogoUrl, setApplicationLogoUrl] = useState("")
+  const [engineStatus, setEngineStatus] = useState<EngineStatus | null>(null)
 
   useEffect(() => {
     const api = window.stemSlicer
     if (!api) return
     let active = true
+    const stopListening = api.onEngineStatus((status) => {
+      if (active) setEngineStatus(status)
+    })
+    const refreshStatus = () => {
+      void api.getEngineStatus()
+        .then((status) => {
+          if (active) setEngineStatus(status)
+        })
+        .catch(() => undefined)
+    }
+    const statusTimer = window.setInterval(refreshStatus, 1_500)
     void api.getEngineStatus()
       .then((status) => {
-        if (active) setApplicationLogoUrl(api.mediaUrl(`${status.sourceRoot}/assets/app-icon.png`))
+        if (!active) return
+        setEngineStatus(status)
+        setApplicationLogoUrl(api.mediaUrl(`${status.sourceRoot}/assets/app-icon.png`))
       })
       .catch(() => {
         if (active) setApplicationLogoUrl("")
       })
     return () => {
       active = false
+      window.clearInterval(statusTimer)
+      stopListening()
     }
   }, [])
+
+  const retryEngines = useCallback(() => {
+    const api = window.stemSlicer
+    if (!api) return
+    void api.retryEngine()
+      .then(setEngineStatus)
+      .catch(() => api.getEngineStatus().then(setEngineStatus).catch(() => undefined))
+  }, [])
+
+  const engineState = engineStatus?.state ?? "starting"
+  const engineDisplayState = engineState === "idle" ? "starting" : engineState
+  const engineLabel = engineDisplayState === "ready"
+    ? "Engines ready"
+    : engineDisplayState === "starting"
+      ? "Starting engines…"
+      : "Engine unavailable"
+  const EngineIcon = engineDisplayState === "ready"
+    ? Check
+    : engineDisplayState === "starting"
+      ? RefreshCw
+      : AlertTriangle
+  const componentLabels: Array<[keyof EngineStatus["components"], string]> = [
+    ["musicalAnalysis", "Musical analysis"],
+    ["midi", "MIDI"],
+    ["categorization", "Categorization"],
+  ]
+  const componentStateLabel = (state: EngineComponentState) => ({
+    idle: "Waiting",
+    starting: "Starting…",
+    ready: "Ready",
+    "on-demand": "On demand",
+    failed: "Unavailable",
+    unavailable: "Unavailable",
+  })[state]
 
   useEffect(() => {
     const updateCloudProfile = (state?: CloudState) => {
@@ -1899,11 +1952,50 @@ function AppSidebar({
       </button>
 
       <div className="sidebar-footer">
-        <div className="connection-dot" aria-hidden="true" />
-        <div className="sidebar-copy">
-          <strong>Electron prototype</strong>
-          <span>Local engine · 1.9B cache</span>
-        </div>
+        <Popover.Root>
+          <Popover.Trigger
+            className={cn("engine-status-trigger app-no-drag", `is-${engineDisplayState}`)}
+            aria-label={`${engineLabel}. Open engine details.`}
+            title={collapsed ? engineLabel : undefined}
+          >
+            <span className="engine-status-icon" aria-hidden="true">
+              <EngineIcon />
+            </span>
+            <span className="sidebar-copy" role="status" aria-live="polite" aria-atomic="true">
+              <strong>{engineLabel}</strong>
+              <span>{engineDisplayState === "ready" ? "Local processing" : engineStatus?.message ?? "Preparing local processing"}</span>
+            </span>
+            <ChevronDown className="engine-status-chevron" aria-hidden="true" />
+          </Popover.Trigger>
+          <Popover.Portal>
+            <Popover.Positioner className="engine-status-positioner" side="right" align="end" sideOffset={8}>
+              <Popover.Popup className="engine-status-popover">
+                <div className="engine-status-popover-header">
+                  <Popover.Title>Engine status</Popover.Title>
+                  <Popover.Description>{engineStatus?.message ?? "Preparing local processing."}</Popover.Description>
+                </div>
+                <ul className="engine-component-list">
+                  {componentLabels.map(([component, label]) => {
+                    const status = engineStatus?.components[component] ?? { state: "starting" as const, message: "Starting…" }
+                    return (
+                      <li key={component} className={cn("engine-component", `is-${status.state}`)} title={status.message}>
+                        <span className="engine-component-indicator" aria-hidden="true" />
+                        <span>{label}</span>
+                        <strong>{componentStateLabel(status.state)}</strong>
+                      </li>
+                    )
+                  })}
+                </ul>
+                {engineDisplayState === "failed" ? (
+                  <Button type="button" variant="outline" size="sm" className="engine-retry" onClick={retryEngines}>
+                    <RefreshCw aria-hidden="true" />
+                    Retry engines
+                  </Button>
+                ) : null}
+              </Popover.Popup>
+            </Popover.Positioner>
+          </Popover.Portal>
+        </Popover.Root>
       </div>
     </aside>
   )
@@ -3072,9 +3164,6 @@ function GenerateView({
         eyebrow="Workspace / Generate"
         title="Build a new layer stack"
         description="Set the musical constraints, inspect the catalogue and work through the generated layers below."
-        actions={
-          <Badge variant={library.databaseDetected && !library.error ? "success" : "warning"}>{library.databaseDetected ? "1.9B catalogue connected" : "Catalogue unavailable"}</Badge>
-        }
       />
 
       <Card className="generation-console">
@@ -3311,7 +3400,7 @@ function OperationSwitch({ checked, onChange, label, accent }: { checked: boolea
 
 function StemSlicerView({ onExtractionCompleted }: { onExtractionCompleted: (entry: ExtractionHistoryEntry) => void }) {
   const [sourceFolder, setSourceFolder] = useState("")
-  const [outputFolder, setOutputFolder] = useState("/Users/nrgy/Documents/Stem Slicer/Extracted Layers/Loop Pack Name")
+  const [outputFolder, setOutputFolder] = useState("")
   const [layerExtraction, setLayerExtraction] = useState(true)
   const [keyAnalysis, setKeyAnalysis] = useState(true)
   const [keyMode, setKeyMode] = useState("Detected")
@@ -3328,6 +3417,18 @@ function StemSlicerView({ onExtractionCompleted }: { onExtractionCompleted: (ent
 
   const enabledOperationCount = [layerExtraction, keyAnalysis, conversion].filter(Boolean).length
   const batchResult = batchJob.result as BatchJobResult | null
+
+  useEffect(() => {
+    let active = true
+    void window.stemSlicer?.getEnvironment()
+      .then((environment) => {
+        if (active && environment) setOutputFolder(environment.defaultExtractionOutputPath)
+      })
+      .catch(() => undefined)
+    return () => {
+      active = false
+    }
+  }, [])
   const previewValues: Record<string, string> = {
     Key: keyNotation === "Sharps #" ? "A♯m" : "B♭m",
     "Loop name": "CALLMEUR3",
@@ -3377,7 +3478,7 @@ function StemSlicerView({ onExtractionCompleted }: { onExtractionCompleted: (ent
       batchJob.cancel()
       return
     }
-    if (!sourceFolder || enabledOperationCount === 0) return
+    if (!sourceFolder || !outputFolder || enabledOperationCount === 0) return
     const tokenMap: Record<string, string> = {
       Key: "KEY",
       "Loop name": "LOOP NAME",
@@ -3708,7 +3809,7 @@ function QuickToolsView({
 
   return (
     <div className="page-stack quick-tools-page">
-      <PageHeader eyebrow="Workspace / Quick Tools" title="Quick tools" description="Choose one focused operation. Every accepted 1.9B option stays available inside its tool." />
+      <PageHeader eyebrow="Workspace / Quick Tools" title="Quick tools" description="Choose one focused operation. Every available option stays inside its tool." />
 
       <section className="quick-tools-shell" aria-label="Quick tools workspace">
         <div className="quick-tool-tabs" role="group" aria-label="Choose a quick tool">
@@ -3817,7 +3918,7 @@ function QuickToolsView({
                 </div>
                 <div className="quick-scan-details">
                   <div className="quick-scan-details-heading">
-                    <div><span>Analysis details</span><small>Technical output from the 1.9B scan engine</small></div>
+                    <div><span>Analysis details</span><small>Technical output from the local scan engine</small></div>
                     <span>{scanFile ? basename(scanFile) : "No file selected"}</span>
                   </div>
                   <div className="quick-scan-detail-grid">
@@ -5504,7 +5605,7 @@ function CloudView({ library, section, embedded = false, generationHistory = [] 
         <Card className="cloud-setup-card cloud-auth-card">
           <CardHeader>
             <span className="cloud-symbol"><UsersRound aria-hidden="true" /></span>
-            <div><CardTitle>{authMode === "sign-in" ? "Sign in to Slicer Cloud" : "Create a test producer"}</CardTitle><CardDescription>{cloud.projectUrl.replace(/^https?:\/\//, "")} · encrypted local session</CardDescription></div>
+            <div><CardTitle>{authMode === "sign-in" ? "Sign in to Slicer Cloud" : "Create a producer account"}</CardTitle><CardDescription>{cloud.projectUrl.replace(/^https?:\/\//, "")} · encrypted local session</CardDescription></div>
           </CardHeader>
           <CardContent>
             <div className="cloud-auth-switch" role="group" aria-label="Cloud account action">

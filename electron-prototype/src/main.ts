@@ -1,7 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, net, protocol, shell } from "electron"
 import type { IpcMainInvokeEvent } from "electron"
 import path from "node:path"
-import { homedir } from "node:os"
 import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs"
 import { pathToFileURL } from "node:url"
 
@@ -14,6 +13,7 @@ import { readLibraryOverview, readLibraryProducers, readLibrarySelectionSummary,
 import { mediaMimeType, parseByteRange } from "./main/media-range"
 import { migrationModules } from "./main/migration-modules"
 import { readGenerationStorageUsage } from "./main/storage-usage"
+import { resolveUserPaths } from "./main/user-paths"
 import type {
   AudioJobKind,
   AudioJobRequest,
@@ -31,29 +31,13 @@ import type {
   SetLayerCategoryRequest,
 } from "./shared/contracts"
 
-const acceptedCachePath = path.join(
-  homedir(),
-  "Library",
-  "Caches",
-  "Stem Slicer",
-  "1.9",
-)
-const prototypeCachePath = path.join(
-  homedir(),
-  "Library",
-  "Caches",
-  "Stem Slicer",
-  "electron-prototype",
-)
+const userPaths = resolveUserPaths()
+const { acceptedCachePath, prototypeCachePath, documentsRoot, generatedOutputRoot } = userPaths
 const profileImageRoot = path.join(prototypeCachePath, "profile-images")
-const generatedOutputRoot = path.join(
-  homedir(),
-  "Documents",
-  "Stem Slicer",
-  "Generated Loops",
-)
-const documentsRoot = path.join(homedir(), "Documents")
 const slicerHistoryRoot = historyRoot(documentsRoot)
+const cloudBootstrapConfigurationPath = app.isPackaged
+  ? path.join(process.resourcesPath, "cloud", "project.json")
+  : process.env.SLICER_CLOUD_CONFIGURATION_PATH?.trim() || undefined
 const dragPreviewMaxSize = 40
 const profileImageMaxSize = 512
 
@@ -186,8 +170,20 @@ protocol.registerSchemesAsPrivileged([
   },
 ])
 
-const audioEngine = new AudioEngineService(app.getAppPath(), prototypeCachePath, process.resourcesPath, app.isPackaged)
-const cloudService = new CloudService(acceptedCachePath, prototypeCachePath)
+const audioEngine = new AudioEngineService(
+  app.getAppPath(),
+  prototypeCachePath,
+  process.resourcesPath,
+  app.isPackaged,
+  acceptedCachePath,
+)
+const cloudService = new CloudService(acceptedCachePath, prototypeCachePath, cloudBootstrapConfigurationPath)
+
+audioEngine.onStatus((status) => {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.webContents.send("engine:status", status)
+  }
+})
 
 async function runCloudRequest<T>(request: () => T | PromiseLike<T>): Promise<T> {
   try {
@@ -248,6 +244,7 @@ function registerIpc(): void {
     prototypeCachePath,
     acceptedCachePath,
     acceptedCacheAccess: "read-only" as const,
+    defaultExtractionOutputPath: userPaths.defaultExtractionOutputPath,
   }))
   ipcMain.handle("history:get-storage-usage", () => readGenerationStorageUsage(generatedOutputRoot))
   ipcMain.handle("history:get-path-storage-usage", (_event: IpcMainInvokeEvent, paths: unknown) => {
@@ -319,6 +316,7 @@ function registerIpc(): void {
   )
   ipcMain.handle("migration:get-modules", () => migrationModules)
   ipcMain.handle("engine:get-status", () => audioEngine.status())
+  ipcMain.handle("engine:retry", () => audioEngine.retry())
   ipcMain.handle("cloud:get-state", () => runCloudRequest(() => cloudService.getState()))
   ipcMain.handle("cloud:configure", (_event: IpcMainInvokeEvent, request: ConfigureCloudRequest) => {
     if (!request || typeof request.projectUrl !== "string" || typeof request.publishableKey !== "string") {
@@ -491,6 +489,7 @@ app.whenReady().then(() => {
   })
   registerIpc()
   createWindow()
+  void audioEngine.start().catch(() => undefined)
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

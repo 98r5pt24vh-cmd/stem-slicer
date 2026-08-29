@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from "electron"
 
-import type { AudioJobEvent, CloudPublishEvent, StemSlicerDesktopApi } from "./shared/contracts"
+import type { AudioJobEvent, CloudPublishEvent, EngineStatus, StemSlicerDesktopApi } from "./shared/contracts"
 
 const api: StemSlicerDesktopApi = {
   getEnvironment: () => ipcRenderer.invoke("app:get-environment"),
@@ -24,6 +24,12 @@ const api: StemSlicerDesktopApi = {
   setLayerCategory: (request) => ipcRenderer.invoke("source-loop:set-layer-category", request),
   getMigrationModules: () => ipcRenderer.invoke("migration:get-modules"),
   getEngineStatus: () => ipcRenderer.invoke("engine:get-status"),
+  retryEngine: () => ipcRenderer.invoke("engine:retry"),
+  onEngineStatus: (listener) => {
+    const handler = (_event: IpcRendererEvent, payload: EngineStatus) => listener(payload)
+    ipcRenderer.on("engine:status", handler)
+    return () => ipcRenderer.removeListener("engine:status", handler)
+  },
   getCloudState: () => ipcRenderer.invoke("cloud:get-state"),
   configureCloud: (request) => ipcRenderer.invoke("cloud:configure", request),
   cloudSignUp: (request) => ipcRenderer.invoke("cloud:sign-up", request),

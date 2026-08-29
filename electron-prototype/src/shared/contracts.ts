@@ -17,6 +17,7 @@ export interface AppEnvironment {
   prototypeCachePath: string
   acceptedCachePath: string
   acceptedCacheAccess: "read-only"
+  defaultExtractionOutputPath: string
 }
 
 export interface GenerationStorageUsage {
@@ -561,12 +562,26 @@ export interface AudioJobEvent {
   error?: string
 }
 
+export type EngineState = "idle" | "starting" | "ready" | "failed" | "unavailable"
+
+export type EngineComponentState = EngineState | "on-demand"
+
+export interface EngineComponentStatus {
+  state: EngineComponentState
+  message: string
+}
+
 export interface EngineStatus {
   available: boolean
-  state: "ready" | "starting" | "unavailable"
+  state: EngineState
   pythonPath: string
   sourceRoot: string
   message: string
+  components: {
+    musicalAnalysis: EngineComponentStatus
+    midi: EngineComponentStatus
+    categorization: EngineComponentStatus
+  }
 }
 
 export interface StemSlicerDesktopApi {
@@ -591,6 +606,8 @@ export interface StemSlicerDesktopApi {
   setLayerCategory: (request: SetLayerCategoryRequest) => Promise<SourceLoopEditorLayer>
   getMigrationModules: () => Promise<MigrationModule[]>
   getEngineStatus: () => Promise<EngineStatus>
+  retryEngine: () => Promise<EngineStatus>
+  onEngineStatus: (listener: (status: EngineStatus) => void) => () => void
   getCloudState: () => Promise<CloudState>
   configureCloud: (request: ConfigureCloudRequest) => Promise<CloudState>
   cloudSignUp: (request: CloudSignUpRequest) => Promise<CloudState>

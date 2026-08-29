@@ -4,7 +4,7 @@ import { existsSync } from "node:fs"
 import path from "node:path"
 
 const packagingRoot = path.resolve(process.cwd(), ".packaging")
-const packagedResources = ["engine", "python", ".runtime"]
+const packagedResources = ["engine", "python", ".runtime", "cloud"]
   .map((name) => path.join(packagingRoot, name))
   .filter((resourcePath) => existsSync(resourcePath))
 

@@ -11,13 +11,16 @@ import type {
   AudioJobKind,
   AudioJobRequest,
   AudioJobStart,
+  EngineComponentState,
   EngineStatus,
 } from "../shared/contracts"
 import { resolveRuntimePaths } from "./runtime-paths"
 
 interface BridgeMessage {
   id?: string
-  type: "ready" | "progress" | "artifact" | "result" | "error"
+  type: "ready" | "engine-status" | "progress" | "artifact" | "result" | "error"
+  component?: keyof EngineStatus["components"]
+  state?: EngineComponentState
   message?: string
   error?: string
   phase?: string
@@ -71,8 +74,20 @@ export class AudioEngineService {
   private ready = false
   private lastError = ""
   private readonly activeJobs = new Map<string, ActiveJob>()
+  private readonly statusListeners = new Set<(status: EngineStatus) => void>()
+  private components: EngineStatus["components"] = {
+    musicalAnalysis: { state: "idle", message: "Waiting to start." },
+    midi: { state: "idle", message: "Waiting to start." },
+    categorization: { state: "on-demand", message: "Loads when a library needs categorization." },
+  }
 
-  constructor(appRoot: string, prototypeCachePath: string, resourcesPath = appRoot, isPackaged = false) {
+  constructor(
+    appRoot: string,
+    prototypeCachePath: string,
+    resourcesPath = appRoot,
+    isPackaged = false,
+    private readonly acceptedCachePath = path.join(path.dirname(prototypeCachePath), "1.9"),
+  ) {
     this.appRoot = appRoot
     this.prototypeCachePath = prototypeCachePath
     const runtime = resolveRuntimePaths({ appRoot, resourcesPath, isPackaged })
@@ -86,15 +101,74 @@ export class AudioEngineService {
     const available = existsSync(this.bridgePath)
       && existsSync(this.sourceRoot)
       && (path.isAbsolute(this.pythonPath) ? existsSync(this.pythonPath) : true)
+    const processAlive = Boolean(this.process && this.process.exitCode === null && this.process.signalCode === null)
+    const stoppedUnexpectedly = this.ready && !processAlive
+    const state = !available
+      ? "unavailable"
+      : stoppedUnexpectedly
+        ? "failed"
+        : this.ready && processAlive
+          ? "ready"
+          : this.process || this.startupPromise
+            ? "starting"
+            : this.lastError
+              ? "failed"
+              : "idle"
+    const components = !available
+      ? {
+          musicalAnalysis: { state: "unavailable" as const, message: "The local engine runtime is unavailable." },
+          midi: { state: "unavailable" as const, message: "The local engine runtime is unavailable." },
+          categorization: { state: "unavailable" as const, message: "The local engine runtime is unavailable." },
+        }
+      : stoppedUnexpectedly
+        ? {
+            musicalAnalysis: { state: "failed" as const, message: "The local engine process stopped." },
+            midi: { state: "failed" as const, message: "The local engine process stopped." },
+            categorization: { state: "failed" as const, message: "The local engine process stopped." },
+          }
+        : this.components
     return {
       available,
-      state: this.ready ? "ready" : this.process ? "starting" : available ? "starting" : "unavailable",
+      state,
       pythonPath: this.pythonPath,
       sourceRoot: this.sourceRoot,
-      message: this.ready
-        ? "Validated 1.9B engines are connected."
-        : this.lastError || (available ? "Engine runtime will start on first use." : "The local engine runtime is unavailable."),
+      message: state === "ready"
+        ? "Local engines are ready."
+        : state === "starting" || state === "idle"
+          ? "Local engines are starting in the background."
+          : this.lastError || (stoppedUnexpectedly ? "The local engine process stopped." : "The local engine runtime is unavailable."),
+      components,
     }
+  }
+
+  onStatus(listener: (status: EngineStatus) => void): () => void {
+    this.statusListeners.add(listener)
+    return () => this.statusListeners.delete(listener)
+  }
+
+  async start(): Promise<EngineStatus> {
+    await this.ensureStarted()
+    return this.status()
+  }
+
+  async retry(): Promise<EngineStatus> {
+    if (this.process && (this.process.exitCode !== null || this.process.signalCode !== null)) {
+      this.resetProcessState()
+    }
+    if (this.ready && this.process && this.process.exitCode === null && this.process.signalCode === null) return this.status()
+    if (this.startupPromise) {
+      await this.startupPromise
+      return this.status()
+    }
+    this.lastError = ""
+    this.components = {
+      musicalAnalysis: { state: "idle", message: "Waiting to start." },
+      midi: { state: "idle", message: "Waiting to start." },
+      categorization: { state: "on-demand", message: "Loads when a library needs categorization." },
+    }
+    this.emitStatus()
+    await this.ensureStarted()
+    return this.status()
   }
 
   async startJob(kind: AudioJobKind, payload: AudioJobRequest, sender: WebContents): Promise<AudioJobStart> {
@@ -134,20 +208,33 @@ export class AudioEngineService {
   }
 
   private ensureStarted(): Promise<void> {
+    if (this.process && (this.process.exitCode !== null || this.process.signalCode !== null)) {
+      this.resetProcessState()
+    }
     if (this.ready && this.process) return Promise.resolve()
     if (this.startupPromise) return this.startupPromise
-    if (!existsSync(this.bridgePath)) return Promise.reject(new Error(`Engine bridge is missing: ${this.bridgePath}`))
-    if (!existsSync(this.sourceRoot)) return Promise.reject(new Error(`Canonical 1.9B source is missing: ${this.sourceRoot}`))
+    if (!existsSync(this.bridgePath)) return this.failBeforeStart(`Engine bridge is missing: ${this.bridgePath}`)
+    if (!existsSync(this.sourceRoot)) return this.failBeforeStart(`Canonical source is missing: ${this.sourceRoot}`)
+
+    this.lastError = ""
+    this.components = {
+      musicalAnalysis: { state: "starting", message: "Starting musical analysis…" },
+      midi: { state: "starting", message: "Loading MIDI conversion…" },
+      categorization: { state: "on-demand", message: "Loads when a library needs categorization." },
+    }
 
     this.startupPromise = new Promise<void>((resolve, reject) => {
       this.resolveStartup = resolve
       this.rejectStartup = reject
     })
+    this.emitStatus()
     const environment = {
       ...process.env,
       PYTHONUNBUFFERED: "1",
       PYTHONDONTWRITEBYTECODE: "1",
       STEM_SLICER_SOURCE_ROOT: this.sourceRoot,
+      STEM_SLICER_ACCEPTED_CACHE_ROOT: this.acceptedCachePath,
+      STEM_SLICER_PROTOTYPE_CACHE_ROOT: this.prototypeCachePath,
       STEM_SLICER_DIAGNOSTICS_DIR: path.join(this.prototypeCachePath, "diagnostics"),
       PATH: `${this.runtimeBin}${path.delimiter}${process.env.PATH || ""}`,
     }
@@ -172,9 +259,9 @@ export class AudioEngineService {
     })
     const startupTimer = setTimeout(() => {
       if (this.ready || this.process !== child) return
-      this.handleProcessFailure(new Error("The local engine did not start within 20 seconds."))
+      this.handleProcessFailure(new Error("The local engines did not finish starting within five minutes."))
       child.kill("SIGTERM")
-    }, 20_000)
+    }, 300_000)
     child.once("exit", () => clearTimeout(startupTimer))
     return this.startupPromise
   }
@@ -197,13 +284,30 @@ export class AudioEngineService {
   }
 
   private handleMessage(message: BridgeMessage): void {
+    if (message.type === "engine-status" && message.component && message.state) {
+      this.components = {
+        ...this.components,
+        [message.component]: {
+          state: message.state,
+          message: message.message || this.components[message.component].message,
+        },
+      }
+      this.emitStatus()
+      return
+    }
     if (message.type === "ready") {
       this.ready = true
       this.lastError = ""
+      this.components = {
+        ...this.components,
+        musicalAnalysis: { state: "ready", message: "Ready for key and tempo analysis." },
+        midi: { state: "ready", message: "Ready for audio-to-MIDI conversion." },
+      }
       this.resolveStartup?.()
       this.resolveStartup = null
       this.rejectStartup = null
       this.startupPromise = null
+      this.emitStatus()
       return
     }
     if (!message.id) return
@@ -278,7 +382,18 @@ export class AudioEngineService {
     }
     this.activeJobs.clear()
     this.resetProcessState()
-    child?.kill("SIGTERM")
+    this.components = {
+      musicalAnalysis: { state: "idle", message: "Waiting to restart." },
+      midi: { state: "idle", message: "Waiting to restart." },
+      categorization: { state: "on-demand", message: "Loads when a library needs categorization." },
+    }
+    this.emitStatus()
+    if (child) {
+      child.once("exit", () => void this.start().catch(() => undefined))
+      child.kill("SIGTERM")
+    } else {
+      void this.start().catch(() => undefined)
+    }
   }
 
   private handleProcessFailure(error: Error): void {
@@ -294,7 +409,30 @@ export class AudioEngineService {
       })
     }
     this.activeJobs.clear()
+    this.components = {
+      musicalAnalysis: { state: "failed", message: error.message },
+      midi: { state: "failed", message: error.message },
+      categorization: { state: "failed", message: error.message },
+    }
     this.resetProcessState()
+    this.emitStatus()
+  }
+
+  private failBeforeStart(message: string): Promise<void> {
+    const error = new Error(message)
+    this.lastError = message
+    this.components = {
+      musicalAnalysis: { state: "failed", message },
+      midi: { state: "failed", message },
+      categorization: { state: "failed", message },
+    }
+    this.emitStatus()
+    return Promise.reject(error)
+  }
+
+  private emitStatus(): void {
+    const status = this.status()
+    for (const listener of this.statusListeners) listener(status)
   }
 
   private resetProcessState(): void {
