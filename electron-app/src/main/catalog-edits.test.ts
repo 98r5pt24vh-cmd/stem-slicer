@@ -8,6 +8,11 @@ import { describe, expect, it } from "vitest"
 import { dismissCategoryCorrections, getSourceLoopEditor, listCategoryCorrections, saveSourceLoopEdit, setLayerCategory } from "./catalog-edits"
 import { readLibraryOverview } from "./library-cache"
 
+// These are native, disk-backed SQLite integration tests. Windows runners can
+// spend several seconds in durable schema and journal writes under antivirus
+// scanning, so keep a file-scoped ceiling without relaxing any assertion.
+const DISK_BACKED_SQLITE_TEST_TIMEOUT_MS = 20_000
+
 function recoverableTestRoot(): string {
   const trash = path.join(homedir(), ".Trash")
   const parent = existsSync(trash) ? trash : tmpdir()
@@ -101,7 +106,7 @@ describe("catalogue edits", () => {
     const truth = feedback.prepare("SELECT corrected_category FROM category_truth_feedback WHERE identity = 'identity-1'").get() as unknown as { corrected_category: string }
     feedback.close()
     expect(truth.corrected_category).toBe("Counter")
-  })
+  }, DISK_BACKED_SQLITE_TEST_TIMEOUT_MS)
 
   it("saves a card category correction as a manual label", () => {
     const fixture = createCatalogue()
@@ -122,7 +127,7 @@ describe("catalogue edits", () => {
         correctedCategory: "Texture",
       }),
     ])
-  })
+  }, DISK_BACKED_SQLITE_TEST_TIMEOUT_MS)
 
   it("hides a correction from history without deleting its truth feedback", () => {
     const fixture = createCatalogue()
@@ -139,7 +144,7 @@ describe("catalogue edits", () => {
     const truth = feedback.prepare("SELECT corrected_category FROM category_truth_feedback WHERE identity = 'identity-2'").get() as unknown as { corrected_category: string }
     feedback.close()
     expect(truth.corrected_category).toBe("Texture")
-  })
+  }, DISK_BACKED_SQLITE_TEST_TIMEOUT_MS)
 
   it("excludes only the selected layer while preserving its catalogue record", () => {
     const fixture = createCatalogue()
@@ -172,5 +177,5 @@ describe("catalogue edits", () => {
     expect(overview.error).toBeUndefined()
     expect(overview.totalLayers).toBe(1)
     expect(overview.roots[0]?.layerCount).toBe(1)
-  })
+  }, DISK_BACKED_SQLITE_TEST_TIMEOUT_MS)
 })

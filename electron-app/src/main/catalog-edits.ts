@@ -130,8 +130,21 @@ function ensureEditorColumns(database: DatabaseSync): void {
     ["trim_start_beats", "REAL NOT NULL DEFAULT 0"],
     ["trim_end_beats", "REAL NOT NULL DEFAULT 0"],
   ]
-  for (const [name, definition] of additions) {
-    if (!columns.has(name)) database.exec(`ALTER TABLE layer_cache ADD COLUMN ${name} ${definition}`)
+  const missing = additions.filter(([name]) => !columns.has(name))
+  if (missing.length === 0) return
+
+  // A fresh editor upgrade can add several columns. Keep those schema writes
+  // in one transaction so Windows performs one durable commit instead of one
+  // disk flush per ALTER TABLE.
+  database.exec("BEGIN IMMEDIATE")
+  try {
+    for (const [name, definition] of missing) {
+      database.exec(`ALTER TABLE layer_cache ADD COLUMN ${name} ${definition}`)
+    }
+    database.exec("COMMIT")
+  } catch (error) {
+    database.exec("ROLLBACK")
+    throw error
   }
 }
 
