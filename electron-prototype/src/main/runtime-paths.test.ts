@@ -16,6 +16,7 @@ describe("resolveRuntimePaths", () => {
     expect(paths.bridgePath).toBe(path.join("/workspace/electron-prototype", "python", "engine_bridge.py"))
     expect(paths.sourceRoot).toBe(path.resolve("/workspace/electron-prototype", "../../../..", "Stem Slicer Repository"))
     expect(paths.pythonPath).toBe("python3.12")
+    expect(paths.workingDirectory).toBe("/workspace/electron-prototype")
   })
 
   it("uses packaged Windows resources instead of macOS paths", () => {
@@ -29,7 +30,8 @@ describe("resolveRuntimePaths", () => {
 
     expect(paths.bridgePath).toBe(path.join("C:\\Program Files\\Slicer\\resources", "python", "engine_bridge.py"))
     expect(paths.sourceRoot).toBe(path.join("C:\\Program Files\\Slicer\\resources", "engine"))
-    expect(paths.pythonPath).toBe("python.exe")
+    expect(paths.pythonPath).toBe(path.join("C:\\Program Files\\Slicer\\resources", ".runtime", "python", "python.exe"))
+    expect(paths.workingDirectory).toBe("C:\\Program Files\\Slicer\\resources")
   })
 
   it("honours explicit runtime overrides on every platform", () => {

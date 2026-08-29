@@ -60,12 +60,12 @@ const JOB_LABELS: Record<AudioJobKind, string> = {
 }
 
 export class AudioEngineService {
-  private readonly appRoot: string
   private readonly prototypeCachePath: string
   private readonly bridgePath: string
   private readonly sourceRoot: string
   private readonly pythonPath: string
   private readonly runtimeBin: string
+  private readonly workingDirectory: string
   private process: ChildProcessWithoutNullStreams | null = null
   private stdoutBuffer = ""
   private startupPromise: Promise<void> | null = null
@@ -88,13 +88,13 @@ export class AudioEngineService {
     isPackaged = false,
     private readonly acceptedCachePath = path.join(path.dirname(prototypeCachePath), "1.9"),
   ) {
-    this.appRoot = appRoot
     this.prototypeCachePath = prototypeCachePath
     const runtime = resolveRuntimePaths({ appRoot, resourcesPath, isPackaged })
     this.bridgePath = runtime.bridgePath
     this.sourceRoot = runtime.sourceRoot
     this.pythonPath = runtime.pythonPath
     this.runtimeBin = runtime.runtimeBin
+    this.workingDirectory = runtime.workingDirectory
   }
 
   status(): EngineStatus {
@@ -215,6 +215,12 @@ export class AudioEngineService {
     if (this.startupPromise) return this.startupPromise
     if (!existsSync(this.bridgePath)) return this.failBeforeStart(`Engine bridge is missing: ${this.bridgePath}`)
     if (!existsSync(this.sourceRoot)) return this.failBeforeStart(`Canonical source is missing: ${this.sourceRoot}`)
+    if (path.isAbsolute(this.pythonPath) && !existsSync(this.pythonPath)) {
+      return this.failBeforeStart(`Engine runtime is missing: ${this.pythonPath}. Extract the complete Slicer archive before opening the application.`)
+    }
+    if (!existsSync(this.workingDirectory)) {
+      return this.failBeforeStart(`Engine working directory is missing: ${this.workingDirectory}`)
+    }
 
     this.lastError = ""
     this.components = {
@@ -239,7 +245,7 @@ export class AudioEngineService {
       PATH: `${this.runtimeBin}${path.delimiter}${process.env.PATH || ""}`,
     }
     const child = spawn(this.pythonPath, ["-u", this.bridgePath], {
-      cwd: this.appRoot,
+      cwd: this.workingDirectory,
       env: environment,
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,

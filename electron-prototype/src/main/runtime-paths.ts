@@ -11,6 +11,7 @@ export interface RuntimePathOptions {
 
 export interface RuntimePaths {
   resourceRoot: string
+  workingDirectory: string
   bridgePath: string
   sourceRoot: string
   pythonPath: string
@@ -33,18 +34,23 @@ export function resolveRuntimePaths({
   const configuredPython = environment.STEM_SLICER_PYTHON?.trim()
   const configuredSourceRoot = environment.STEM_SLICER_SOURCE_ROOT?.trim()
 
-  const pythonPath = configuredPython || (platform === "win32"
-    ? firstExistingPath([
+  const pythonCandidates = platform === "win32"
+    ? [
         path.join(runtimeRoot, "python", "python.exe"),
         path.join(runtimeRoot, "python", "Scripts", "python.exe"),
-      ], "python.exe")
-    : firstExistingPath([
+      ]
+    : [
         path.join(runtimeRoot, "python", "bin", "python3.12"),
         path.join(runtimeRoot, "python", "bin", "python3"),
-      ], "python3.12"))
+      ]
+  const pythonPath = configuredPython || firstExistingPath(
+    pythonCandidates,
+    isPackaged ? pythonCandidates[0] : platform === "win32" ? "python.exe" : "python3.12",
+  )
 
   return {
     resourceRoot,
+    workingDirectory: resourceRoot,
     bridgePath: path.join(resourceRoot, "python", "engine_bridge.py"),
     sourceRoot: configuredSourceRoot || (isPackaged
       ? path.join(resourcesPath, "engine")
