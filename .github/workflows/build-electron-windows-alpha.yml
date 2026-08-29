@@ -214,10 +214,19 @@ jobs:
           $exe = Get-ChildItem validation-output -Recurse -Filter Slicer.exe | Select-Object -First 1
           if (-not $exe) { throw "The extracted ZIP has no Slicer.exe." }
           node electron-prototype/scripts/audit-electron-windows-bundle.mjs $exe.Directory.FullName
+          $engineSmoke = Join-Path (Resolve-Path validation-output) "packaged-engine-status.json"
+          $env:SLICER_ENGINE_SMOKE_FILE = $engineSmoke
           $process = Start-Process -FilePath $exe.FullName -PassThru
-          Start-Sleep -Seconds 15
-          if ($process.HasExited) { throw "The extracted Slicer.exe exited during startup with code $($process.ExitCode)." }
+          $deadline = (Get-Date).AddMinutes(5)
+          while (-not (Test-Path $engineSmoke) -and (Get-Date) -lt $deadline) {
+            Start-Sleep -Seconds 2
+            if ($process.HasExited) { throw "The extracted Slicer.exe exited during engine startup with code $($process.ExitCode)." }
+          }
+          if (-not (Test-Path $engineSmoke)) { throw "The exact extracted Slicer.exe did not report an engine state within five minutes." }
+          $engineState = Get-Content $engineSmoke -Raw | ConvertFrom-Json
+          if ($engineState.state -ne "ready") { throw "The exact extracted Slicer.exe engine failed: $($engineState.message)" }
           Stop-Process -Id $process.Id
+          Get-Content $engineSmoke
           Get-FileHash $zip.FullName -Algorithm SHA256 | Format-List
           Copy-Item $zip.FullName "Slicer-Electron-Windows-Cloud-Alpha.zip"
 

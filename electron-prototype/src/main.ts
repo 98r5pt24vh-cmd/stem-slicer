@@ -40,6 +40,7 @@ const cloudBootstrapConfigurationPath = app.isPackaged
   : process.env.SLICER_CLOUD_CONFIGURATION_PATH?.trim() || undefined
 const dragPreviewMaxSize = 40
 const profileImageMaxSize = 512
+const engineSmokeStatusPath = process.env.SLICER_ENGINE_SMOKE_FILE?.trim()
 
 function importProfileImage(sourcePath: string): string {
   if (!existsSync(sourcePath) || !statSync(sourcePath).isFile()) {
@@ -180,6 +181,9 @@ const audioEngine = new AudioEngineService(
 const cloudService = new CloudService(acceptedCachePath, prototypeCachePath, cloudBootstrapConfigurationPath)
 
 audioEngine.onStatus((status) => {
+  if (engineSmokeStatusPath && ["ready", "failed", "unavailable"].includes(status.state)) {
+    writeFileSync(engineSmokeStatusPath, `${JSON.stringify(status)}\n`, "utf8")
+  }
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed()) window.webContents.send("engine:status", status)
   }
