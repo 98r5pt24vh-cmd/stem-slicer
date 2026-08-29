@@ -6373,6 +6373,9 @@ td strong {
 
 .profile-main .cloud-profile-card {
   height: 100%;
+  border-block-end: 0;
+  border-end-start-radius: 0;
+  border-end-end-radius: 0;
 }
 
 .profile-main .cloud-profile-preview,
