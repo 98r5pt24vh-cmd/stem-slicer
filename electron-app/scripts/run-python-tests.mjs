@@ -27,8 +27,8 @@ function run(command, args, options = {}) {
 
 const localRuntime = process.platform === "win32"
   ? [
-      path.join(electronRoot, ".runtime", "python", "python.exe"),
       path.join(electronRoot, ".runtime", "python", "Scripts", "python.exe"),
+      path.join(electronRoot, ".runtime", "python", "python.exe"),
     ]
   : [
       path.join(electronRoot, ".runtime", "python", "bin", "python3.12"),

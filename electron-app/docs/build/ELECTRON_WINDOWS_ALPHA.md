@@ -37,7 +37,7 @@ resources/
     bin/bungee.exe
     vendor-windows/
   .runtime/
-    python/python.exe
+    python/Scripts/python.exe
 ```
 
 At runtime, Electron resolves this layout from `process.resourcesPath`.

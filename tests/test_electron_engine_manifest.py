@@ -103,6 +103,8 @@ class ElectronEngineManifestTests(unittest.TestCase):
         self.assertIn("smoke-electron-midi.py", workflow)
         self.assertIn("pnpm run validate:source", workflow)
         self.assertIn("pnpm run engine:check", workflow)
+        self.assertIn(".packaging/.runtime/python/Scripts/python.exe", workflow)
+        self.assertNotIn(".packaging/.runtime/python/python.exe", workflow)
         self.assertNotIn("Get-ChildItem -Path . -Filter *.py", workflow)
         self.assertNotIn("PySide6==", workflow)
         self.assertNotIn("diagnose_midi_startup.py", workflow)

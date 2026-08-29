@@ -165,7 +165,7 @@ jobs:
         env:
           STEM_SLICER_SOURCE_ROOT: ${{ github.workspace }}\electron-app\.packaging\engine
         run: |
-          '{"type":"shutdown"}' | & "electron-app/.packaging/.runtime/python/python.exe" -u "electron-app/.packaging/python/engine_bridge.py" | Tee-Object -FilePath bridge-smoke.log
+          '{"type":"shutdown"}' | & "electron-app/.packaging/.runtime/python/Scripts/python.exe" -u "electron-app/.packaging/python/engine_bridge.py" | Tee-Object -FilePath bridge-smoke.log
           if ($LASTEXITCODE -ne 0) { throw "The staged Electron engine bridge failed." }
           if (-not (Select-String -Path bridge-smoke.log -Pattern '"type":\s*"ready"' -Quiet)) { throw "The bridge never became ready." }
 

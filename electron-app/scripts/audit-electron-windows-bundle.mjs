@@ -12,7 +12,7 @@ const requiredFiles = [
   "Slicer.exe",
   "resources/app.asar",
   "resources/python/engine_bridge.py",
-  "resources/.runtime/python/python.exe",
+  "resources/.runtime/python/Scripts/python.exe",
   "resources/engine/engine.py",
   "resources/engine/generation_policy.py",
   "resources/engine/generation_renderer.py",
