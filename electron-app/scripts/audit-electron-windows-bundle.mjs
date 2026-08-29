@@ -12,7 +12,7 @@ const requiredFiles = [
   "Slicer.exe",
   "resources/app.asar",
   "resources/python/engine_bridge.py",
-  "resources/.runtime/python/Scripts/python.exe",
+  "resources/.runtime/python/python.exe",
   "resources/engine/engine.py",
   "resources/engine/generation_policy.py",
   "resources/engine/generation_renderer.py",
@@ -36,6 +36,10 @@ for (const relativePath of requiredFiles) {
   if (!existsSync(absolutePath) || !statSync(absolutePath).isFile() || statSync(absolutePath).size <= 0) {
     throw new Error(`Required Windows payload is missing or empty: ${relativePath}`)
   }
+}
+
+if (existsSync(path.join(applicationRoot, "resources/.runtime/python/pyvenv.cfg"))) {
+  throw new Error("The Windows bundle contains a non-relocatable Python virtual environment.")
 }
 
 const forbiddenBuildArtifacts = [

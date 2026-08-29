@@ -2444,6 +2444,7 @@ def main() -> int:
         {
             "type": "ready",
             "python": sys.executable,
+            "basePrefix": sys.base_prefix,
             "version": sys.version.split()[0],
             "sourceRoot": str(SOURCE_ROOT),
         }

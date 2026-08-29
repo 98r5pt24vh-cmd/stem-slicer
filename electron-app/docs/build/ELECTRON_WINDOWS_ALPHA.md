@@ -8,6 +8,9 @@ This document covers the Electron application and its private Windows alpha.
 - Use official CPython 3.12.10 x64 and validate the exact version before packaging.
 - Create one fresh `.runtime/python` and use that same runtime for Python tests,
   the strict MIDI gate and the packaged application.
+- On Windows, copy the official CPython installation into that directory as a
+  self-contained runtime. Never package a venv: its launcher retains the
+  absolute build-runner interpreter path and fails after handoff.
 - Package the Python bridge, engine source, models, FFmpeg, Bungee and OpenKeyScan outside `app.asar` so the native runtime can execute them.
 - Stage engine files only from `python/engine-manifest.json`; never copy every
   root Python file into the Electron bundle.
@@ -37,7 +40,7 @@ resources/
     bin/bungee.exe
     vendor-windows/
   .runtime/
-    python/Scripts/python.exe
+    python/python.exe
 ```
 
 At runtime, Electron resolves this layout from `process.resourcesPath`.

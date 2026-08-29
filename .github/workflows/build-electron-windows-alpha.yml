@@ -67,6 +67,15 @@ jobs:
           SLICER_BOOTSTRAP_PYTHON: python
         run: pnpm run runtime:setup
 
+      - name: Verify the self-contained Windows runtime
+        working-directory: electron-app
+        shell: pwsh
+        run: |
+          $runtime = (Resolve-Path ".runtime/python").Path
+          if (Test-Path ".runtime/python/pyvenv.cfg") { throw "The packaged runtime must not be a Windows venv." }
+          & ".runtime/python/python.exe" -c "import json, pathlib, sys; expected = pathlib.Path(sys.argv[1]).resolve(); prefix = pathlib.Path(sys.prefix).resolve(); base = pathlib.Path(sys.base_prefix).resolve(); assert prefix == expected, (prefix, expected); assert base == expected, (base, expected); assert 'hostedtoolcache' not in str(base).casefold(), base; print(json.dumps({'executable': sys.executable, 'prefix': str(prefix), 'basePrefix': str(base)}))" $runtime
+          if ($LASTEXITCODE -ne 0) { throw "The Windows runtime is not self-contained." }
+
       - name: Fetch and verify the pinned offline MERT payload
         run: python scripts/fetch_mert_payload.py
 
@@ -77,7 +86,7 @@ jobs:
       - name: Validate the strict Electron MIDI lifecycle
         shell: pwsh
         run: |
-          & "electron-app/.runtime/python/Scripts/python.exe" `
+          & "electron-app/.runtime/python/python.exe" `
             electron-app/scripts/smoke-electron-midi.py `
             --source-root . `
             --bridge-root electron-app/python `
@@ -165,9 +174,18 @@ jobs:
         env:
           STEM_SLICER_SOURCE_ROOT: ${{ github.workspace }}\electron-app\.packaging\engine
         run: |
-          '{"type":"shutdown"}' | & "electron-app/.packaging/.runtime/python/Scripts/python.exe" -u "electron-app/.packaging/python/engine_bridge.py" | Tee-Object -FilePath bridge-smoke.log
+          '{"type":"shutdown"}' | & "electron-app/.packaging/.runtime/python/python.exe" -u "electron-app/.packaging/python/engine_bridge.py" | Tee-Object -FilePath bridge-smoke.log
           if ($LASTEXITCODE -ne 0) { throw "The staged Electron engine bridge failed." }
-          if (-not (Select-String -Path bridge-smoke.log -Pattern '"type":\s*"ready"' -Quiet)) { throw "The bridge never became ready." }
+          $readyLine = Get-Content bridge-smoke.log | Where-Object { $_ -match '"type":\s*"ready"' } | Select-Object -Last 1
+          if (-not $readyLine) { throw "The bridge never became ready." }
+          $ready = $readyLine | ConvertFrom-Json
+          $expectedRuntime = (Resolve-Path "electron-app/.packaging/.runtime/python").Path
+          if ([IO.Path]::GetFullPath($ready.basePrefix) -ne [IO.Path]::GetFullPath($expectedRuntime)) {
+            throw "The staged bridge escaped its packaged Python runtime: $($ready.basePrefix)"
+          }
+          if ($ready.python -match 'hostedtoolcache' -or $ready.basePrefix -match 'hostedtoolcache') {
+            throw "The staged bridge still references the GitHub runner Python."
+          }
 
       - name: Make the unsigned Windows alpha ZIP
         working-directory: electron-app

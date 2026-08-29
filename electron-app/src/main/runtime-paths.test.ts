@@ -30,7 +30,7 @@ describe("resolveRuntimePaths", () => {
 
     expect(paths.bridgePath).toBe(path.join("C:\\Program Files\\Slicer\\resources", "python", "engine_bridge.py"))
     expect(paths.sourceRoot).toBe(path.join("C:\\Program Files\\Slicer\\resources", "engine"))
-    expect(paths.pythonPath).toBe(path.join("C:\\Program Files\\Slicer\\resources", ".runtime", "python", "Scripts", "python.exe"))
+    expect(paths.pythonPath).toBe(path.join("C:\\Program Files\\Slicer\\resources", ".runtime", "python", "python.exe"))
     expect(paths.workingDirectory).toBe("C:\\Program Files\\Slicer\\resources")
   })
 

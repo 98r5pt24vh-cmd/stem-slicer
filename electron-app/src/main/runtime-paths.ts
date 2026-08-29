@@ -36,8 +36,8 @@ export function resolveRuntimePaths({
 
   const pythonCandidates = platform === "win32"
     ? [
-        path.join(runtimeRoot, "python", "Scripts", "python.exe"),
         path.join(runtimeRoot, "python", "python.exe"),
+        path.join(runtimeRoot, "python", "Scripts", "python.exe"),
       ]
     : [
         path.join(runtimeRoot, "python", "bin", "python3.12"),
