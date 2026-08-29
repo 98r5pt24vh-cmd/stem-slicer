@@ -53,9 +53,20 @@ def tree_digest(root: Path) -> tuple[int, int, str]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parent.parent)
+    parser.add_argument(
+        "--profile",
+        choices=("pyside", "electron"),
+        default="pyside",
+        help="Electron uses the source analyzer and therefore needs only the offline MERT tree.",
+    )
     args = parser.parse_args()
     failed = False
-    for relative, expected in EXPECTED.items():
+    expected_trees = (
+        EXPECTED
+        if args.profile == "pyside"
+        else {"models/huggingface": EXPECTED["models/huggingface"]}
+    )
+    for relative, expected in expected_trees.items():
         root = args.root / relative
         if not root.is_dir():
             print(f"MISSING {relative}")

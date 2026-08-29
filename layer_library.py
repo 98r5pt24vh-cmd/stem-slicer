@@ -114,6 +114,10 @@ class UnknownLayerError(LayerLibraryError):
     """Raised when editing a manual label for a layer absent from the cache."""
 
 
+class InvalidLayerLibraryFolderError(LayerLibraryError):
+    """Raised when a selected folder is not an extracted layer library."""
+
+
 class _ScanCancelled(Exception):
     pass
 
@@ -143,6 +147,23 @@ class ParsedLayerName:
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
+
+
+@dataclass(frozen=True)
+class LayerFolderInspection:
+    """Cheap filename-only validation performed before an expensive scan."""
+
+    library_root: str
+    audio_file_count: int
+    extracted_layer_count: int
+
+    @property
+    def unrecognized_audio_count(self) -> int:
+        return self.audio_file_count - self.extracted_layer_count
+
+    @property
+    def valid(self) -> bool:
+        return self.audio_file_count > 0 and self.unrecognized_audio_count == 0
 
 
 @dataclass(frozen=True)
@@ -816,6 +837,56 @@ def _iter_audio_files(root: Path) -> list[Path]:
     return paths
 
 
+def inspect_layer_library_folder(
+    library_root: str | os.PathLike[str],
+) -> LayerFolderInspection:
+    """Identify Slicer-extracted layers without reading the audio payload.
+
+    Slicer exports every extracted file with an explicit layer suffix such as
+    ``_L3`` or ``Layer 3``.  Walking filenames is therefore both more reliable
+    and dramatically cheaper than hashing or decoding a folder of source
+    loops merely to discover that it is not a Generate library.
+    """
+
+    root = Path(library_root).expanduser().resolve(strict=False)
+    if not root.is_dir():
+        raise NotADirectoryError(f"Layer library is not a directory: {root}")
+    paths = _iter_audio_files(root)
+    extracted_layer_count = sum(
+        1 for path in paths if parse_layer_filename(path.name).layer_index is not None
+    )
+    return LayerFolderInspection(
+        library_root=str(root),
+        audio_file_count=len(paths),
+        extracted_layer_count=extracted_layer_count,
+    )
+
+
+def require_extracted_layer_folder(
+    library_root: str | os.PathLike[str],
+) -> LayerFolderInspection:
+    """Return a valid layer-folder inspection or an actionable rejection."""
+
+    inspection = inspect_layer_library_folder(library_root)
+    if inspection.audio_file_count == 0:
+        raise InvalidLayerLibraryFolderError(
+            "This folder contains no supported audio files."
+        )
+    if inspection.extracted_layer_count == 0:
+        raise InvalidLayerLibraryFolderError(
+            "This folder doesn't contain extracted layers. "
+            "Add the layer folder created by Slicer instead."
+        )
+    if inspection.unrecognized_audio_count > 0:
+        raise InvalidLayerLibraryFolderError(
+            "This folder mixes extracted layers with "
+            f"{inspection.unrecognized_audio_count} unextracted audio "
+            f"{'file' if inspection.unrecognized_audio_count == 1 else 'files'}. "
+            "Add a folder containing extracted layers only."
+        )
+    return inspection
+
+
 class LayerLibrary:
     """Recursive scanner backed by an external, versioned SQLite cache."""
 
@@ -921,6 +992,13 @@ class LayerLibrary:
                 key_confidence_status TEXT NOT NULL DEFAULT 'unavailable',
                 key_confidence_source_loop_id TEXT,
                 key_analyzer_id TEXT,
+                manual_bpm INTEGER,
+                manual_key TEXT,
+                manual_mode TEXT,
+                manual_excluded INTEGER NOT NULL DEFAULT 0,
+                timeline_offset_beats REAL NOT NULL DEFAULT 0,
+                trim_start_beats REAL NOT NULL DEFAULT 0,
+                trim_end_beats REAL NOT NULL DEFAULT 0,
                 updated_at_ns INTEGER NOT NULL
             )
             """
@@ -940,6 +1018,13 @@ class LayerLibrary:
             "key_confidence_status": "TEXT NOT NULL DEFAULT 'unavailable'",
             "key_confidence_source_loop_id": "TEXT",
             "key_analyzer_id": "TEXT",
+            "manual_bpm": "INTEGER",
+            "manual_key": "TEXT",
+            "manual_mode": "TEXT",
+            "manual_excluded": "INTEGER NOT NULL DEFAULT 0",
+            "timeline_offset_beats": "REAL NOT NULL DEFAULT 0",
+            "trim_start_beats": "REAL NOT NULL DEFAULT 0",
+            "trim_end_beats": "REAL NOT NULL DEFAULT 0",
         }
         for column, declaration in migrations.items():
             if column not in existing_columns:
@@ -1105,6 +1190,7 @@ class LayerLibrary:
         *,
         progress: Callable[[ScanProgress], None] | None = None,
         cancel: CancelToken | Callable[[], bool] | None = None,
+        atomic: bool = False,
     ) -> ScanResult:
         """Scan recursively and return a deterministic immutable inventory."""
 
@@ -1554,7 +1640,7 @@ class LayerLibrary:
                         if len(pending) >= self.classification_batch_size:
                             if not flush_pending():
                                 break
-                        if (offset + 1) % 32 == 0:
+                        if not atomic and (offset + 1) % 32 == 0:
                             connection.commit()
                         continue
                     if progress:
@@ -1590,11 +1676,15 @@ class LayerLibrary:
                     prediction,
                     prediction_classifier_id,
                 )
-                if (offset + 1) % 32 == 0:
+                if not atomic and (offset + 1) % 32 == 0:
                     connection.commit()
             if not was_cancelled and pending:
                 flush_pending()
-            connection.commit()
+            if was_cancelled and atomic:
+                connection.rollback()
+                records.clear()
+            else:
+                connection.commit()
         finally:
             connection.close()
 
@@ -1885,6 +1975,7 @@ def scan_layer_library(
     classification_batch_size: int | None = None,
     progress: Callable[[ScanProgress], None] | None = None,
     cancel: CancelToken | Callable[[], bool] | None = None,
+    atomic: bool = False,
 ) -> ScanResult:
     """Convenience wrapper for one-shot scans."""
 
@@ -1896,7 +1987,7 @@ def scan_layer_library(
         key_confidence_index=key_confidence_index,
         duration_reader=duration_reader,
         classification_batch_size=classification_batch_size,
-    ).scan(progress=progress, cancel=cancel)
+    ).scan(progress=progress, cancel=cancel, atomic=atomic)
 
 
 def most_recent_cached_library_root(
@@ -1937,7 +2028,9 @@ __all__ = [
     "CacheInsideLibraryError",
     "CacheSchemaError",
     "CancelToken",
+    "InvalidLayerLibraryFolderError",
     "LayerClassifier",
+    "LayerFolderInspection",
     "LayerLibrary",
     "LayerLibraryError",
     "LayerMetadata",
@@ -1950,8 +2043,10 @@ __all__ = [
     "TruthCSVError",
     "UnknownLayerError",
     "canonical_label",
+    "inspect_layer_library_folder",
     "parse_layer_filename",
     "read_audio_duration",
+    "require_extracted_layer_folder",
     "most_recent_cached_library_root",
     "scan_layer_library",
 ]

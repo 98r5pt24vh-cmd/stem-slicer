@@ -44,7 +44,7 @@ def download(url: str, destination: Path, expected_sha256: str) -> None:
         print(f"Already verified: {destination.name}", flush=True)
         return
     destination.parent.mkdir(parents=True, exist_ok=True)
-    request = Request(url, headers={"User-Agent": "Stem-Slicer-Windows-Build/1.9B"})
+    request = Request(url, headers={"User-Agent": "Slicer-Electron-Build/0.1.0"})
     with tempfile.NamedTemporaryFile(
         prefix=f"{destination.name}.", suffix=".download", dir=destination.parent, delete=False
     ) as temporary:

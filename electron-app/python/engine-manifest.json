@@ -1,0 +1,64 @@
+{
+  "commonFiles": [
+    "THIRD_PARTY_NOTICES.md",
+    "audio_convert.py",
+    "diagnostics_runtime.py",
+    "engine.py",
+    "filename_templates.py",
+    "generation_policy.py",
+    "generation_renderer.py",
+    "key_confidence.py",
+    "key_detection.py",
+    "layer_library.py",
+    "layer_role_classifier.py",
+    "mert_client.py",
+    "mert_feature_cache.py",
+    "mert_worker.py",
+    "midi_conversion.py",
+    "nospace_engine.py",
+    "sequence_decoder.py",
+    "assets/app-icon.png",
+    "assets/key-and-bpm-engine-warmup.wav",
+    "analyzer/checkpoints/deeprhythm-0.7.pth",
+    "analyzer/checkpoints/openkeyscan3.pt",
+    "analyzer/dataset.py",
+    "analyzer/eval.py",
+    "analyzer/key_inference.py",
+    "analyzer/loop_bpm.py",
+    "analyzer/model.py",
+    "analyzer/openkeyscan_analyzer_server.py",
+    "analyzer/deeprhythm/__init__.py",
+    "analyzer/deeprhythm/audio_proc/bandfilter.py",
+    "analyzer/deeprhythm/audio_proc/hcqm.py",
+    "analyzer/deeprhythm/audio_proc/onset.py",
+    "analyzer/deeprhythm/batch_infer.py",
+    "analyzer/deeprhythm/model/frame_cnn.py",
+    "analyzer/deeprhythm/model/infer.py",
+    "analyzer/deeprhythm/model/predictor.py",
+    "analyzer/deeprhythm/utils.py",
+    "basic_pitch/__init__.py",
+    "basic_pitch/commandline_printing.py",
+    "basic_pitch/constants.py",
+    "basic_pitch/inference.py",
+    "basic_pitch/note_creation.py",
+    "basic_pitch/saved_models/icassp_2022/nmp.onnx",
+    "licenses/Bungee-MPL-2.0.txt",
+    "licenses/DeepRhythm-LICENSE.txt",
+    "licenses/basic-pitch/LICENSE",
+    "licenses/basic-pitch/NOTICE",
+    "models/layer_roles_v4_2.joblib",
+    "models/layer_roles_v4_2.json"
+  ],
+  "externalDirectories": [
+    "models/huggingface"
+  ],
+  "platformFiles": {
+    "win32": [
+      "bin/bungee.exe",
+      "vendor-windows/ffmpeg-bin/ffmpeg.exe"
+    ],
+    "darwin": [
+      "bin/bungee"
+    ]
+  }
+}

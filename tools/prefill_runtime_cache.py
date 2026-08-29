@@ -23,29 +23,24 @@ import time
 from typing import Callable, Iterator, Mapping, Sequence, TextIO
 
 
-PROTOTYPE_ROOT = Path(__file__).resolve().parent.parent
-PROJECT_ROOT = PROTOTYPE_ROOT.parent
-if str(PROTOTYPE_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROTOTYPE_ROOT))
+REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
+if str(REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPOSITORY_ROOT))
 
 from layer_library import CancelToken, LayerLibrary, ScanProgress, ScanResult
 from mert_client import MertLayerClassifier
 from mert_feature_cache import default_feature_cache_path
 
 
-DEFAULT_ARTIFACT_PATH = PROTOTYPE_ROOT / "models" / "layer_roles_v3.joblib"
-DEFAULT_HF_CACHE_DIR = (
-    PROJECT_ROOT
-    / "research"
-    / "layer_role_benchmark_2026-07-30"
-    / "cache"
-    / "huggingface"
-)
+DEFAULT_ARTIFACT_PATH = REPOSITORY_ROOT / "models" / "layer_roles_v4_2.joblib"
+DEFAULT_HF_CACHE_DIR = REPOSITORY_ROOT / "models" / "huggingface"
 DEFAULT_LIBRARY_CACHE_PATH = (
     Path.home()
     / "Library"
     / "Caches"
-    / "Stem Slicer Generate Prototype"
+    / "Stem Slicer"
+    / "1.9"
+    / "generate"
     / "library.sqlite3"
 )
 SUPPORTED_ARTIFACT_SCHEMAS = frozenset(

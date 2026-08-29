@@ -1,0 +1,346 @@
+import { existsSync } from "node:fs"
+import path from "node:path"
+import { DatabaseSync } from "node:sqlite"
+
+import type {
+  CategorySummary,
+  LibraryOverview,
+  ProducerIdentity,
+  LibraryProducerSummary,
+  LibraryRootSummary,
+  LibrarySelectionSummary,
+  LibrarySelectionSummaryRequest,
+} from "../shared/contracts"
+import { createProducerIdentityResolver, PRIMARY_PRODUCER, sourceProvenance, uniqueProducerCredits } from "../lib/source-provenance"
+
+interface CountRow {
+  count: number
+}
+
+interface RootRow {
+  library_root: string
+  layer_count: number
+  analyzed_key_count: number
+}
+
+interface CategoryRow {
+  category: string
+  layer_count: number
+}
+
+interface RootCategoryRow extends CategoryRow {
+  library_root: string
+}
+
+interface ProducerSourceRow {
+  library_root: string
+  source_loop_id: string
+  filename: string
+}
+
+export interface LibrarySelectionSourceRow extends ProducerSourceRow {
+  category: string
+}
+
+function activeLayerWhere(database: DatabaseSync): string {
+  const columns = database.prepare("PRAGMA table_info(layer_cache)").all() as unknown as Array<{ name: string }>
+  return columns.some((column) => column.name === "manual_excluded")
+    ? " WHERE COALESCE(manual_excluded, 0) = 0"
+    : ""
+}
+
+function basename(libraryPath: string): string {
+  return path.basename(libraryPath) || libraryPath
+}
+
+export function readLibraryOverview(acceptedCachePath: string): LibraryOverview {
+  const databasePath = path.join(acceptedCachePath, "generate", "library.sqlite3")
+
+  if (!existsSync(databasePath)) {
+    return {
+      databaseDetected: false,
+      databasePath,
+      totalLayers: 0,
+      roots: [],
+      categories: [],
+      error: "Catalogue 1.9B introuvable.",
+    }
+  }
+
+  let database: DatabaseSync | undefined
+  try {
+    database = new DatabaseSync(databasePath, { readOnly: true })
+    const activeWhere = activeLayerWhere(database)
+    const total = database
+      .prepare(`SELECT COUNT(*) AS count FROM layer_cache${activeWhere}`)
+      .get() as unknown as CountRow
+    const rootRows = database
+      .prepare(`
+        SELECT
+          library_root,
+          COUNT(*) AS layer_count,
+          SUM(CASE WHEN key_confidence_status <> 'unavailable' THEN 1 ELSE 0 END)
+            AS analyzed_key_count
+        FROM layer_cache
+        ${activeWhere}
+        GROUP BY library_root
+        ORDER BY layer_count DESC
+      `)
+      .all() as unknown as RootRow[]
+    const categoryRows = database
+      .prepare(`
+        SELECT
+          COALESCE(NULLIF(manual_label, ''), NULLIF(predicted_label, ''), 'Unknown')
+            AS category,
+          COUNT(*) AS layer_count
+        FROM layer_cache
+        ${activeWhere}
+        GROUP BY category
+        ORDER BY layer_count DESC
+        LIMIT 24
+      `)
+      .all() as unknown as CategoryRow[]
+    const rootCategoryRows = database
+      .prepare(`
+        SELECT
+          library_root,
+          COALESCE(NULLIF(manual_label, ''), NULLIF(predicted_label, ''), 'Unknown')
+            AS category,
+          COUNT(*) AS layer_count
+        FROM layer_cache
+        ${activeWhere}
+        GROUP BY library_root, category
+        ORDER BY library_root, layer_count DESC
+      `)
+      .all() as unknown as RootCategoryRow[]
+    const categoriesByRoot = new Map<string, CategorySummary[]>()
+    for (const row of rootCategoryRows) {
+      const categories = categoriesByRoot.get(row.library_root) ?? []
+      categories.push({ name: row.category, count: Number(row.layer_count) })
+      categoriesByRoot.set(row.library_root, categories)
+    }
+
+    const roots: LibraryRootSummary[] = rootRows.map((row) => ({
+      path: row.library_root,
+      name: basename(row.library_root),
+      layerCount: Number(row.layer_count),
+      analyzedKeyCount: Number(row.analyzed_key_count),
+      keyCoverage:
+        Number(row.analyzed_key_count) > 0 ? "analyzed" : "unavailable",
+      categories: categoriesByRoot.get(row.library_root) ?? [],
+    }))
+    const categories: CategorySummary[] = categoryRows.map((row) => ({
+      name: row.category,
+      count: Number(row.layer_count),
+    }))
+
+    return {
+      databaseDetected: true,
+      databasePath,
+      totalLayers: Number(total.count),
+      roots,
+      categories,
+    }
+  } catch (error) {
+    return {
+      databaseDetected: true,
+      databasePath,
+      totalLayers: 0,
+      roots: [],
+      categories: [],
+      error: error instanceof Error ? error.message : "Lecture du catalogue impossible.",
+    }
+  } finally {
+    database?.close()
+  }
+}
+
+export function summarizeLibraryProducers(
+  rows: ProducerSourceRow[],
+  primaryProducer = PRIMARY_PRODUCER,
+  libraryRoots?: string[],
+  producerIdentities: ProducerIdentity[] = [],
+): LibraryProducerSummary[] {
+  const selectedRoots = libraryRoots == null ? null : new Set(libraryRoots.map((root) => path.resolve(root)))
+  const identityResolver = createProducerIdentityResolver(producerIdentities, primaryProducer)
+  const loops = new Map<string, {
+    libraryRoot: string
+    layerCount: number
+    producers: Set<string>
+  }>()
+  for (const row of rows) {
+    if (selectedRoots && !selectedRoots.has(path.resolve(row.library_root))) continue
+    const loopIdentity = `${row.library_root}\u0000${row.source_loop_id}`
+    const loop = loops.get(loopIdentity) ?? {
+      libraryRoot: row.library_root,
+      layerCount: 0,
+      producers: new Set<string>(),
+    }
+    loop.layerCount += 1
+    for (const producer of sourceProvenance(row.filename, row.source_loop_id, primaryProducer, identityResolver).producers) {
+      loop.producers.add(producer)
+    }
+    loops.set(loopIdentity, loop)
+  }
+
+  const summaries = new Map<string, {
+    name: string
+    layerCount: number
+    loopIds: Set<string>
+    libraryRoots: Set<string>
+    loopCountsByCreditCount: Record<string, number>
+    layerCountsByCreditCount: Record<string, number>
+  }>()
+  for (const [loopIdentity, loop] of loops) {
+    const credits = uniqueProducerCredits(loop.producers, primaryProducer)
+    const creditCount = String(credits.length)
+    for (const producer of credits) {
+      const key = producer.toLowerCase()
+      const summary = summaries.get(key) ?? {
+        name: producer,
+        layerCount: 0,
+        loopIds: new Set<string>(),
+        libraryRoots: new Set<string>(),
+        loopCountsByCreditCount: {},
+        layerCountsByCreditCount: {},
+      }
+      summary.layerCount += loop.layerCount
+      summary.loopIds.add(loopIdentity)
+      summary.libraryRoots.add(loop.libraryRoot)
+      summary.loopCountsByCreditCount[creditCount] = (summary.loopCountsByCreditCount[creditCount] ?? 0) + 1
+      summary.layerCountsByCreditCount[creditCount] = (summary.layerCountsByCreditCount[creditCount] ?? 0) + loop.layerCount
+      summaries.set(key, summary)
+    }
+  }
+  return [...summaries.values()]
+    .map((summary) => ({
+      name: summary.name,
+      layerCount: summary.layerCount,
+      loopCount: summary.loopIds.size,
+      loopCountsByCreditCount: summary.loopCountsByCreditCount,
+      layerCountsByCreditCount: summary.layerCountsByCreditCount,
+      libraryRoots: [...summary.libraryRoots].sort((left, right) => left.localeCompare(right)),
+    }))
+    .sort((left, right) => {
+      if (left.name.toLowerCase() === primaryProducer.toLowerCase()) return -1
+      if (right.name.toLowerCase() === primaryProducer.toLowerCase()) return 1
+      return right.loopCount - left.loopCount || left.name.localeCompare(right.name)
+    })
+}
+
+export function summarizeLibrarySelection(
+  rows: LibrarySelectionSourceRow[],
+  request: Pick<LibrarySelectionSummaryRequest, "allowedProducers" | "allowedCreditCounts" | "primaryProducer">,
+  producerIdentities: ProducerIdentity[] = [],
+): LibrarySelectionSummary {
+  const identityResolver = createProducerIdentityResolver(producerIdentities, request.primaryProducer)
+  const allowedProducerKeys = new Set(request.allowedProducers.map((producer) => producer.trim().toLowerCase()).filter(Boolean))
+  const anyCreditCount = request.allowedCreditCounts.includes(0)
+  const maximumCreditCount = anyCreditCount ? Number.POSITIVE_INFINITY : Math.max(1, ...request.allowedCreditCounts)
+  const loops = new Set<string>()
+  const categories = new Map<string, number>()
+  let layerCount = 0
+
+  for (const row of rows) {
+    const credits = uniqueProducerCredits(
+      sourceProvenance(row.filename, row.source_loop_id, request.primaryProducer, identityResolver).producers,
+      request.primaryProducer,
+    )
+    if (allowedProducerKeys.size > 0 && credits.some((producer) => !allowedProducerKeys.has(producer.toLowerCase()))) continue
+    if (credits.length > maximumCreditCount) continue
+    layerCount += 1
+    loops.add(`${row.library_root}\u0000${row.source_loop_id}`)
+    categories.set(row.category, (categories.get(row.category) ?? 0) + 1)
+  }
+
+  return {
+    layerCount,
+    loopCount: loops.size,
+    categories: [...categories].map(([name, count]) => ({ name, count }))
+      .sort((left, right) => right.count - left.count || left.name.localeCompare(right.name)),
+  }
+}
+
+export function readLibrarySelectionSummary(
+  acceptedCachePath: string,
+  request: LibrarySelectionSummaryRequest,
+): LibrarySelectionSummary {
+  const databasePath = path.join(acceptedCachePath, "generate", "library.sqlite3")
+  if (!existsSync(databasePath) || request.libraryRoots.length === 0) {
+    return { layerCount: 0, loopCount: 0, categories: [] }
+  }
+  const roots = [...new Set(request.libraryRoots.filter((root) => path.isAbsolute(root)).map((root) => path.resolve(root)))]
+  if (roots.length === 0) return { layerCount: 0, loopCount: 0, categories: [] }
+  const database = new DatabaseSync(databasePath, { readOnly: true })
+  try {
+    const activeCondition = activeLayerWhere(database).replace(/^\s*WHERE\s+/i, "")
+    const rows = database.prepare(`
+      SELECT
+        library_root,
+        source_loop_id,
+        filename,
+        COALESCE(NULLIF(manual_label, ''), NULLIF(predicted_label, ''), 'Unknown') AS category
+      FROM layer_cache
+      WHERE ${activeCondition ? `${activeCondition} AND ` : ""}library_root IN (${roots.map(() => "?").join(",")})
+    `).all(...roots) as unknown as LibrarySelectionSourceRow[]
+    return summarizeLibrarySelection(rows, request, request.producerIdentities)
+  } finally {
+    database.close()
+  }
+}
+
+export function readLibraryProducers(
+  acceptedCachePath: string,
+  primaryProducer = PRIMARY_PRODUCER,
+  libraryRoots?: string[],
+  producerIdentities: ProducerIdentity[] = [],
+): LibraryProducerSummary[] {
+  const databasePath = path.join(acceptedCachePath, "generate", "library.sqlite3")
+  if (!existsSync(databasePath)) return []
+  const database = new DatabaseSync(databasePath, { readOnly: true })
+  try {
+    const activeWhere = activeLayerWhere(database)
+    const rows = database.prepare(`
+      SELECT library_root, source_loop_id, filename
+      FROM layer_cache
+      ${activeWhere}
+    `).all() as unknown as ProducerSourceRow[]
+    return summarizeLibraryProducers(rows, primaryProducer, libraryRoots, producerIdentities)
+  } finally {
+    database.close()
+  }
+}
+
+export function removeLibraryRoot(
+  acceptedCachePath: string,
+  requestedRoot: string,
+): LibraryOverview {
+  const databasePath = path.join(acceptedCachePath, "generate", "library.sqlite3")
+  if (!existsSync(databasePath)) {
+    throw new Error("The Generate catalogue is unavailable.")
+  }
+  if (typeof requestedRoot !== "string" || !path.isAbsolute(requestedRoot)) {
+    throw new Error("The indexed library path is invalid.")
+  }
+
+  const libraryRoot = path.resolve(requestedRoot)
+  const database = new DatabaseSync(databasePath)
+  try {
+    database.exec("BEGIN IMMEDIATE")
+    database
+      .prepare("DELETE FROM layer_cache WHERE library_root = ?")
+      .run(libraryRoot)
+    database.exec("COMMIT")
+  } catch (error) {
+    try {
+      database.exec("ROLLBACK")
+    } catch {
+      // Preserve the original database error.
+    }
+    throw error
+  } finally {
+    database.close()
+  }
+
+  return readLibraryOverview(acceptedCachePath)
+}

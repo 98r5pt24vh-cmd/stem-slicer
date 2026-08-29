@@ -16,13 +16,16 @@ from layer_library import (
     TAXONOMY,
     CacheInsideLibraryError,
     CancelToken,
+    InvalidLayerLibraryFolderError,
     LayerLibrary,
     LayerPrediction,
     LayerRecord,
     TruthCSVError,
     UnknownLayerError,
     most_recent_cached_library_root,
+    inspect_layer_library_folder,
     parse_layer_filename,
+    require_extracted_layer_folder,
 )
 
 
@@ -128,6 +131,41 @@ class LayerLibraryTests(unittest.TestCase):
             AUDIO_EXTENSIONS,
             {".mp3", ".wav", ".flac", ".aif", ".aiff", ".m4a"},
         )
+
+    def test_fast_folder_inspection_accepts_only_extracted_layer_names(self):
+        _write_wave(self.library / "Loop 140 C_L1.wav")
+        _write_wave(self.library / "Loop 140 C_L2.wav")
+
+        inspection = inspect_layer_library_folder(self.library)
+
+        self.assertTrue(inspection.valid)
+        self.assertEqual(inspection.audio_file_count, 2)
+        self.assertEqual(inspection.extracted_layer_count, 2)
+        self.assertEqual(require_extracted_layer_folder(self.library), inspection)
+
+    def test_fast_folder_inspection_rejects_source_loops_before_audio_scan(self):
+        _write_wave(self.library / "Loop 140 C.wav")
+        _write_wave(self.library / "Another Loop 152 Fm.wav")
+
+        inspection = inspect_layer_library_folder(self.library)
+
+        self.assertFalse(inspection.valid)
+        self.assertEqual(inspection.extracted_layer_count, 0)
+        with self.assertRaisesRegex(
+            InvalidLayerLibraryFolderError,
+            "doesn't contain extracted layers",
+        ):
+            require_extracted_layer_folder(self.library)
+
+    def test_fast_folder_inspection_rejects_mixed_audio(self):
+        _write_wave(self.library / "Loop 140 C_L1.wav")
+        _write_wave(self.library / "Loop 140 C.wav")
+
+        with self.assertRaisesRegex(
+            InvalidLayerLibraryFolderError,
+            "mixes extracted layers with 1 unextracted audio file",
+        ):
+            require_extracted_layer_folder(self.library)
 
     def test_legacy_rhythmic_pluck_cache_values_merge_into_pluck(self):
         normalized = LayerPrediction(
@@ -777,6 +815,70 @@ class LayerLibraryTests(unittest.TestCase):
         self.assertEqual(result.records[0].manual_label, "Pluck")
         self.assertEqual(result.records[0].effective_label, "Pluck")
 
+    def test_production_scan_replaces_stale_csv_truth_with_model_prediction(self):
+        audio = self.library / "A#m LOOP 144 XT_L1.wav"
+        _write_wave(audio)
+        truth_path = self.root / "development-truth.csv"
+        truth_path.write_text(
+            "file,label\nA#m LOOP 144 XT_L1.wav,Bass\n",
+            encoding="utf-8",
+        )
+        cache = self.state / "cache.sqlite"
+        development_classifier = _Classifier()
+        seeded = LayerLibrary(
+            self.library,
+            cache,
+            classifier=development_classifier,
+            truth_csv_path=truth_path,
+        ).scan()
+        self.assertEqual(seeded.records[0].effective_label, "Bass")
+        self.assertEqual(development_classifier.calls, [])
+
+        production_classifier = _Classifier()
+        result = LayerLibrary(
+            self.library,
+            cache,
+            classifier=production_classifier,
+        ).scan()
+
+        self.assertEqual(production_classifier.calls, ["A#m LOOP 144 XT_L1.wav"])
+        self.assertEqual(result.records[0].effective_label, "Lead")
+        self.assertEqual(result.records[0].label_source, "prediction")
+        with closing(sqlite3.connect(cache)) as connection, connection:
+            cached = connection.execute(
+                "SELECT manual_label, manual_origin, predicted_label FROM layer_cache"
+            ).fetchone()
+        self.assertEqual(cached, (None, None, "Lead"))
+
+    def test_production_cache_restore_hides_stale_csv_truth(self):
+        audio = self.library / "A#m LOOP 144 XT_L1.wav"
+        _write_wave(audio)
+        truth_path = self.root / "development-truth.csv"
+        truth_path.write_text(
+            "file,label\nA#m LOOP 144 XT_L1.wav,Bass\n",
+            encoding="utf-8",
+        )
+        cache = self.state / "cache.sqlite"
+        LayerLibrary(
+            self.library,
+            cache,
+            classifier=_Classifier(),
+            truth_csv_path=truth_path,
+        ).scan()
+
+        restored = LayerLibrary(
+            self.library,
+            cache,
+            classifier=_Classifier(),
+        ).load_cached()
+
+        self.assertIsNone(restored.records[0].effective_label)
+        self.assertEqual(restored.records[0].label_source, "unreviewed")
+        self.assertIn(
+            "stale_truth_cache",
+            {issue.code for issue in restored.issues},
+        )
+
     def test_manual_label_validation_and_unknown_path(self):
         audio = self.library / "loop.wav"
         _write_wave(audio)
@@ -844,6 +946,30 @@ class LayerLibraryTests(unittest.TestCase):
         self.assertEqual(result.records, ())
         self.assertEqual(result.classified_count, 0)
         self.assertEqual(events[-1].phase, "cancelled")
+
+    def test_atomic_scan_rolls_back_every_staged_layer_when_cancelled(self):
+        for index in range(40):
+            _write_wave(self.library / f"Loop 140 C_L{index + 1}.wav")
+        cache = self.state / "cache.sqlite"
+        token = CancelToken()
+
+        def cancel_after_the_first_normal_commit_boundary(event):
+            if event.phase == "metadata" and event.completed == 33:
+                token.cancel()
+
+        result = LayerLibrary(self.library, cache).scan(
+            progress=cancel_after_the_first_normal_commit_boundary,
+            cancel=token,
+            atomic=True,
+        )
+
+        self.assertTrue(result.cancelled)
+        self.assertEqual(result.records, ())
+        with closing(sqlite3.connect(cache)) as connection, connection:
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM layer_cache").fetchone()[0],
+                0,
+            )
 
     def test_cache_schema_is_versioned(self):
         _write_wave(self.library / "loop.wav")

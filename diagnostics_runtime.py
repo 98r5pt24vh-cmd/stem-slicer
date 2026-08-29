@@ -1,8 +1,8 @@
 """Fault-tolerant runtime diagnostics for Stem Slicer.
 
-This module is intentionally independent from the UI and audio pipeline.  It
-uses only the Python standard library until :meth:`start_ui_watchdog` is
-called, so it can be imported before PySide6, OpenKeyScan, Numba or ONNX.
+This module is intentionally independent from the Electron UI and audio
+pipeline. It uses only the Python standard library, so it can be imported
+before OpenKeyScan, Numba or ONNX.
 
 Every public entry point is best-effort: diagnostics must never be allowed to
 prevent the application from starting, processing audio, or shutting down.
@@ -547,8 +547,8 @@ class RuntimeDiagnostics:
             command_value = command if isinstance(command, str) else list(command)
             # stdout is frequently raw PCM produced through an ffmpeg pipe.
             # Serialising it is both useless and expensive (each NUL becomes a
-            # six-character JSON escape), and previously starved the Qt event
-            # loop while layer cards were being created.  Binary streams are
+            # six-character JSON escape), and can starve the engine event
+            # loop while layer cards are being created. Binary streams are
             # therefore represented only by their byte count.  stderr remains
             # available because it contains the actionable ffmpeg diagnostics.
             stdout_bytes = len(stdout) if isinstance(stdout, (bytes, bytearray, memoryview)) else None
@@ -647,46 +647,6 @@ class RuntimeDiagnostics:
             sys.unraisablehook = unraisable_hook
         except Exception:
             pass
-
-    def start_ui_watchdog(self, qt_parent=None, timeout_seconds: float = 10) -> bool:
-        """Watch the Qt event loop and dump all Python stacks on a UI stall."""
-        try:
-            if self._closed:
-                return False
-            from PySide6.QtCore import QCoreApplication, QTimer
-
-            application = QCoreApplication.instance()
-            if application is None:
-                self.event("ui_watchdog.unavailable", level="WARNING", reason="No QCoreApplication instance")
-                return False
-            self._ui_timeout = max(2.0, float(timeout_seconds))
-            with self._heartbeat_lock:
-                self._last_ui_heartbeat = time.monotonic()
-                self._freeze_started = None
-            parent = qt_parent or application
-            if self._ui_timer is None:
-                self._ui_timer = QTimer(parent)
-                self._ui_timer.timeout.connect(self._ui_heartbeat)
-            interval_ms = max(250, min(1000, int(self._ui_timeout * 1000 / 4)))
-            self._ui_timer.start(interval_ms)
-            self._arm_fault_timeout()
-            if self._ui_watchdog_thread is None or not self._ui_watchdog_thread.is_alive():
-                self._watchdog_stop.clear()
-                self._ui_watchdog_thread = threading.Thread(
-                    target=self._watchdog_loop,
-                    name="StemSlicerUIWatchdog",
-                    daemon=True,
-                )
-                self._ui_watchdog_thread.start()
-            try:
-                application.aboutToQuit.connect(self.shutdown)
-            except Exception:
-                pass
-            self.event("ui_watchdog.started", timeout_seconds=self._ui_timeout, heartbeat_interval_ms=interval_ms)
-            return True
-        except Exception as exc:
-            self.event("ui_watchdog.unavailable", level="WARNING", reason=str(exc))
-            return False
 
     def _arm_fault_timeout(self) -> None:
         try:
@@ -969,7 +929,7 @@ class _NoopRuntimeDiagnostics(RuntimeDiagnostics):
 
     Engine modules can safely call ``get_diagnostics().event(...)`` when they
     are imported directly by tests or command-line helpers.  The null object
-    performs no filesystem, environment, Qt, hook, or thread work.
+    performs no filesystem, environment, hook, or thread work.
     """
 
     def __init__(self):
@@ -994,9 +954,6 @@ class _NoopRuntimeDiagnostics(RuntimeDiagnostics):
         **fields,
     ) -> None:
         return None
-
-    def start_ui_watchdog(self, qt_parent=None, timeout_seconds: float = 10) -> bool:
-        return False
 
     def collect_platform_reports(
         self,

@@ -40,7 +40,7 @@ def main() -> int:
     parser.add_argument("library", type=Path)
     parser.add_argument("--limit", type=int, default=12)
     parser.add_argument("--batch-size", type=int, default=4)
-    parser.add_argument("--artifact", type=Path, default=ROOT / "models/layer_roles_v1.joblib")
+    parser.add_argument("--artifact", type=Path, default=ROOT / "models/layer_roles_v4_2.joblib")
     parser.add_argument("--hf-cache-dir", type=Path, default=ROOT / "models/huggingface")
     parser.add_argument("--device", choices=("cpu", "mps", "auto"), default="cpu")
     args = parser.parse_args()

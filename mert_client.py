@@ -52,18 +52,11 @@ class MertLayerClassifier:
         self.python_executable = str(python_executable or sys.executable)
         self.worker_path = Path(worker_path or root / "mert_worker.py")
         self.artifact_path = Path(
-            artifact_path or root / "models" / "layer_roles_v3.joblib"
+            artifact_path or root / "models" / "layer_roles_v4_2.joblib"
         )
         if hf_cache_dir is not None and cache_dir is not None:
             raise ValueError("Pass hf_cache_dir or cache_dir, not both")
         bundled_hf_cache = root / "models" / "huggingface"
-        development_hf_cache = (
-            source_root.parent
-            / "research"
-            / "layer_role_benchmark_2026-07-30"
-            / "cache"
-            / "huggingface"
-        )
         configured_hf_cache = os.environ.get(
             "STEM_SLICER_MERT_MODEL_CACHE", ""
         ).strip()
@@ -71,11 +64,7 @@ class MertLayerClassifier:
             hf_cache_dir
             or cache_dir
             or configured_hf_cache
-            or (
-                bundled_hf_cache
-                if bundled_hf_cache.exists()
-                else development_hf_cache
-            )
+            or bundled_hf_cache
         )
         self.feature_cache_path = Path(
             feature_cache_path or default_feature_cache_path()

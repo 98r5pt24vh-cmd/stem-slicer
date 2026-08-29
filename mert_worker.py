@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Persistent NDJSON MERT + DSP classifier for the Generate prototype.
+"""Persistent NDJSON MERT + DSP classifier for Slicer Generate.
 
 The worker writes protocol messages to stdout and diagnostics to stderr.  It
 loads the 95M MERT checkpoint lazily on the first unknown layer so a library
@@ -22,14 +22,12 @@ import traceback
 from typing import Sequence
 
 
-PROTOTYPE_ROOT = Path(__file__).resolve().parent
-DEFAULT_RESEARCH_ROOT = (
-    PROTOTYPE_ROOT.parent / "research" / "layer_role_benchmark_2026-07-30"
-)
+SOURCE_ROOT = Path(__file__).resolve().parent
+DEFAULT_MODEL_ROOT = SOURCE_ROOT / "models" / "huggingface"
 DEFAULT_HF_HOME = Path(
     os.environ.get("STEM_SLICER_MERT_MODEL_CACHE")
     or os.environ.get("HF_HOME")
-    or DEFAULT_RESEARCH_ROOT / "cache" / "huggingface"
+    or DEFAULT_MODEL_ROOT
 )
 os.environ.setdefault("HF_HOME", str(DEFAULT_HF_HOME))
 os.environ.setdefault("HF_HUB_CACHE", str(DEFAULT_HF_HOME / "hub"))
@@ -756,7 +754,7 @@ def main() -> None:
     parser.add_argument(
         "--artifact",
         type=Path,
-        default=PROTOTYPE_ROOT / "models" / "layer_roles_v3.joblib",
+        default=SOURCE_ROOT / "models" / "layer_roles_v4_2.joblib",
     )
     parser.add_argument(
         "--hf-cache-dir", type=Path, default=DEFAULT_HF_HOME

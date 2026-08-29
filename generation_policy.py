@@ -13,6 +13,7 @@ import hashlib
 import math
 from pathlib import Path
 import re
+import unicodedata
 from typing import Any, Iterable, Mapping
 
 from key_confidence import (
@@ -109,7 +110,9 @@ def parse_exact_key(value: str, mode: str | None = None) -> KeySignature:
     A bare tonic is accepted only when ``mode`` is supplied separately.
     """
 
-    text = str(value or "").strip().replace("♯", "#").replace("♭", "b")
+    text = unicodedata.normalize("NFKC", str(value or ""))
+    text = re.sub(r"[\u200B-\u200D\u2060\uFEFF]", "", text)
+    text = " ".join(text.strip().replace("♯", "#").replace("♭", "b").split())
     if not text:
         raise GenerationPolicyError("An exact target key and mode are required")
     if "/" in text:

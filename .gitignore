@@ -41,12 +41,12 @@ models/huggingface/
 artifacts/
 validation-output/
 
-# Electron development prototype
-electron-prototype/node_modules/
-electron-prototype/.vite/
-electron-prototype/.packaging/
-electron-prototype/out/
-electron-prototype/coverage/
-electron-prototype/test-results/
-electron-prototype/playwright-report/
-electron-prototype/artifacts/
+# Electron application dependencies and generated output
+electron-app/node_modules/
+electron-app/.vite/
+electron-app/.packaging/
+electron-app/out/
+electron-app/coverage/
+electron-app/test-results/
+electron-app/playwright-report/
+electron-app/artifacts/

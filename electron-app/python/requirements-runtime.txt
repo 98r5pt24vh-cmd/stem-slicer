@@ -1,0 +1,29 @@
+# Headless runtime used by the Electron application and its validation suite.
+# UI and packaging dependencies belong to Electron, not to this Python engine.
+librosa==0.11.0
+mir-eval==0.8.2
+numba==0.60.0
+numpy==1.26.4
+onnxruntime==1.19.2
+pretty_midi==0.2.11
+resampy==0.4.2
+scipy==1.13.1
+soundfile==0.14.0
+soxr==1.1.0
+setuptools==80.9.0
+torch==2.5.1
+torchaudio==2.5.1
+transformers==4.38.2
+huggingface_hub==0.36.2
+safetensors==0.8.0
+joblib==1.5.3
+scikit-learn==1.9.0
+
+# Supplies the self-contained arm64 FFmpeg fallback used by macOS.
+imageio-ffmpeg==0.6.0
+
+# OpenKeyScan/DeepRhythm analyzer runtime.
+av==16.1.0
+nnAudio==0.3.3
+requests==2.32.5
+tqdm==4.67.3

@@ -26,6 +26,11 @@ class FakeAnalyzer:
 
 
 class EngineWorkflowTests(unittest.TestCase):
+    def test_pcm_rms_dbfs_uses_the_full_int16_scale(self):
+        self.assertEqual(engine.rms_dbfs(b"\x00\x00" * 8), -120.0)
+        full_scale = (32767).to_bytes(2, "little", signed=True) * 8
+        self.assertAlmostEqual(engine.rms_dbfs(full_scale), 0.0, places=3)
+
     def test_sequence_decoder_result_maps_to_existing_grid_contract(self):
         result = SequenceResult(
             score=42.5,

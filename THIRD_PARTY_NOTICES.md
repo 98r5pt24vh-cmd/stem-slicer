@@ -27,14 +27,6 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-## Qt for Python / PySide6
-
-Stem Slicer uses Qt for Python (PySide6). Qt for Python is available under the
-GNU Lesser General Public License version 3, the GNU General Public License
-version 3, and commercial Qt licenses.
-
-Source and license information: https://doc.qt.io/qtforpython-6/licenses.html
-
 ## Spotify Basic Pitch
 
 Stem Slicer uses Spotify Basic Pitch for local audio-to-MIDI transcription.
@@ -73,7 +65,7 @@ Source: https://github.com/kupix/bungee
 
 ## MERT-v1-95M
 
-Stem Slicer 1.9B includes the `m-a-p/MERT-v1-95M` checkpoint and its custom
+Slicer includes the `m-a-p/MERT-v1-95M` checkpoint and its custom
 modeling code for local layer-category feature extraction. The model card
 identifies the license as Creative Commons Attribution-NonCommercial 4.0
 International (CC BY-NC 4.0).
