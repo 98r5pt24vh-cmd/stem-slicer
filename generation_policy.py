@@ -111,8 +111,15 @@ def parse_exact_key(value: str, mode: str | None = None) -> KeySignature:
     """
 
     text = unicodedata.normalize("NFKC", str(value or ""))
-    text = re.sub(r"[\u200B-\u200D\u2060\uFEFF]", "", text)
-    text = " ".join(text.strip().replace("♯", "#").replace("♭", "b").split())
+    text = re.sub(r"[\u200B-\u200D\u2060\uFE0E\uFE0F\uFEFF]", "", text)
+    text = " ".join(
+        text.strip()
+        .replace("♯", "#")
+        .replace("＃", "#")
+        .replace("♭", "b")
+        .replace("ᵇ", "b")
+        .split()
+    )
     if not text:
         raise GenerationPolicyError("An exact target key and mode are required")
     if "/" in text:

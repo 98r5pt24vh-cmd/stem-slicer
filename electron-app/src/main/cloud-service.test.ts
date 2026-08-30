@@ -95,6 +95,71 @@ describe("Cloud generation source isolation", () => {
   })
 })
 
+describe("Cloud generation catalogue cache", () => {
+  it("reuses unchanged remote layer metadata and refreshes changed libraries", async () => {
+    const service = Object.create(CloudService.prototype) as CloudService
+    const rows = [{
+      id: "layer-1",
+      library_id: "library-1",
+      owner_id: "producer-1",
+      object_path: "producer-1/library-1/layer.wav",
+      file_name: "layer.wav",
+      relative_path: "layer.wav",
+      sha256: "abc",
+      byte_size: 123,
+      metadata: { category: "Lead" },
+    }]
+    let queryCount = 0
+    let requestedIds: string[] = []
+    const client = {
+      from: () => ({
+        select: () => ({
+          in: (_column: string, ids: string[]) => {
+            requestedIds = ids
+            return {
+              range: async () => {
+                queryCount += 1
+                return { data: rows.filter((row) => requestedIds.includes(row.library_id)), error: null }
+              },
+            }
+          },
+        }),
+      }),
+    }
+    Object.defineProperty(service, "remoteLayerCache", { value: new Map() })
+    Object.defineProperty(service, "supabase", { value: () => client })
+    const remoteLayerRows = (service as unknown as {
+      remoteLayerRows: (libraries: Array<{
+        id: string
+        owner_id: string
+        name: string
+        status: "ready"
+        layer_count: number
+        loop_count: number
+        total_bytes: number
+        updated_at: string
+      }>) => Promise<typeof rows>
+    }).remoteLayerRows.bind(service)
+    const library = {
+      id: "library-1",
+      owner_id: "producer-1",
+      name: "Library",
+      status: "ready" as const,
+      layer_count: 1,
+      loop_count: 1,
+      total_bytes: 123,
+      updated_at: "2026-08-30T00:00:00Z",
+    }
+
+    await expect(remoteLayerRows([library])).resolves.toEqual(rows)
+    await expect(remoteLayerRows([library])).resolves.toEqual(rows)
+    expect(queryCount).toBe(1)
+
+    await expect(remoteLayerRows([{ ...library, updated_at: "2026-08-30T00:01:00Z" }])).resolves.toEqual(rows)
+    expect(queryCount).toBe(2)
+  })
+})
+
 describe("Cloud library removal", () => {
   it("keeps Storage deletion requests within the 1,000-object API limit", () => {
     const paths = Array.from({ length: 2_305 }, (_, index) => `producer/library/${index}.mp3`)

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest"
 import {
   compactKeyFamilyLabel,
   keyFamilyForKey,
+  normalizeKeyName,
   randomKeyOutsidePreviousFamily,
   TARGET_KEY_FAMILIES,
 } from "./random-key"
@@ -33,5 +34,11 @@ describe("random key generation", () => {
 
   it("treats enharmonic spellings as the same family", () => {
     expect(keyFamilyForKey("A♭ major")).toBe(keyFamilyForKey("G♯ major"))
+  })
+
+  it("canonicalizes UI accidentals before sending an exact key to the engine", () => {
+    expect(normalizeKeyName("G♭ minor")).toBe("F# minor")
+    expect(normalizeKeyName(" G♭️\u00a0minor ")).toBe("F# minor")
+    expect(normalizeKeyName("F＃ minor")).toBe("F# minor")
   })
 })

@@ -370,6 +370,7 @@ export class CloudService {
   private settings: CloudLocalSettings
   private client: SupabaseClient | null = null
   private readonly libraryCategoryCache = new Map<string, { signature: string; categories: Array<{ name: string; count: number }> }>()
+  private readonly remoteLayerCache = new Map<string, { signature: string; rows: RemoteLayerRow[] }>()
 
   constructor(
     private readonly acceptedCachePath: string,
@@ -1208,20 +1209,33 @@ export class CloudService {
     }
   }
 
-  private async remoteLayerRows(libraryIds: string[]): Promise<RemoteLayerRow[]> {
-    const rows: RemoteLayerRow[] = []
-    for (let start = 0; ; start += CATALOG_PAGE_SIZE) {
-      const response = await this.supabase()
-        .from("cloud_layers")
-        .select("id,library_id,owner_id,object_path,file_name,relative_path,sha256,byte_size,metadata")
-        .in("library_id", libraryIds)
-        .range(start, start + CATALOG_PAGE_SIZE - 1)
-      if (response.error) throw response.error
-      const page = response.data as RemoteLayerRow[]
-      rows.push(...page)
-      if (page.length < CATALOG_PAGE_SIZE) break
+  private async remoteLayerRows(libraries: LibraryRow[]): Promise<RemoteLayerRow[]> {
+    const missing = libraries.filter((library) => {
+      const signature = `${library.updated_at}:${library.layer_count}`
+      return this.remoteLayerCache.get(library.id)?.signature !== signature
+    })
+    if (missing.length > 0) {
+      const fetched: RemoteLayerRow[] = []
+      const missingIds = missing.map((library) => library.id)
+      for (let start = 0; ; start += CATALOG_PAGE_SIZE) {
+        const response = await this.supabase()
+          .from("cloud_layers")
+          .select("id,library_id,owner_id,object_path,file_name,relative_path,sha256,byte_size,metadata")
+          .in("library_id", missingIds)
+          .range(start, start + CATALOG_PAGE_SIZE - 1)
+        if (response.error) throw response.error
+        const page = response.data as RemoteLayerRow[]
+        fetched.push(...page)
+        if (page.length < CATALOG_PAGE_SIZE) break
+      }
+      for (const library of missing) {
+        this.remoteLayerCache.set(library.id, {
+          signature: `${library.updated_at}:${library.layer_count}`,
+          rows: fetched.filter((row) => row.library_id === library.id),
+        })
+      }
     }
-    return rows
+    return libraries.flatMap((library) => this.remoteLayerCache.get(library.id)?.rows ?? [])
   }
 
   private async remoteLibraryCategories(libraries: LibraryRow[]): Promise<Map<string, Array<{ name: string; count: number }>>> {
@@ -1295,7 +1309,7 @@ export class CloudService {
     const remoteLibraries = (librariesResponse.data as LibraryRow[]).filter((library) => library.owner_id !== session.user.id)
     if (remoteLibraries.length === 0) return request
     const ownerProfiles = await this.profileRows(remoteLibraries.map((library) => library.owner_id))
-    const rows = await this.remoteLayerRows(remoteLibraries.map((library) => library.id))
+    const rows = await this.remoteLayerRows(remoteLibraries)
     const cloudLayers = rows.map((row) => {
       const metadata = row.metadata && typeof row.metadata === "object" ? row.metadata : {}
       const owner = ownerProfiles.get(row.owner_id)

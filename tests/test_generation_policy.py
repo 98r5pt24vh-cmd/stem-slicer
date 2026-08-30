@@ -94,6 +94,12 @@ class ExactTargetTests(unittest.TestCase):
     def test_key_parser_tolerates_ui_whitespace_and_invisible_unicode(self):
         self.assertEqual(parse_exact_key("\u200bF\u00a0minor\ufeff").canonical, "F minor")
 
+    def test_key_parser_accepts_flat_and_unicode_accidental_variants(self):
+        self.assertEqual(parse_exact_key("G♭ minor").canonical, "F# minor")
+        self.assertEqual(parse_exact_key("G♭️ minor").canonical, "F# minor")
+        self.assertEqual(parse_exact_key("Gᵇ minor").canonical, "F# minor")
+        self.assertEqual(parse_exact_key("F＃ minor").canonical, "F# minor")
+
     def test_relative_major_and_minor_share_one_family(self):
         source = parse_exact_key("A minor")
         target = parse_exact_key("C major")

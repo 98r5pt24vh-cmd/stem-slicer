@@ -82,7 +82,7 @@ import {
   type ConvertHistoryEntry,
   type ExtractionHistoryEntry,
 } from "@/lib/activity-history"
-import { compactKeyFamilyLabel, keyFamilyForKey, keyFromFamily, randomKeyOutsidePreviousFamily, TARGET_KEY_FAMILIES } from "@/lib/random-key"
+import { compactKeyFamilyLabel, keyFamilyForKey, keyFromFamily, normalizeKeyName, randomKeyOutsidePreviousFamily, TARGET_KEY_FAMILIES } from "@/lib/random-key"
 import { studioLayerName } from "@/lib/source-loop-name"
 import { createProducerIdentityResolver, generationDisplayName, PRIMARY_PRODUCER, producerMonogram, producersForLayers, provenanceForLayer, stripAudioExtension, uniqueProducerCredits, uniqueProducerNames } from "@/lib/source-provenance"
 import { AUDIO_START_AHEAD_SECONDS, SharedWebAudioEngine, transportProgress } from "@/renderer/shared-web-audio-engine"
@@ -358,6 +358,9 @@ const GENERATION_SEQUENCE_STORAGE_KEY = "stem-slicer-electron.generation-sequenc
 const COLLABORATOR_SETTINGS_STORAGE_KEY = "stem-slicer-electron.collaborator-settings.v1"
 const PRODUCER_PROFILES_CHANGED_EVENT = "stem-slicer-producer-profiles-changed"
 const CLOUD_STATE_CHANGED_EVENT = "stem-slicer-cloud-state-changed"
+const CLOUD_ACTIVITY_CHANGED_EVENT = "stem-slicer-cloud-activity-changed"
+const CLOUD_ACTIVITY_ERROR_EVENT = "stem-slicer-cloud-activity-error"
+const CLOUD_REFRESH_INTERVAL_MS = 10_000
 
 type ProducerSortDirection = "desc" | "asc"
 type FiniteCollaboratorCreditCount = 1 | 2 | 3
@@ -3270,6 +3273,7 @@ function GenerateView({
       generationKey = keyFromFamily(randomFamily, keyName)
       setKeyName(generationKey)
     }
+    const engineGenerationKey = normalizeKeyName(generationKey)
     const seed = seedOverride ?? crypto.getRandomValues(new Uint32Array(1))[0]
     if (currentSeed !== seed) {
       setPreviousSeed(currentSeed)
@@ -3284,7 +3288,7 @@ function GenerateView({
         libraryRoots: selectedLibraryPaths,
         categories: requestedCategories,
         targetBpm: bpm,
-        targetKey: generationKey,
+        targetKey: engineGenerationKey,
         primaryProducer,
         seed,
         generationNumber: nextGenerationNumber,
@@ -5707,6 +5711,7 @@ function CloudView({ library, section, embedded = false, generationHistory = [] 
   const [libraryAccessTargetId, setLibraryAccessTargetId] = useState("")
   const [libraryAccessError, setLibraryAccessError] = useState("")
   const sharedSelectAllRef = useRef<HTMLInputElement>(null)
+  const cloudRefreshInFlightRef = useRef<Promise<void> | null>(null)
   const cloudProfileId = cloud.profile?.id ?? ""
   const currentSection: CloudSection = section === "profile" ? "profile" : activeCloudSection
 
@@ -5724,24 +5729,30 @@ function CloudView({ library, section, embedded = false, generationHistory = [] 
     }
   }, [])
 
-  const refresh = useCallback(async () => {
-    const state = await window.stemSlicer?.getCloudState()
-    if (state) {
+  const refresh = useCallback(async (): Promise<void> => {
+    if (cloudRefreshInFlightRef.current) return cloudRefreshInFlightRef.current
+    const pending = (async () => {
+      const state = await window.stemSlicer?.getCloudState()
+      if (!state) return
       setCloud(state)
       window.dispatchEvent(new CustomEvent(CLOUD_STATE_CHANGED_EVENT, { detail: state }))
-      if (state.authenticated) void refreshActivity()
+      if (state.authenticated) await refreshActivity()
+      else {
+        setCloudActivity([])
+        setActivityError("")
+      }
+    })()
+    cloudRefreshInFlightRef.current = pending
+    try {
+      await pending
+    } finally {
+      if (cloudRefreshInFlightRef.current === pending) cloudRefreshInFlightRef.current = null
     }
   }, [refreshActivity])
 
   useEffect(() => {
     let cancelled = false
-    void window.stemSlicer?.getCloudState()
-      .then((state) => {
-        if (!cancelled && state) {
-          setCloud(state)
-          if (state.authenticated) void refreshActivity()
-        }
-      })
+    void refresh()
       .catch((reason) => { if (!cancelled) setError(cloudErrorMessage(reason, "Cloud is unavailable.")) })
       .finally(() => { if (!cancelled) setLoading(false) })
     const unsubscribe = window.stemSlicer?.onCloudPublishEvent((event) => {
@@ -5761,7 +5772,41 @@ function CloudView({ library, section, embedded = false, generationHistory = [] 
       cancelled = true
       unsubscribe?.()
     }
-  }, [refresh, refreshActivity])
+  }, [refresh])
+
+  useEffect(() => {
+    const synchronize = () => {
+      void refresh().catch((reason) => setError(cloudErrorMessage(reason, "Cloud synchronization is unavailable.")))
+    }
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") synchronize()
+    }
+    const interval = window.setInterval(synchronize, CLOUD_REFRESH_INTERVAL_MS)
+    window.addEventListener("focus", synchronize)
+    document.addEventListener("visibilitychange", onVisibilityChange)
+    return () => {
+      window.clearInterval(interval)
+      window.removeEventListener("focus", synchronize)
+      document.removeEventListener("visibilitychange", onVisibilityChange)
+    }
+  }, [refresh])
+
+  useEffect(() => {
+    const onActivityChanged = () => { void refreshActivity() }
+    const onActivityError = (event: Event) => {
+      setActivityError(cloudErrorMessage((event as CustomEvent<unknown>).detail, "Cloud could not record this generation."))
+    }
+    window.addEventListener(CLOUD_ACTIVITY_CHANGED_EVENT, onActivityChanged)
+    window.addEventListener(CLOUD_ACTIVITY_ERROR_EVENT, onActivityError)
+    return () => {
+      window.removeEventListener(CLOUD_ACTIVITY_CHANGED_EVENT, onActivityChanged)
+      window.removeEventListener(CLOUD_ACTIVITY_ERROR_EVENT, onActivityError)
+    }
+  }, [refreshActivity])
+
+  useEffect(() => {
+    if (currentSection === "activity" && cloud.authenticated) void refreshActivity()
+  }, [cloud.authenticated, currentSection, refreshActivity])
 
   useEffect(() => {
     if (!cloud.profile) return
@@ -6818,9 +6863,13 @@ export function App() {
         layerCount: entry.layerCount,
         sources,
       }).then((cloudRunId) => {
-        if (!cloudRunId) return
-        setHistory((items) => items.map((item) => item.generation.outputDirectory === entry.generation.outputDirectory ? { ...item, cloudRunId } : item))
-      }).catch(() => undefined)
+        if (cloudRunId) {
+          setHistory((items) => items.map((item) => item.generation.outputDirectory === entry.generation.outputDirectory ? { ...item, cloudRunId } : item))
+        }
+        window.dispatchEvent(new Event(CLOUD_ACTIVITY_CHANGED_EVENT))
+      }).catch((reason) => {
+        window.dispatchEvent(new CustomEvent(CLOUD_ACTIVITY_ERROR_EVENT, { detail: reason }))
+      })
     }
   }, [])
 

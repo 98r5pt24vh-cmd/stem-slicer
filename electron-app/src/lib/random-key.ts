@@ -6,16 +6,27 @@ export const TARGET_KEY_FAMILIES = [
 ]
 
 const ENHARMONIC_SHARPS: Record<string, string> = {
-  "D♭": "C♯",
-  "E♭": "D♯",
-  "G♭": "F♯",
-  "A♭": "G♯",
-  "B♭": "A♯",
+  Db: "C#",
+  Eb: "D#",
+  Gb: "F#",
+  Ab: "G#",
+  Bb: "A#",
 }
 
 export function normalizeKeyName(value: string): string {
-  const [tonic, mode] = value.trim().split(/\s+/, 2)
-  return `${ENHARMONIC_SHARPS[tonic] ?? tonic} ${mode ?? ""}`.trim()
+  const text = value
+    .normalize("NFKC")
+    .replace(/[\u200B-\u200D\u2060\uFEFF]/g, "")
+    .replace(/\uFE0E|\uFE0F/g, "")
+    .replace(/[\u266f＃]/g, "#")
+    .replace(/[\u266dᵇ]/g, "b")
+    .trim()
+  const [rawTonic = "", rawMode = ""] = text.split(/\s+/, 2)
+  const tonic = rawTonic
+    ? `${rawTonic[0].toUpperCase()}${rawTonic.slice(1)}`
+    : ""
+  const mode = rawMode.toLowerCase()
+  return `${ENHARMONIC_SHARPS[tonic] ?? tonic} ${mode}`.trim()
 }
 
 export function keyFamilyForKey(keyName: string): string {
