@@ -2005,22 +2005,22 @@ function AppSidebar({
       </nav>
 
       <div className="sidebar-profile-shell app-no-drag">
-        <div className="sidebar-profile-identity" aria-label={`Signed in as ${primaryProfileName}`}>
-          <button
-            type="button"
-            className={cn("sidebar-profile-avatar", activeView === "profile" && "is-active")}
-            onClick={() => onNavigate("profile")}
-            aria-current={activeView === "profile" ? "page" : undefined}
-            aria-label={`Edit ${primaryProfileName} profile`}
-            title="Edit profile"
-          >
+        <button
+          type="button"
+          className={cn("sidebar-profile-identity", activeView === "profile" && "is-active")}
+          onClick={() => onNavigate("profile")}
+          aria-current={activeView === "profile" ? "page" : undefined}
+          aria-label={`Edit ${primaryProfileName} profile`}
+          title={`${primaryProfileName} · Edit profile`}
+        >
+          <span className="sidebar-profile-avatar">
             <ProducerAvatar producer={primaryProfileName} profile={primaryProfile} />
             <span className="sidebar-profile-avatar-edit-cue" aria-hidden="true"><Pencil /></span>
-          </button>
-          <span className="sidebar-copy" title={primaryProfileName}>
+          </span>
+          <span className="sidebar-copy">
             <strong>{primaryProfileName}</strong>
           </span>
-        </div>
+        </button>
         <div className="sidebar-profile-actions">
           <button
             type="button"

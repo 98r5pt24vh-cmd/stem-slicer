@@ -509,6 +509,9 @@ a:focus-visible {
   grid-template-columns: 30px minmax(0, 1fr);
   align-items: center;
   gap: 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
   color: var(--muted-foreground);
   padding-inline: 2px;
   text-align: start;
@@ -520,10 +523,7 @@ a:focus-visible {
   width: 30px;
   height: 30px;
   place-items: center;
-  border: 0;
   border-radius: 50%;
-  background: transparent;
-  padding: 0;
 }
 
 .sidebar-profile-avatar > i {
@@ -573,19 +573,22 @@ a:focus-visible {
   stroke-width: 2;
 }
 
-.sidebar-profile-avatar.is-active > i {
+.sidebar-profile-identity.is-active .sidebar-profile-avatar > i {
   border-color: color-mix(in srgb, var(--ring) 58%, transparent);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring) 15%, transparent);
 }
 
-.sidebar-profile-avatar:focus-visible .sidebar-profile-avatar-edit-cue {
+.sidebar-profile-identity:focus-visible .sidebar-profile-avatar-edit-cue {
   opacity: 1;
   transform: scale(1);
 }
 
-.sidebar-profile-avatar:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
+.sidebar-profile-identity:focus-visible {
+  outline: none;
+}
+
+.sidebar-profile-identity:focus-visible .sidebar-profile-avatar > i {
+  box-shadow: 0 0 0 2px var(--ring);
 }
 
 .sidebar-profile-identity .sidebar-copy strong {
@@ -643,12 +646,12 @@ a:focus-visible {
 }
 
 @media (hover: hover) {
-  .sidebar-profile-avatar:hover > i {
+  .sidebar-profile-identity:hover .sidebar-profile-avatar > i {
     border-color: color-mix(in srgb, var(--ring) 48%, transparent);
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring) 12%, transparent);
   }
 
-  .sidebar-profile-avatar:hover .sidebar-profile-avatar-edit-cue {
+  .sidebar-profile-identity:hover .sidebar-profile-avatar-edit-cue {
     opacity: 1;
     transform: scale(1);
   }
