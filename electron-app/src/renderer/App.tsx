@@ -2006,8 +2006,18 @@ function AppSidebar({
 
       <div className="sidebar-profile-shell app-no-drag">
         <div className="sidebar-profile-identity" aria-label={`Signed in as ${primaryProfileName}`}>
-          <span className="sidebar-profile-avatar"><ProducerAvatar producer={primaryProfileName} profile={primaryProfile} /></span>
-          <span className="sidebar-copy">
+          <button
+            type="button"
+            className={cn("sidebar-profile-avatar", activeView === "profile" && "is-active")}
+            onClick={() => onNavigate("profile")}
+            aria-current={activeView === "profile" ? "page" : undefined}
+            aria-label={`Edit ${primaryProfileName} profile`}
+            title="Edit profile"
+          >
+            <ProducerAvatar producer={primaryProfileName} profile={primaryProfile} />
+            <span className="sidebar-profile-avatar-edit-cue" aria-hidden="true"><Pencil /></span>
+          </button>
+          <span className="sidebar-copy" title={primaryProfileName}>
             <strong>{primaryProfileName}</strong>
           </span>
         </div>
@@ -2023,16 +2033,6 @@ function AppSidebar({
           >
             <Cloud aria-hidden="true" />
             {unreadCloudActivityCount > 0 ? <span className="sidebar-cloud-unread" aria-hidden="true">+{Math.min(unreadCloudActivityCount, 99)}</span> : null}
-          </button>
-          <button
-            type="button"
-            className={cn("sidebar-profile-icon sidebar-profile-edit", activeView === "profile" && "is-active")}
-            onClick={() => onNavigate("profile")}
-            aria-current={activeView === "profile" ? "page" : undefined}
-            aria-label={`Edit ${primaryProfileName} profile`}
-            title="Edit profile"
-          >
-            <Pencil aria-hidden="true" />
           </button>
         </div>
       </div>

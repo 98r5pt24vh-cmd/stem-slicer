@@ -505,19 +505,31 @@ a:focus-visible {
 .sidebar-profile-identity {
   display: grid;
   min-width: 0;
-  min-height: 38px;
-  grid-template-columns: 28px minmax(0, 1fr);
+  min-height: 40px;
+  grid-template-columns: 30px minmax(0, 1fr);
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   color: var(--muted-foreground);
   padding-inline: 2px;
   text-align: start;
 }
 
+.sidebar-profile-avatar {
+  position: relative;
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  padding: 0;
+}
+
 .sidebar-profile-avatar > i {
   display: grid;
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
   place-items: center;
   overflow: hidden;
   border: 1px solid rgb(225 213 0 / 0.25);
@@ -528,12 +540,52 @@ a:focus-visible {
   font-style: normal;
   font-weight: 800;
   box-shadow: 0 0 0 1px rgb(4 7 4 / 0.88);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
 }
 
 .sidebar-profile-avatar img {
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+.sidebar-profile-avatar-edit-cue {
+  position: absolute;
+  inset-inline-end: -2px;
+  inset-block-end: -2px;
+  display: grid;
+  width: 15px;
+  height: 15px;
+  place-items: center;
+  border: 2px solid var(--sidebar);
+  border-radius: 50%;
+  background: var(--foreground);
+  color: var(--background);
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.75);
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.sidebar-profile-avatar-edit-cue > svg {
+  width: 8px;
+  height: 8px;
+  stroke-width: 2;
+}
+
+.sidebar-profile-avatar.is-active > i {
+  border-color: color-mix(in srgb, var(--ring) 58%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring) 15%, transparent);
+}
+
+.sidebar-profile-avatar:focus-visible .sidebar-profile-avatar-edit-cue {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.sidebar-profile-avatar:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
 }
 
 .sidebar-profile-identity .sidebar-copy strong {
@@ -574,11 +626,6 @@ a:focus-visible {
   stroke: #58a8ff;
 }
 
-.sidebar-profile-edit > svg {
-  width: 14px;
-  height: 14px;
-}
-
 .sidebar-profile-icon.is-active {
   background: color-mix(in srgb, var(--foreground) 8%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 14%, transparent);
@@ -596,6 +643,16 @@ a:focus-visible {
 }
 
 @media (hover: hover) {
+  .sidebar-profile-avatar:hover > i {
+    border-color: color-mix(in srgb, var(--ring) 48%, transparent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring) 12%, transparent);
+  }
+
+  .sidebar-profile-avatar:hover .sidebar-profile-avatar-edit-cue {
+    opacity: 1;
+    transform: scale(1);
+  }
+
   .sidebar-profile-icon:hover {
     background: color-mix(in srgb, var(--foreground) 8%, transparent);
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 14%, transparent);
@@ -638,7 +695,7 @@ a:focus-visible {
 .is-collapsed .sidebar-profile-identity {
   width: 42px;
   min-height: 34px;
-  grid-template-columns: 28px;
+  grid-template-columns: 30px;
   justify-content: center;
   margin-inline: auto;
   padding: 3px;
