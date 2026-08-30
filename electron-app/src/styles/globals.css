@@ -559,7 +559,12 @@ a:focus-visible {
   border-radius: 7px;
   background: transparent;
   color: var(--muted-foreground);
-  transition: color 120ms ease, transform 120ms ease;
+  box-shadow: inset 0 0 0 1px transparent;
+  transition:
+    background-color 120ms ease,
+    box-shadow 120ms ease,
+    color 120ms ease,
+    transform 120ms ease;
 }
 
 .sidebar-cloud-activity > svg {
@@ -574,18 +579,33 @@ a:focus-visible {
   height: 14px;
 }
 
-.sidebar-profile-icon:hover,
 .sidebar-profile-icon.is-active {
+  background: color-mix(in srgb, var(--foreground) 8%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 14%, transparent);
   color: var(--foreground);
 }
 
 .sidebar-profile-icon:active {
-  transform: scale(0.94);
+  background: color-mix(in srgb, var(--foreground) 12%, transparent);
+  transform: scale(0.96);
 }
 
 .sidebar-profile-icon:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 2px;
+}
+
+@media (hover: hover) {
+  .sidebar-profile-icon:hover {
+    background: color-mix(in srgb, var(--foreground) 8%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 14%, transparent);
+    color: var(--foreground);
+  }
+
+  .sidebar-cloud-activity:hover {
+    background: color-mix(in srgb, var(--cloud-blue) 13%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cloud-blue) 32%, transparent);
+  }
 }
 
 .sidebar-cloud-unread {
