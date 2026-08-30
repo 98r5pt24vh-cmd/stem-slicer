@@ -13,7 +13,6 @@ import { readLibraryOverview, readLibraryProducers, readLibrarySelectionSummary,
 import { mediaMimeType, parseByteRange } from "./main/media-range"
 import { showOwnedOpenDialog } from "./main/native-dialog"
 import { readGenerationStorageUsage } from "./main/storage-usage"
-import { resolveRuntimePaths } from "./main/runtime-paths"
 import { resolveUserPaths } from "./main/user-paths"
 import type {
   AudioJobKind,
@@ -172,11 +171,6 @@ protocol.registerSchemesAsPrivileged([
   },
 ])
 
-const runtimePaths = resolveRuntimePaths({
-  appRoot: app.getAppPath(),
-  resourcesPath: process.resourcesPath,
-  isPackaged: app.isPackaged,
-})
 const audioEngine = new AudioEngineService(
   app.getAppPath(),
   appCachePath,
@@ -188,7 +182,6 @@ const cloudService = new CloudService(
   acceptedCachePath,
   appCachePath,
   cloudBootstrapConfigurationPath,
-  runtimePaths.ffmpegPath,
 )
 
 cloudService.onSync((event) => {

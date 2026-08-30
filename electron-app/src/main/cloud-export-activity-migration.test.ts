@@ -120,3 +120,29 @@ describe("Cloud export activity migration", () => {
     expect(migration).toContain("alter publication supabase_realtime add table public.cloud_export_recipients")
   })
 })
+
+describe("Cloud export MP3 correction migration", () => {
+  const migration = readFileSync(
+    path.resolve(process.cwd(), "supabase/migrations/202608300003_cloud_export_mp3_and_event_id_fix.sql"),
+    "utf8",
+  )
+
+  it("keeps the generated MP3 master and retains WAV compatibility for prior rows", () => {
+    expect(migration).toContain("when lower(requested_name) like '%.mp3' then '.mp3'")
+    expect(migration).toContain("mime_type is null or mime_type in ('audio/mpeg', 'audio/wav', 'audio/x-wav')")
+    expect(migration).toContain("array['audio/mpeg', 'audio/wav', 'audio/x-wav']")
+    expect(migration).not.toContain("The Cloud export master must be WAV audio.")
+  })
+
+  it("uses a variable name that cannot collide with recipient event_id columns", () => {
+    const rpc = migration.slice(
+      migration.indexOf("create or replace function public.record_cloud_export_event"),
+      migration.indexOf("create or replace function public.complete_cloud_export_asset"),
+    )
+
+    expect(rpc).toContain("recorded_event_id uuid;")
+    expect(rpc).not.toContain("\n  event_id uuid;")
+    expect(rpc).toContain("values (recorded_event_id, cloud_layer.owner_id)")
+    expect(rpc).toContain("where recipient.event_id = recorded_event_id")
+  })
+})

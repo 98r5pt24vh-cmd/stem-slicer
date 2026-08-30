@@ -17,7 +17,6 @@ describe("resolveRuntimePaths", () => {
     expect(paths.sourceRoot).toBe(path.resolve("/workspace/electron-app", ".."))
     expect(paths.pythonPath).toBe("python3.12")
     expect(paths.workingDirectory).toBe("/workspace/electron-app")
-    expect(paths.ffmpegPath).toBe("ffmpeg")
   })
 
   it("uses packaged Windows resources instead of macOS paths", () => {
@@ -33,7 +32,6 @@ describe("resolveRuntimePaths", () => {
     expect(paths.sourceRoot).toBe(path.join("C:\\Program Files\\Slicer\\resources", "engine"))
     expect(paths.pythonPath).toBe(path.join("C:\\Program Files\\Slicer\\resources", ".runtime", "python", "python.exe"))
     expect(paths.workingDirectory).toBe("C:\\Program Files\\Slicer\\resources")
-    expect(paths.ffmpegPath).toBe(path.join(paths.sourceRoot, "vendor-windows", "ffmpeg-bin", "ffmpeg.exe"))
   })
 
   it("honours explicit runtime overrides on every platform", () => {
@@ -45,12 +43,10 @@ describe("resolveRuntimePaths", () => {
       environment: {
         STEM_SLICER_PYTHON: "D:\\runtime\\python.exe",
         STEM_SLICER_SOURCE_ROOT: "D:\\runtime\\engine",
-        STEM_SLICER_FFMPEG: "D:\\runtime\\ffmpeg.exe",
       },
     })
 
     expect(paths.pythonPath).toBe("D:\\runtime\\python.exe")
     expect(paths.sourceRoot).toBe("D:\\runtime\\engine")
-    expect(paths.ffmpegPath).toBe("D:\\runtime\\ffmpeg.exe")
   })
 })

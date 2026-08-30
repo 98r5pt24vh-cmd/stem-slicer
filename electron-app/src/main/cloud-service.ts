@@ -24,7 +24,6 @@ import type {
   ConfigureCloudRequest,
   GenerateJobRequest,
 } from "../shared/contracts"
-import { cloudExportWavPath, ensureCloudExportWavMaster } from "./cloud-export-master"
 import { CloudExportOutbox, type CloudExportOutboxBinding } from "./cloud-export-outbox"
 import {
   audioMimeType,
@@ -445,6 +444,14 @@ function activityAudioCacheSidecarPath(audioPath: string): string {
   return `${audioPath}${CLOUD_ACTIVITY_CACHE_SIDECAR_SUFFIX}`
 }
 
+function legacyCloudExportWavPath(sourcePath: string): string {
+  if (path.extname(sourcePath).toLocaleLowerCase() === ".wav") return sourcePath
+  return path.join(
+    path.dirname(sourcePath),
+    `${path.basename(sourcePath, path.extname(sourcePath))}.cloud-activity.wav`,
+  )
+}
+
 function readActivityAudioCacheSidecar(sidecarPath: string): ActivityAudioCacheSidecar | null {
   try {
     const parsed = JSON.parse(readFileSync(sidecarPath, "utf8")) as Partial<ActivityAudioCacheSidecar>
@@ -533,7 +540,6 @@ export class CloudService {
     private readonly acceptedCachePath: string,
     appCachePath: string,
     private readonly bootstrapConfigurationPath?: string,
-    private readonly ffmpegPath = "",
   ) {
     const root = path.join(appCachePath, "cloud")
     this.settingsPath = path.join(root, "settings.json")
@@ -593,7 +599,7 @@ export class CloudService {
       for (const entry of this.exportOutbox.completed(binding, 100)) {
         const snapshotPaths = new Set([
           entry.request.masterPath,
-          cloudExportWavPath(entry.request.masterPath),
+          legacyCloudExportWavPath(entry.request.masterPath),
         ])
         let cleaned = true
         for (const snapshotPath of snapshotPaths) {
@@ -1300,23 +1306,19 @@ export class CloudService {
     }
     await this.ensureRealtime(session.user.id)
     this.requireActiveExportBinding(binding)
-    const preparedMasterPath = await ensureCloudExportWavMaster(request.masterPath, this.ffmpegPath, {
-      trashItem: (targetPath) => shell.trashItem(targetPath),
-    })
-    this.requireActiveExportBinding(binding)
-    const masterSha256 = await sha256File(preparedMasterPath)
-    const fileStats = statSync(preparedMasterPath)
-    const extension = path.extname(preparedMasterPath).toLocaleLowerCase()
-    const mimeType = audioMimeType(preparedMasterPath)
-    if (extension !== ".wav" || !(["audio/wav", "audio/x-wav"] as const).includes(mimeType as "audio/wav" | "audio/x-wav")) {
-      throw new Error("Cloud activity requires the generated WAV master.")
+    const masterSha256 = await sha256File(request.masterPath)
+    const fileStats = statSync(request.masterPath)
+    const extension = path.extname(request.masterPath).toLocaleLowerCase()
+    const mimeType = audioMimeType(request.masterPath)
+    if (extension !== ".mp3" || mimeType !== "audio/mpeg") {
+      throw new Error("Cloud activity requires the generated MP3 master.")
     }
     const proposedAssetId = randomUUID()
     const preparedAsset = await client.rpc("prepare_cloud_export_asset", {
       payload: {
         assetId: proposedAssetId,
         sha256: masterSha256,
-        fileName: path.basename(preparedMasterPath),
+        fileName: path.basename(request.masterPath),
         durationSeconds: Math.max(0, request.durationSeconds),
       },
     })
@@ -1361,7 +1363,7 @@ export class CloudService {
     if (asset.status !== "available" || new Date(asset.retain_until).getTime() <= Date.now()) {
       try {
         this.requireActiveExportBinding(binding)
-        const audio = await readFile(preparedMasterPath)
+        const audio = await readFile(request.masterPath)
         this.requireActiveExportBinding(binding)
         const uploaded = await client.storage.from(CLOUD_EXPORT_BUCKET).upload(asset.object_path, audio, {
           contentType: mimeType,
