@@ -73,6 +73,7 @@ jobs:
         run: |
           $runtime = (Resolve-Path ".runtime/python").Path
           if (Test-Path ".runtime/python/pyvenv.cfg") { throw "The packaged runtime must not be a Windows venv." }
+          if (Get-ChildItem ".runtime/python" -Filter "python-*-amd64.exe") { throw "The CPython bootstrap installer must not be packaged." }
           & ".runtime/python/python.exe" -c "import json, pathlib, sys; expected = pathlib.Path(sys.argv[1]).resolve(); prefix = pathlib.Path(sys.prefix).resolve(); base = pathlib.Path(sys.base_prefix).resolve(); assert prefix == expected, (prefix, expected); assert base == expected, (base, expected); assert 'hostedtoolcache' not in str(base).casefold(), base; print(json.dumps({'executable': sys.executable, 'prefix': str(prefix), 'basePrefix': str(base)}))" $runtime
           if ($LASTEXITCODE -ne 0) { throw "The Windows runtime is not self-contained." }
 

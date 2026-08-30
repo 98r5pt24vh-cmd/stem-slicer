@@ -111,6 +111,8 @@ class ElectronEngineManifestTests(unittest.TestCase):
         runtime_setup = (ROOT / "electron-app" / "scripts" / "setup-python-runtime.mjs").read_text(encoding="utf-8")
         self.assertIn("cpSync(path.resolve(identity.basePrefix), runtimeRoot", runtime_setup)
         self.assertIn("non-relocatable pyvenv.cfg", runtime_setup)
+        self.assertIn("python-\\d+\\.\\d+\\.\\d+-amd64\\.exe", runtime_setup)
+        self.assertIn("The CPython bootstrap installer must not be packaged.", workflow)
         self.assertNotIn("Get-ChildItem -Path . -Filter *.py", workflow)
         self.assertNotIn("PySide6==", workflow)
         self.assertNotIn("diagnose_midi_startup.py", workflow)

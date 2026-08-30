@@ -52,7 +52,10 @@ if (process.platform === "win32") {
   // pyvenv.cfg and fail with code 103 after the application is moved away
   // from the build runner. Copy the official setup-python installation so
   // the packaged python.exe resolves its standard library beside itself.
-  cpSync(path.resolve(identity.basePrefix), runtimeRoot, { recursive: true })
+  cpSync(path.resolve(identity.basePrefix), runtimeRoot, {
+    recursive: true,
+    filter: (source) => !/^python-\d+\.\d+\.\d+-amd64\.exe$/i.test(path.basename(source)),
+  })
   python = path.join(runtimeRoot, "python.exe")
 } else {
   run(requestedBase, ["-m", "venv", runtimeRoot])

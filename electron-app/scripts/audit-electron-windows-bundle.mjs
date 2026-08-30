@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, statSync } from "node:fs"
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs"
 import path from "node:path"
 import process from "node:process"
 import { URL } from "node:url"
@@ -40,6 +40,10 @@ for (const relativePath of requiredFiles) {
 
 if (existsSync(path.join(applicationRoot, "resources/.runtime/python/pyvenv.cfg"))) {
   throw new Error("The Windows bundle contains a non-relocatable Python virtual environment.")
+}
+const packagedPythonRoot = path.join(applicationRoot, "resources/.runtime/python")
+if (readdirSync(packagedPythonRoot).some((entry) => /^python-\d+\.\d+\.\d+-amd64\.exe$/i.test(entry))) {
+  throw new Error("The Windows bundle contains the CPython bootstrap installer.")
 }
 
 const forbiddenBuildArtifacts = [
