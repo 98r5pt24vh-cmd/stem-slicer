@@ -5952,6 +5952,7 @@ function CloudView({
   const cloudRefreshInFlightRef = useRef<Promise<void> | null>(null)
   const activityRefreshInFlightRef = useRef<Promise<void> | null>(null)
   const activityRefreshTrailingRef = useRef(false)
+  const activityRefreshSucceededRef = useRef(false)
   const activityLoadedPastFirstPageRef = useRef(false)
   const prepareActivityRequestRef = useRef(0)
   const cloudStateRevisionRef = useRef(cloudStateRevision(EMPTY_CLOUD_STATE))
@@ -5983,8 +5984,10 @@ function CloudView({
             return mergedActivity
           })
           if (!activityLoadedPastFirstPageRef.current) setActivityHasMore(nextActivity.length === CLOUD_ACTIVITY_PAGE_SIZE)
+          activityRefreshSucceededRef.current = true
           setActivityError("")
         } catch (reason) {
+          activityRefreshSucceededRef.current = false
           setActivityError(cloudErrorMessage(reason, "Cloud activity is temporarily unavailable."))
         }
       } while (activityRefreshTrailingRef.current)
@@ -6091,6 +6094,7 @@ function CloudView({
     const unsubscribe = api.onCloudSyncEvent((event) => {
       if (event.kind === "activity-error") {
         setActivityError(event.error || "Cloud could not preserve this export yet. It remains queued locally.")
+        if (activityVisible) void refreshActivity()
       } else if (activityVisible) {
         void refreshActivity()
       }
@@ -6102,6 +6106,8 @@ function CloudView({
     if (!activityVisible || !cloud.authenticated) return
     let cancelled = false
     const openActivity = async () => {
+      await refreshActivity()
+      if (cancelled || !activityRefreshSucceededRef.current) return
       try {
         const count = await window.stemSlicer?.markCloudExportActivityRead()
         if (!cancelled) {
@@ -6110,8 +6116,6 @@ function CloudView({
         }
       } catch (reason) {
         if (!cancelled) setActivityError(cloudErrorMessage(reason, "Cloud activity could not be marked as read."))
-      } finally {
-        if (!cancelled) await refreshActivity()
       }
     }
     void openActivity()

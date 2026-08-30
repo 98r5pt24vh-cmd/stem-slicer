@@ -146,3 +146,17 @@ describe("Cloud export MP3 correction migration", () => {
     expect(rpc).toContain("where recipient.event_id = recorded_event_id")
   })
 })
+
+describe("Cloud export Storage owner-read correction migration", () => {
+  const migration = readFileSync(
+    path.resolve(process.cwd(), "supabase/migrations/202608300004_cloud_export_storage_owner_read.sql"),
+    "utf8",
+  )
+
+  it("allows the owner to read an in-flight object required by Storage upsert", () => {
+    expect(migration).toContain("create policy cloud_export_masters_owner_read")
+    expect(migration).toContain("on storage.objects for select to authenticated")
+    expect(migration).toContain("asset.owner_id = auth.uid()")
+    expect(migration).toContain("asset.object_path = name")
+  })
+})
