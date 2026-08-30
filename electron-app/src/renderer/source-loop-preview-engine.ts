@@ -47,7 +47,7 @@ export function editorTrackGain(
   return Math.max(0, Math.min(1.25, (trackVolumes.get(identity) ?? 100) / 100))
 }
 
-export function audioBufferPeaks(buffer: AudioBuffer, count = PEAK_COUNT): number[] {
+function audioBufferPeaks(buffer: AudioBuffer, count = PEAK_COUNT): number[] {
   const peaks: number[] = []
   const framesPerBin = Math.max(1, Math.ceil(buffer.length / count))
   for (let bin = 0; bin < count; bin += 1) {

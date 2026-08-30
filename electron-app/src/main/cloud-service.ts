@@ -444,14 +444,6 @@ function activityAudioCacheSidecarPath(audioPath: string): string {
   return `${audioPath}${CLOUD_ACTIVITY_CACHE_SIDECAR_SUFFIX}`
 }
 
-function legacyCloudExportWavPath(sourcePath: string): string {
-  if (path.extname(sourcePath).toLocaleLowerCase() === ".wav") return sourcePath
-  return path.join(
-    path.dirname(sourcePath),
-    `${path.basename(sourcePath, path.extname(sourcePath))}.cloud-activity.wav`,
-  )
-}
-
 function readActivityAudioCacheSidecar(sidecarPath: string): ActivityAudioCacheSidecar | null {
   try {
     const parsed = JSON.parse(readFileSync(sidecarPath, "utf8")) as Partial<ActivityAudioCacheSidecar>
@@ -597,18 +589,13 @@ export class CloudService {
     const previous = this.exportSnapshotCleanupPromise ?? Promise.resolve()
     const cleanup = previous.catch(() => undefined).then(async () => {
       for (const entry of this.exportOutbox.completed(binding, 100)) {
-        const snapshotPaths = new Set([
-          entry.request.masterPath,
-          legacyCloudExportWavPath(entry.request.masterPath),
-        ])
         let cleaned = true
-        for (const snapshotPath of snapshotPaths) {
-          if (this.exportOutbox.isManagedSnapshot(snapshotPath) && existsSync(snapshotPath)) {
-            try {
-              await shell.trashItem(snapshotPath)
-            } catch {
-              cleaned = false
-            }
+        const snapshotPath = entry.request.masterPath
+        if (this.exportOutbox.isManagedSnapshot(snapshotPath) && existsSync(snapshotPath)) {
+          try {
+            await shell.trashItem(snapshotPath)
+          } catch {
+            cleaned = false
           }
         }
         if (!cleaned) continue

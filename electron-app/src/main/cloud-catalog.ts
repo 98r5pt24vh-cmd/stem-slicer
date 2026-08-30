@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite"
 
 import { PRIMARY_PRODUCER, sourceProvenance, uniqueProducerNames } from "../lib/source-provenance"
 
-export interface LocalCloudLayer {
+interface LocalCloudLayer {
   path: string
   relativePath: string
   fileName: string

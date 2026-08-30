@@ -22,7 +22,7 @@ interface ActiveLayerNodes {
 }
 
 export const AUDIO_START_AHEAD_SECONDS = 0.02
-export const MAX_PLAYBACK_GAIN = 1.25
+const MAX_PLAYBACK_GAIN = 1.25
 const END_EPSILON_SECONDS = 1 / 48_000
 
 export function clampPlaybackProgress(value: number): number {
