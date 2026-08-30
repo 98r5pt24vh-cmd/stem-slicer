@@ -1571,6 +1571,11 @@ def generation_artifacts(
         source_path = str(selection.candidate.path.resolve())
         source_metadata = metadata_by_path.get(source_path, {})
         provenance = _source_provenance(selection.candidate.path.name)
+        source_file = str(
+            source_metadata.get("filename")
+            or source_metadata.get("file_name")
+            or selection.candidate.path.name
+        )
         explicit_producers = source_metadata.get("producers")
         if isinstance(explicit_producers, (list, tuple)):
             producers = _unique_producers(explicit_producers) or list(provenance["producers"])
@@ -1598,7 +1603,7 @@ def generation_artifacts(
         artifact.update(
             {
                 "identity": selection.candidate.identity,
-                "sourceFile": selection.candidate.path.name,
+                "sourceFile": source_file,
                 "sourceLoopId": selection.candidate.source_loop_id,
                 "sourceLoopName": source_loop_name,
                 "producers": producers,

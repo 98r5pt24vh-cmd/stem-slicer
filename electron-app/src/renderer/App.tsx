@@ -1934,9 +1934,16 @@ function AppSidebar({
 
   useEffect(() => {
     const updateCloudProfile = (state?: CloudState) => {
-      if (!state?.profile) return
-      setPrimaryProfileName(state.profile.displayName)
-      if (state.profile.avatarUrl) setPrimaryProfile({ avatarUrl: state.profile.avatarUrl })
+      if (!state?.profile) {
+        setPrimaryProfileName(PRIMARY_PRODUCER)
+        setPrimaryProfile(producerProfileFor(loadCollaboratorSettings().profiles, PRIMARY_PRODUCER))
+        return
+      }
+      const profileName = state.profile.displayName.trim() || PRIMARY_PRODUCER
+      setPrimaryProfileName(profileName)
+      setPrimaryProfile(state.profile.avatarUrl
+        ? { avatarUrl: state.profile.avatarUrl }
+        : undefined)
     }
     void window.stemSlicer?.getCloudState().then(updateCloudProfile).catch(() => undefined)
     const listener = (event: Event) => updateCloudProfile((event as CustomEvent<CloudState>).detail)

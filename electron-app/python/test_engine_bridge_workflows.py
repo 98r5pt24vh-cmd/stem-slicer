@@ -12,6 +12,54 @@ import engine_bridge as bridge
 
 
 class EngineBridgeWorkflowTests(unittest.TestCase):
+    def test_generation_artifact_prefers_the_original_cloud_filename(self) -> None:
+        candidate = SimpleNamespace(
+            path=Path("/cache/c47a9f.mp3"),
+            alternate_scanned_key=None,
+            alternate_scanned_mode=None,
+            scanned_key="A",
+            scanned_mode="minor",
+            source_key="A",
+            source_mode="minor",
+            identity="cloud:layer-1",
+            source_loop_id="cloud:owner:loop",
+        )
+        selection = SimpleNamespace(
+            candidate=candidate,
+            category="Bass",
+            source_key_rank=0,
+            manual_pitch_semitones=0,
+            slot_index=0,
+        )
+        rendered = SimpleNamespace(
+            timeline=SimpleNamespace(loop_frames=44_100, sample_rate=44_100),
+            stem_results=[SimpleNamespace(
+                selection=selection,
+                output_path=Path("/output/Bass.wav"),
+                waveform_peaks=(),
+            )],
+        )
+        request = SimpleNamespace(plan=SimpleNamespace(request=SimpleNamespace(
+            target_bpm=140,
+            target_key="A minor",
+            locked_identities_by_slot=("",),
+        )))
+        source_path = str(candidate.path.resolve())
+
+        with patch.object(bridge, "artifact_payload", return_value={}):
+            artifacts = bridge.generation_artifacts(
+                rendered,
+                request,
+                source_metadata_by_path={
+                    source_path: {
+                        "filename": "Bm FM 151 FMIN XT_L10.mp3",
+                        "source_loop_name": "Bm FM 151 FMIN XT",
+                    }
+                },
+            )
+
+        self.assertEqual(artifacts[0]["sourceFile"], "Bm FM 151 FMIN XT_L10.mp3")
+
     def test_processing_runtime_warmup_resolves_shared_audio_tools(self) -> None:
         import engine
 
