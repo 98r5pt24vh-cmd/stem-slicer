@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, net, protocol, shell } from "electron"
 import type { IpcMainInvokeEvent } from "electron"
 import path from "node:path"
-import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs"
+import { copyFileSync, existsSync, mkdirSync, statSync, writeFileSync } from "node:fs"
 import { pathToFileURL } from "node:url"
 
 import { AudioEngineService } from "./main/audio-engine"
@@ -19,7 +19,7 @@ import type {
   AudioJobRequest,
   AudioSelection,
   CloudCredentialsRequest,
-  CloudGenerationRecordRequest,
+  CloudTrackedDragRequest,
   CloudProfileUpdateRequest,
   CloudSignUpRequest,
   ConfigureCloudRequest,
@@ -179,6 +179,12 @@ const audioEngine = new AudioEngineService(
   acceptedCachePath,
 )
 const cloudService = new CloudService(acceptedCachePath, appCachePath, cloudBootstrapConfigurationPath)
+
+cloudService.onSync((event) => {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.webContents.send("cloud:sync-event", event)
+  }
+})
 
 audioEngine.onStatus((status) => {
   if (engineSmokeStatusPath && ["ready", "failed", "unavailable"].includes(status.state)) {
@@ -407,10 +413,37 @@ function registerIpc(): void {
     }
     return runCloudRequest(() => cloudService.removeLibrary(libraryId))
   })
-  ipcMain.handle("cloud:record-generation", (_event: IpcMainInvokeEvent, request: CloudGenerationRecordRequest) =>
-    runCloudRequest(() => cloudService.recordGeneration(request)),
-  )
-  ipcMain.handle("cloud:get-generation-activity", () => runCloudRequest(() => cloudService.generationActivity()))
+  ipcMain.handle("cloud:get-export-activity", (_event: IpcMainInvokeEvent, offset: unknown) => {
+    if (offset !== undefined && (!Number.isSafeInteger(offset) || Number(offset) < 0)) {
+      throw new Error("The Cloud activity page is invalid.")
+    }
+    return runCloudRequest(() => cloudService.exportActivity(offset === undefined ? 0 : Number(offset)))
+  })
+  ipcMain.handle("cloud:get-unread-activity-count", () => runCloudRequest(() => cloudService.unreadExportActivityCount()))
+  ipcMain.handle("cloud:mark-export-activity-read", (_event: IpcMainInvokeEvent, activityIds: unknown) => {
+    if (activityIds !== undefined && (!Array.isArray(activityIds) || activityIds.some((id) => typeof id !== "string"))) {
+      throw new Error("The Cloud activity selection is invalid.")
+    }
+    return runCloudRequest(() => cloudService.markExportActivityRead(activityIds as string[] | undefined))
+  })
+  ipcMain.handle("cloud:prepare-export-audio", (_event: IpcMainInvokeEvent, activityId: unknown) => {
+    if (typeof activityId !== "string" || !activityId) throw new Error("The Cloud activity is invalid.")
+    return runCloudRequest(() => cloudService.prepareExportActivityAudio(activityId))
+  })
+  ipcMain.handle("cloud:download-export-audio", async (event: IpcMainInvokeEvent, activityId: unknown) => {
+    if (typeof activityId !== "string" || !activityId) throw new Error("The Cloud activity is invalid.")
+    const audio = await runCloudRequest(() => cloudService.prepareExportActivityAudio(activityId))
+    const saveOptions = {
+      title: "Save Cloud activity audio",
+      defaultPath: path.join(app.getPath("downloads"), audio.fileName),
+      filters: [{ name: "Audio", extensions: [path.extname(audio.fileName).replace(/^\./, "") || "wav"] }],
+    }
+    const owner = BrowserWindow.fromWebContents(event.sender)
+    const result = owner ? await dialog.showSaveDialog(owner, saveOptions) : await dialog.showSaveDialog(saveOptions)
+    if (result.canceled || !result.filePath) return { canceled: true }
+    copyFileSync(audio.path, result.filePath)
+    return { canceled: false, path: result.filePath }
+  })
   ipcMain.handle("cloud:publish-library", (event: IpcMainInvokeEvent, libraryRoot: unknown) => {
     if (typeof libraryRoot !== "string") throw new Error("The local library path is invalid.")
     const sender = event.sender
@@ -495,6 +528,18 @@ function registerIpc(): void {
       icon: createDragPreviewIcon(),
     })
   })
+  ipcMain.on("drag:start-tracked", (event, request: CloudTrackedDragRequest) => {
+    if (!request || typeof request !== "object" || typeof request.exportPath !== "string" || !existsSync(request.exportPath)) return
+    try {
+      cloudService.queueTrackedExport(request)
+    } catch (error) {
+      event.sender.send("cloud:sync-event", {
+        kind: "activity-error",
+        error: cloudErrorMessage(error, "Cloud could not queue this export. The file drag is still available."),
+      })
+    }
+    event.sender.startDrag({ file: request.exportPath, icon: createDragPreviewIcon() })
+  })
 }
 
 app.whenReady().then(() => {
@@ -519,6 +564,7 @@ app.whenReady().then(() => {
     console.error(`[Slicer engine] startup failed: ${detail}`)
   })
   createWindow()
+  void cloudService.flushExportOutbox()
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -529,4 +575,7 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit()
 })
 
-app.on("before-quit", () => audioEngine.shutdown())
+app.on("before-quit", () => {
+  audioEngine.shutdown()
+  void cloudService.dispose()
+})

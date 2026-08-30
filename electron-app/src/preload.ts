@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from "electron"
 
-import type { AudioJobEvent, CloudPublishEvent, EngineStatus, StemSlicerDesktopApi } from "./shared/contracts"
+import type { AudioJobEvent, CloudPublishEvent, CloudSyncEvent, EngineStatus, StemSlicerDesktopApi } from "./shared/contracts"
 
 const api: StemSlicerDesktopApi = {
   getEnvironment: () => ipcRenderer.invoke("app:get-environment"),
@@ -44,8 +44,16 @@ const api: StemSlicerDesktopApi = {
   cloudSetLibrarySharing: (libraryId, sharing) => ipcRenderer.invoke("cloud:set-library-sharing", libraryId, sharing),
   cloudSetLibraryProducerAccess: (libraryId, producerId, allowed) => ipcRenderer.invoke("cloud:set-library-producer-access", libraryId, producerId, allowed),
   cloudRemoveLibrary: (libraryId) => ipcRenderer.invoke("cloud:remove-library", libraryId),
-  cloudRecordGeneration: (request) => ipcRenderer.invoke("cloud:record-generation", request),
-  getCloudGenerationActivity: () => ipcRenderer.invoke("cloud:get-generation-activity"),
+  getCloudExportActivity: (offset) => ipcRenderer.invoke("cloud:get-export-activity", offset),
+  getCloudUnreadActivityCount: () => ipcRenderer.invoke("cloud:get-unread-activity-count"),
+  markCloudExportActivityRead: (activityIds) => ipcRenderer.invoke("cloud:mark-export-activity-read", activityIds),
+  prepareCloudExportAudio: (activityId) => ipcRenderer.invoke("cloud:prepare-export-audio", activityId),
+  downloadCloudExportAudio: (activityId) => ipcRenderer.invoke("cloud:download-export-audio", activityId),
+  onCloudSyncEvent: (listener) => {
+    const handler = (_event: IpcRendererEvent, payload: CloudSyncEvent) => listener(payload)
+    ipcRenderer.on("cloud:sync-event", handler)
+    return () => ipcRenderer.removeListener("cloud:sync-event", handler)
+  },
   onCloudPublishEvent: (listener) => {
     const handler = (_event: IpcRendererEvent, payload: CloudPublishEvent) => listener(payload)
     ipcRenderer.on("cloud:publish-event", handler)
@@ -67,6 +75,7 @@ const api: StemSlicerDesktopApi = {
   trashPath: (path) => ipcRenderer.invoke("shell:trash-path", path),
   startFileDrag: (path) => ipcRenderer.send("drag:start", path),
   startFilesDrag: (paths) => ipcRenderer.send("drag:start-many", paths),
+  startTrackedFileDrag: (request) => ipcRenderer.send("drag:start-tracked", request),
   mediaUrl: (path) => `stem-media://local/audio?path=${encodeURIComponent(path)}`,
 }
 

@@ -10,6 +10,7 @@ import {
   cloudErrorMessage,
   cloudUploadConcurrency,
   CloudService,
+  expiredActivityAudioCacheEntries,
   loadCloudBootstrapConfiguration,
   normalizeAliases,
   normalizeCloudHandle,
@@ -182,6 +183,39 @@ describe("Cloud library upload", () => {
   it("keeps conservative concurrency when a layer is large or the manifest is empty", () => {
     expect(cloudUploadConcurrency([310_000, 6_000_001])).toBe(3)
     expect(cloudUploadConcurrency([])).toBe(3)
+  })
+})
+
+describe("Cloud activity audio cache retention", () => {
+  it("selects only expired cache-owned audio and never follows a sidecar outside the cache", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "slicer-cloud-activity-cache-"))
+    const expiredAudio = path.join(root, `${"a".repeat(64)}.wav`)
+    const retainedAudio = path.join(root, `${"b".repeat(64)}.wav`)
+    writeFileSync(expiredAudio, "expired")
+    writeFileSync(retainedAudio, "retained")
+    writeFileSync(`${expiredAudio}.expiry.json`, JSON.stringify({
+      version: 1,
+      audioFileName: path.basename(expiredAudio),
+      sha256: "a".repeat(64),
+      expiresAt: "2026-08-29T00:00:00.000Z",
+    }))
+    writeFileSync(`${retainedAudio}.expiry.json`, JSON.stringify({
+      version: 1,
+      audioFileName: path.basename(retainedAudio),
+      sha256: "b".repeat(64),
+      expiresAt: "2026-09-29T00:00:00.000Z",
+    }))
+    writeFileSync(path.join(root, "malicious.expiry.json"), JSON.stringify({
+      version: 1,
+      audioFileName: "../explicit-download.wav",
+      sha256: "c".repeat(64),
+      expiresAt: "2026-08-29T00:00:00.000Z",
+    }))
+
+    expect(expiredActivityAudioCacheEntries(root, Date.parse("2026-08-30T00:00:00.000Z"))).toEqual([{
+      audioPath: expiredAudio,
+      sidecarPath: `${expiredAudio}.expiry.json`,
+    }])
   })
 })
 

@@ -12,11 +12,13 @@ import {
   CheckSquare2,
   ChevronDown,
   ChevronLeft,
+  ChevronRight,
   CircleAlert,
   CircleX,
   Cloud,
   CloudCog,
   Dices,
+  Download,
   FolderOpen,
   ExternalLink,
   GripVertical,
@@ -75,6 +77,7 @@ import { basename, cn, extractionFolderNameForSource, formatCount, formatDecimal
 import { GENERATE_CATEGORY_OPTIONS, mergeGenerateCategories } from "@/lib/generate-categories"
 import { createPlaybackProgressStore, type PlaybackProgressSource, type PlaybackProgressStore } from "@/lib/playback-progress"
 import { quickFileToolFromDragHover } from "@/lib/quick-tool-drag"
+import { buildCloudTrackedDragRequest } from "@/lib/cloud-export"
 import {
   parseConvertHistory,
   parseExtractionHistory,
@@ -94,7 +97,8 @@ import type {
   AudioJobResult,
   BatchJobResult,
   CategoryCorrection,
-  CloudGenerationActivity,
+  CloudActivityAudio,
+  CloudExportActivity,
   CloudLibrarySummary,
   CloudPublishEvent,
   CloudProfile,
@@ -170,7 +174,6 @@ interface HistoryEntry {
   layerCount: number
   generation: GenerateResult
   layers: GeneratedLayer[]
-  cloudRunId?: string
   exportedAt?: string
 }
 
@@ -222,7 +225,7 @@ function SourceOriginIcon({ origin }: { origin: "local" | "cloud" }) {
 }
 
 type SlicerToolId = "slicer" | "extract" | "scan" | "convert"
-type PlaybackContext = "generate" | "quick-extract" | "quick-convert" | "history"
+type PlaybackContext = "generate" | "quick-extract" | "quick-convert" | "history" | "cloud-activity"
 
 const NAVIGATION: NavItem[] = [
   { id: "stem-slicer", label: "Slicer", icon: Layers3 },
@@ -359,9 +362,7 @@ const GENERATION_SEQUENCE_STORAGE_KEY = "stem-slicer-electron.generation-sequenc
 const COLLABORATOR_SETTINGS_STORAGE_KEY = "stem-slicer-electron.collaborator-settings.v1"
 const PRODUCER_PROFILES_CHANGED_EVENT = "stem-slicer-producer-profiles-changed"
 const CLOUD_STATE_CHANGED_EVENT = "stem-slicer-cloud-state-changed"
-const CLOUD_ACTIVITY_CHANGED_EVENT = "stem-slicer-cloud-activity-changed"
-const CLOUD_ACTIVITY_ERROR_EVENT = "stem-slicer-cloud-activity-error"
-const CLOUD_REFRESH_INTERVAL_MS = 10_000
+const CLOUD_ACTIVITY_PAGE_SIZE = 100
 
 type ProducerSortDirection = "desc" | "asc"
 type FiniteCollaboratorCreditCount = 1 | 2 | 3
@@ -1848,12 +1849,16 @@ function LayerOctaveSelect({
 function AppSidebar({
   activeView,
   collapsed,
+  unreadCloudActivityCount,
   onNavigate,
+  onOpenCloudActivity,
   onToggle,
 }: {
   activeView: ViewId
   collapsed: boolean
+  unreadCloudActivityCount: number
   onNavigate: (view: ViewId) => void
+  onOpenCloudActivity: () => void
   onToggle: () => void
 }) {
   const [primaryProfile, setPrimaryProfile] = useState<ProducerProfileSettings | undefined>(() => (
@@ -1999,20 +2004,38 @@ function AppSidebar({
         })}
       </nav>
 
-      <button
-        type="button"
-        className={cn("sidebar-profile app-no-drag", activeView === "profile" && "is-active")}
-        onClick={() => onNavigate("profile")}
-        aria-current={activeView === "profile" ? "page" : undefined}
-        aria-label={`Open ${primaryProfileName} profile`}
-        title={collapsed ? `${primaryProfileName} profile` : "Open profile"}
-      >
-        <span className="sidebar-profile-avatar"><ProducerAvatar producer={primaryProfileName} profile={primaryProfile} /></span>
-        <span className="sidebar-copy">
-          <strong>{primaryProfileName}</strong>
-        </span>
-        <Pencil aria-hidden="true" />
-      </button>
+      <div className="sidebar-profile-shell app-no-drag">
+        <div className="sidebar-profile-identity" aria-label={`Signed in as ${primaryProfileName}`}>
+          <span className="sidebar-profile-avatar"><ProducerAvatar producer={primaryProfileName} profile={primaryProfile} /></span>
+          <span className="sidebar-copy">
+            <strong>{primaryProfileName}</strong>
+          </span>
+        </div>
+        <div className="sidebar-profile-actions">
+          <button
+            type="button"
+            className={cn("sidebar-profile-icon sidebar-cloud-activity", unreadCloudActivityCount > 0 && "has-unread")}
+            onClick={onOpenCloudActivity}
+            aria-label={unreadCloudActivityCount > 0
+              ? `${unreadCloudActivityCount} new Cloud ${unreadCloudActivityCount === 1 ? "activity" : "activities"}`
+              : "Open Cloud activity"}
+            title="Cloud activity"
+          >
+            <Cloud aria-hidden="true" />
+            {unreadCloudActivityCount > 0 ? <span className="sidebar-cloud-unread" aria-hidden="true">+{Math.min(unreadCloudActivityCount, 99)}</span> : null}
+          </button>
+          <button
+            type="button"
+            className={cn("sidebar-profile-icon sidebar-profile-edit", activeView === "profile" && "is-active")}
+            onClick={() => onNavigate("profile")}
+            aria-current={activeView === "profile" ? "page" : undefined}
+            aria-label={`Edit ${primaryProfileName} profile`}
+            title="Edit profile"
+          >
+            <Pencil aria-hidden="true" />
+          </button>
+        </div>
+      </div>
 
       <div className="sidebar-footer">
         <Popover.Root>
@@ -2283,7 +2306,7 @@ function LayerCard({
   onCorrectCategory?: (category: string) => void | Promise<void>
   onToggleLock?: () => void
   onRemove?: () => void
-  onExport?: () => void
+  onExport?: (kind: "layer-audio" | "layer-midi", path: string) => boolean
   categoryOptions?: string[]
   canRemove?: boolean
   updating?: boolean
@@ -2307,11 +2330,10 @@ function LayerCard({
     if (bounds.width <= 0) return
     onSeek((event.clientX - bounds.left) / bounds.width)
   }
-  const beginDrag = (event: React.DragEvent, path: string | undefined) => {
+  const beginDrag = (event: React.DragEvent, path: string | undefined, kind: "layer-audio" | "layer-midi") => {
     if (!path) return
     event.preventDefault()
-    onExport?.()
-    window.stemSlicer?.startFileDrag(path)
+    if (!onExport?.(kind, path)) window.stemSlicer?.startFileDrag(path)
   }
 
   return (
@@ -2453,7 +2475,7 @@ function LayerCard({
             aria-label={`Exporter le MIDI de ${layer.role}`}
             title={layer.midiPath ? "Drag MIDI or view its location" : "MIDI unavailable"}
             onClick={() => layer.midiPath && void window.stemSlicer?.revealPath(layer.midiPath)}
-            onDragStart={(event) => beginDrag(event, layer.midiPath)}
+            onDragStart={(event) => beginDrag(event, layer.midiPath, "layer-midi")}
           >
             <MidiFileIcon /> MIDI
           </Button>
@@ -2465,7 +2487,7 @@ function LayerCard({
             aria-label={`Exporter ${layer.role}`}
             title={layer.path ? "Drag audio or view its location" : "Render this layer before exporting it"}
             onClick={() => layer.path && void window.stemSlicer?.revealPath(layer.path)}
-            onDragStart={(event) => beginDrag(event, layer.path)}
+            onDragStart={(event) => beginDrag(event, layer.path, "layer-audio")}
           >
             <AudioLines /> Audio
           </Button>
@@ -3442,6 +3464,32 @@ function GenerateView({
     })
   }
 
+  const startGeneratedDrag = (
+    exportKind: "drag-all" | "layer-audio" | "layer-midi",
+    exportPath: string,
+    selectedSlotIndex?: number,
+  ): boolean => {
+    const api = window.stemSlicer
+    if (!currentGenerationResult || !api) return false
+    onMarkCurrentGenerationExported(currentGenerationResult)
+    const generationNumber = currentGenerationResult.generationNumber ?? Math.max(1, nextGenerationNumber - 1)
+    const request = buildCloudTrackedDragRequest({
+      exportKind,
+      exportPath,
+      masterPath: currentGenerationResult.masterPath,
+      generatedLoopName: displayNameForGeneration(currentGenerationResult, layers, generationNumber, primaryProducer),
+      generationSeed: currentGenerationResult.seed,
+      targetBpm: currentGenerationResult.targetBpm,
+      targetKey: currentGenerationResult.targetKey,
+      durationSeconds: Math.max(0, ...layers.map((layer) => layer.duration || 0)),
+      layers,
+      selectedSlotIndex,
+    })
+    if (!request) return false
+    api.startTrackedFileDrag(request)
+    return true
+  }
+
   return (
     <div className="page-stack generate-page">
       <PageHeader
@@ -3633,8 +3681,9 @@ function GenerateView({
             onDragStart={(event) => {
               if (!currentGenerationResult?.masterPath || recipeDirty) return
               event.preventDefault()
-              onMarkCurrentGenerationExported(currentGenerationResult)
-              window.stemSlicer?.startFileDrag(currentGenerationResult.masterPath)
+              if (!startGeneratedDrag("drag-all", currentGenerationResult.masterPath)) {
+                window.stemSlicer?.startFileDrag(currentGenerationResult.masterPath)
+              }
             }}
           ><Layers3 /> Drag all</Button>
         </header>
@@ -3662,7 +3711,7 @@ function GenerateView({
                 onCorrectCategory={(category) => correctLayerCategory(index, category)}
                 onToggleLock={() => toggleLayerLock(index)}
                 onRemove={() => removeLayerCard(index)}
-                onExport={() => currentGenerationResult && onMarkCurrentGenerationExported(currentGenerationResult)}
+                onExport={(kind, exportPath) => startGeneratedDrag(kind, exportPath, index)}
                 categoryOptions={selectedCategories.map((category) => category.name)}
                 canRemove={layers.length > 1}
                 updating={generateUpdateJob.busy}
@@ -4386,6 +4435,23 @@ function historyEntryToLayer(entry: HistoryEntry): GeneratedLayer {
   }
 }
 
+function cloudActivityAudioToLayer(activity: CloudExportActivity, audio: CloudActivityAudio): GeneratedLayer {
+  return {
+    id: `cloud-activity-${activity.id}`,
+    role: activity.generatedLoopName,
+    file: audio.fileName,
+    category: "Cloud activity",
+    bpm: audio.targetBpm,
+    keyName: audio.targetKey,
+    octave: 0,
+    volume: 100,
+    duration: audio.durationSeconds,
+    path: audio.path,
+    producers: [activity.createdBy.displayName],
+    bars: INITIAL_LAYERS[0].bars,
+  }
+}
+
 const EDITOR_BEATS = 32
 
 function snapEditorBeat(value: number, minimum: number, maximum: number) {
@@ -5063,6 +5129,26 @@ function HistoryView({
   const selectedCount = visibleSections.reduce((sum, section) => sum + itemIds[section].filter((id) => selectedBySection[section].has(id)).length, 0)
   const allSelected = visibleItemCount > 0 && selectedCount === visibleItemCount
 
+  const startHistoryDrag = (entry: HistoryEntry): boolean => {
+    onMarkExported(entry)
+    const api = window.stemSlicer
+    if (!api) return false
+    const request = buildCloudTrackedDragRequest({
+      exportKind: "drag-all",
+      exportPath: entry.generation.masterPath,
+      masterPath: entry.generation.masterPath,
+      generatedLoopName: entry.displayName,
+      generationSeed: entry.generation.seed,
+      targetBpm: entry.bpm,
+      targetKey: entry.keyName,
+      durationSeconds: Math.max(0, ...entry.layers.map((layer) => layer.duration || 0)),
+      layers: entry.layers,
+    })
+    if (!request) return false
+    api.startTrackedFileDrag(request)
+    return true
+  }
+
   const refreshStorageUsage = useCallback(async () => {
     const api = window.stemSlicer
     if (!api) return
@@ -5256,7 +5342,7 @@ function HistoryView({
                     <HistoryPlayButton entry={entry} playing={playback.playing && playback.mode === "solo" && playback.soloId === historyLayerId(entry.id)} onToggle={() => onTogglePlayback(entry)} />
                     <Button className="location-button" variant="outline" size="sm" onClick={() => void window.stemSlicer?.revealPath(entry.generation.outputDirectory)}><FolderOpen aria-hidden="true" /> Location</Button>
                     <Button variant="outline" className="history-reload" size="sm" onClick={() => onReopen(entry)}><RefreshCw aria-hidden="true" /> Reload</Button>
-                    <Button variant="outline" size="sm" draggable onClick={() => void window.stemSlicer?.revealPath(entry.generation.masterPath)} onDragStart={(event) => { event.preventDefault(); onMarkExported(entry); window.stemSlicer?.startFileDrag(entry.generation.masterPath) }}><AudioLines aria-hidden="true" /> Drag</Button>
+                    <Button variant="outline" size="sm" draggable onClick={() => void window.stemSlicer?.revealPath(entry.generation.masterPath)} onDragStart={(event) => { event.preventDefault(); if (!startHistoryDrag(entry)) window.stemSlicer?.startFileDrag(entry.generation.masterPath) }}><AudioLines aria-hidden="true" /> Drag</Button>
                   </div>
                 </CardContent>
               </Card>
@@ -5678,11 +5764,155 @@ function CloudProfileAvatar({ profile, large = false }: { profile?: CloudProfile
   )
 }
 
-function CloudView({ library, section, embedded = false, generationHistory = [] }: { library: LibraryOverview; section: CloudSection; embedded?: boolean; generationHistory?: HistoryEntry[] }) {
-  const [activeCloudSection, setActiveCloudSection] = useState<Exclude<CloudSection, "profile">>(section === "profile" ? "producers" : section)
+function comparableSourceName(value: string): string {
+  return stripAudioExtension(value).replace(/_L\d+$/i, "").trim().toLocaleLowerCase()
+}
+
+function CloudActivityRow({
+  activity,
+  currentProfileId,
+  preparingAudio,
+  downloadingAudio,
+  playing,
+  onPlay,
+  onDownload,
+}: {
+  activity: CloudExportActivity
+  currentProfileId: string
+  preparingAudio: boolean
+  downloadingAudio: boolean
+  playing: boolean
+  onPlay: (activity: CloudExportActivity) => void
+  onDownload: (activity: CloudExportActivity) => void
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const regionId = `cloud-activity-${activity.id}`
+  const titleId = `${regionId}-title`
+  const ownedSources = activity.sources.filter((source) => source.triggered && source.sourceOwner?.id === currentProfileId)
+  const affectedSources = ownedSources.length > 0 ? ownedSources : activity.sources.filter((source) => source.triggered)
+  const actionLabel = activity.exportKind === "drag-all" ? "Drag all" : activity.exportKind === "layer-midi" ? "MIDI drag" : "Audio drag"
+  const statusLabel = activity.audioStatus === "available"
+    ? "Audio available"
+    : activity.audioStatus === "failed"
+      ? "Upload failed"
+      : activity.audioStatus === "expired"
+        ? "Audio expired"
+        : activity.audioStatus === "uploading"
+          ? "Uploading audio"
+          : "Preparing audio"
+  const expiryLabel = activity.audioExpiresAt ? formatCloudActivityDate(activity.audioExpiresAt) : ""
+
+  return (
+    <article className={cn("cloud-activity-row", expanded && "is-expanded", activity.unread && "is-unread")} aria-labelledby={titleId}>
+      <div className="cloud-activity-summary">
+        <CloudProfileAvatar profile={activity.createdBy} />
+        <div className="cloud-activity-copy">
+          <span className="cloud-activity-kicker">
+            {activity.unread ? <span className="cloud-activity-new"><i aria-hidden="true" />New</span> : null}
+            <span>{actionLabel}</span>
+          </span>
+          <strong id={titleId} title={activity.generatedLoopName}>{activity.generatedLoopName}</strong>
+          <small>{activity.createdBy.displayName} · {formatCloudActivityDate(activity.createdAt)} · {affectedSources.length} of your {affectedSources.length === 1 ? "layer" : "layers"}</small>
+        </div>
+        <span className={cn("cloud-audio-status", `is-${activity.audioStatus}`)} role="status" aria-live="polite" aria-atomic="true">
+          {activity.audioStatus === "available" ? <Check aria-hidden="true" /> : activity.audioStatus === "failed" ? <CircleAlert aria-hidden="true" /> : <Cloud aria-hidden="true" />}
+          {statusLabel}
+        </span>
+        <div className="cloud-activity-actions">
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            disabled={activity.audioStatus !== "available" || preparingAudio}
+            aria-label={playing ? `Pause ${activity.generatedLoopName}` : `Play ${activity.generatedLoopName} in the global player`}
+            title={activity.audioStatus === "available" ? "Play in global player" : statusLabel}
+            onClick={() => onPlay(activity)}
+          >
+            {playing ? <Pause aria-hidden="true" /> : <Play className="play-glyph" aria-hidden="true" />}
+          </Button>
+          <button
+            type="button"
+            className="cloud-activity-disclosure"
+            aria-expanded={expanded}
+            aria-controls={regionId}
+            onClick={() => setExpanded((value) => !value)}
+          >
+            <span className="sr-only">{expanded ? "Collapse" : "Expand"} {activity.generatedLoopName}</span>
+            {expanded ? <ChevronDown aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}
+          </button>
+        </div>
+      </div>
+      {expanded ? (
+        <div id={regionId} className="cloud-activity-details-panel" role="region" aria-labelledby={titleId}>
+          <div className="cloud-activity-detail-grid">
+            <div><span>Export action</span><strong>{actionLabel}</strong></div>
+            <div><span>Generated loop</span><strong>{activity.generatedLoopName}</strong></div>
+            <div><span>Composition</span><strong>{activity.layerCount} layers · {activity.targetBpm} BPM · {activity.targetKey}</strong></div>
+            <div><span>Audio retention</span><strong>{activity.audioStatus === "expired" ? "Expired" : expiryLabel ? `Until ${expiryLabel}` : statusLabel}</strong></div>
+          </div>
+          <section className="cloud-activity-source-section" aria-label="Your source layers used in this export">
+            <h4>Your tracked {affectedSources.length === 1 ? "layer" : "layers"}</h4>
+            <ul className="cloud-activity-source-list">
+              {affectedSources.map((source) => {
+                const showLoopName = Boolean(source.sourceLoopName) && comparableSourceName(source.sourceLoopName) !== comparableSourceName(source.sourceLayerName)
+                return (
+                  <li key={`${activity.id}-${source.slotIndex}`}>
+                    <AudioLines aria-hidden="true" />
+                    <span><strong>{source.sourceLayerName}</strong>{showLoopName ? <small>Source loop · {source.sourceLoopName}</small> : null}</span>
+                    <Badge variant="secondary">{source.category}</Badge>
+                  </li>
+                )
+              })}
+            </ul>
+          </section>
+          <details className="cloud-activity-manifest">
+            <summary>Full composition · {activity.sources.length} layers</summary>
+            <ol>
+              {activity.sources.map((source) => <li key={`${activity.id}-composition-${source.slotIndex}`}><span>{source.sourceLayerName}</span><small>{source.category}{source.sourceOwner ? ` · ${source.sourceOwner.displayName}` : " · Local"}</small></li>)}
+            </ol>
+          </details>
+          <div className="cloud-activity-detail-actions">
+            <Button type="button" variant="outline" size="sm" disabled={activity.audioStatus !== "available" || downloadingAudio} onClick={() => onDownload(activity)}>
+              <Download aria-hidden="true" />{downloadingAudio ? "Saving…" : "Download audio"}
+            </Button>
+            {activity.masterSha256 ? <small title={activity.masterSha256}>Cloud master SHA-256 · {activity.masterSha256.slice(0, 12)}…</small> : null}
+          </div>
+          {activity.audioError ? <p className="cloud-activity-error" role="alert"><CircleAlert aria-hidden="true" />{activity.audioError}</p> : null}
+        </div>
+      ) : null}
+    </article>
+  )
+}
+
+function CloudView({
+  library,
+  section,
+  embedded = false,
+  visible,
+  loadedActivityId,
+  playingActivityId,
+  onSectionChange,
+  onPlayActivity,
+  onActivityRead,
+}: {
+  library: LibraryOverview
+  section: CloudSection
+  embedded?: boolean
+  visible: boolean
+  loadedActivityId?: string
+  playingActivityId?: string
+  onSectionChange: (section: Exclude<CloudSection, "profile">) => void
+  onPlayActivity: (activity: CloudExportActivity, audio?: CloudActivityAudio) => void
+  onActivityRead: (unreadCount: number) => void
+}) {
   const [cloud, setCloud] = useState<CloudState>(EMPTY_CLOUD_STATE)
-  const [cloudActivity, setCloudActivity] = useState<CloudGenerationActivity[]>([])
+  const [cloudActivity, setCloudActivity] = useState<CloudExportActivity[]>([])
+  const [activityHasMore, setActivityHasMore] = useState(false)
+  const [loadingEarlierActivity, setLoadingEarlierActivity] = useState(false)
   const [activityError, setActivityError] = useState("")
+  const [documentVisible, setDocumentVisible] = useState(() => document.visibilityState === "visible")
+  const [preparingActivityId, setPreparingActivityId] = useState("")
+  const [downloadingActivityId, setDownloadingActivityId] = useState("")
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
@@ -5713,29 +5943,74 @@ function CloudView({ library, section, embedded = false, generationHistory = [] 
   const [libraryAccessError, setLibraryAccessError] = useState("")
   const sharedSelectAllRef = useRef<HTMLInputElement>(null)
   const cloudRefreshInFlightRef = useRef<Promise<void> | null>(null)
+  const activityRefreshInFlightRef = useRef<Promise<void> | null>(null)
+  const activityRefreshTrailingRef = useRef(false)
+  const activityLoadedPastFirstPageRef = useRef(false)
+  const prepareActivityRequestRef = useRef(0)
   const cloudStateRevisionRef = useRef(cloudStateRevision(EMPTY_CLOUD_STATE))
   const cloudActivityRevisionRef = useRef(cloudActivityRevision([]))
   const cloudProfileId = cloud.profile?.id ?? ""
-  const currentSection: CloudSection = section === "profile" ? "profile" : activeCloudSection
-
-  useEffect(() => {
-    if (section !== "profile") setActiveCloudSection(section)
-  }, [section])
+  const currentSection: CloudSection = section
+  const activityVisible = visible && currentSection === "activity" && documentVisible
 
   const refreshActivity = useCallback(async () => {
+    if (activityRefreshInFlightRef.current) {
+      activityRefreshTrailingRef.current = true
+      return activityRefreshInFlightRef.current
+    }
+    const pending = (async () => {
+      do {
+        activityRefreshTrailingRef.current = false
+        try {
+          const activity = await window.stemSlicer?.getCloudExportActivity()
+          const nextActivity = activity ?? []
+          setCloudActivity((currentActivity) => {
+            const firstPageIds = new Set(nextActivity.map((item) => item.id))
+            const retainedEarlier = activityLoadedPastFirstPageRef.current
+              ? currentActivity.filter((item) => !firstPageIds.has(item.id))
+              : []
+            const mergedActivity = [...nextActivity, ...retainedEarlier]
+            const nextRevision = cloudActivityRevision(mergedActivity)
+            if (nextRevision === cloudActivityRevisionRef.current) return currentActivity
+            cloudActivityRevisionRef.current = nextRevision
+            return mergedActivity
+          })
+          if (!activityLoadedPastFirstPageRef.current) setActivityHasMore(nextActivity.length === CLOUD_ACTIVITY_PAGE_SIZE)
+          setActivityError("")
+        } catch (reason) {
+          setActivityError(cloudErrorMessage(reason, "Cloud activity is temporarily unavailable."))
+        }
+      } while (activityRefreshTrailingRef.current)
+    })()
+    activityRefreshInFlightRef.current = pending
     try {
-      const activity = await window.stemSlicer?.getCloudGenerationActivity()
-      const nextActivity = activity ?? []
-      const nextRevision = cloudActivityRevision(nextActivity)
-      if (nextRevision !== cloudActivityRevisionRef.current) {
-        cloudActivityRevisionRef.current = nextRevision
-        setCloudActivity(nextActivity)
-      }
-      setActivityError("")
-    } catch (reason) {
-      setActivityError(cloudErrorMessage(reason, "Cloud activity is temporarily unavailable."))
+      await pending
+    } finally {
+      if (activityRefreshInFlightRef.current === pending) activityRefreshInFlightRef.current = null
     }
   }, [])
+
+  const loadEarlierActivity = useCallback(async () => {
+    if (loadingEarlierActivity || !activityHasMore) return
+    setLoadingEarlierActivity(true)
+    try {
+      const earlier = await window.stemSlicer?.getCloudExportActivity(cloudActivity.length)
+      const page = earlier ?? []
+      activityLoadedPastFirstPageRef.current = true
+      setCloudActivity((currentActivity) => {
+        const knownIds = new Set(currentActivity.map((item) => item.id))
+        const mergedActivity = [...currentActivity, ...page.filter((item) => !knownIds.has(item.id))]
+        cloudActivityRevisionRef.current = cloudActivityRevision(mergedActivity)
+        return mergedActivity
+      })
+      setActivityHasMore(page.length === CLOUD_ACTIVITY_PAGE_SIZE)
+      setActivityError("")
+    } catch (reason) {
+      setActivityError(cloudErrorMessage(reason, "Earlier Cloud activity could not be loaded."))
+    } finally {
+      setLoadingEarlierActivity(false)
+    }
+  }, [activityHasMore, cloudActivity.length, loadingEarlierActivity])
 
   const applyCloudState = useCallback((state: CloudState): boolean => {
     const nextRevision = cloudStateRevision(state)
@@ -5746,15 +6021,22 @@ function CloudView({ library, section, embedded = false, generationHistory = [] 
     return true
   }, [])
 
+  const refreshCloudState = useCallback(async (): Promise<CloudState | undefined> => {
+    const state = await window.stemSlicer?.getCloudState()
+    if (state) applyCloudState(state)
+    return state
+  }, [applyCloudState])
+
   const refresh = useCallback(async (): Promise<void> => {
     if (cloudRefreshInFlightRef.current) return cloudRefreshInFlightRef.current
     const pending = (async () => {
-      const state = await window.stemSlicer?.getCloudState()
+      const state = await refreshCloudState()
       if (!state) return
-      applyCloudState(state)
-      if (state.authenticated) await refreshActivity()
-      else {
+      if (!state.authenticated) {
         setCloudActivity([])
+        setActivityHasMore(false)
+        activityLoadedPastFirstPageRef.current = false
+        cloudActivityRevisionRef.current = cloudActivityRevision([])
         setActivityError("")
       }
     })()
@@ -5764,7 +6046,7 @@ function CloudView({ library, section, embedded = false, generationHistory = [] 
     } finally {
       if (cloudRefreshInFlightRef.current === pending) cloudRefreshInFlightRef.current = null
     }
-  }, [applyCloudState, refreshActivity])
+  }, [refreshCloudState])
 
   useEffect(() => {
     let cancelled = false
@@ -5791,39 +6073,53 @@ function CloudView({ library, section, embedded = false, generationHistory = [] 
   }, [refresh])
 
   useEffect(() => {
-    const synchronize = () => {
-      if (document.visibilityState !== "visible") return
-      void refresh().catch((reason) => setError(cloudErrorMessage(reason, "Cloud synchronization is unavailable.")))
-    }
-    const onVisibilityChange = () => {
-      if (document.visibilityState === "visible") synchronize()
-    }
-    const interval = window.setInterval(synchronize, CLOUD_REFRESH_INTERVAL_MS)
-    window.addEventListener("focus", synchronize)
-    document.addEventListener("visibilitychange", onVisibilityChange)
-    return () => {
-      window.clearInterval(interval)
-      window.removeEventListener("focus", synchronize)
-      document.removeEventListener("visibilitychange", onVisibilityChange)
-    }
-  }, [refresh])
+    const updateVisibility = () => setDocumentVisible(document.visibilityState === "visible")
+    document.addEventListener("visibilitychange", updateVisibility)
+    return () => document.removeEventListener("visibilitychange", updateVisibility)
+  }, [])
 
   useEffect(() => {
-    const onActivityChanged = () => { void refreshActivity() }
-    const onActivityError = (event: Event) => {
-      setActivityError(cloudErrorMessage((event as CustomEvent<unknown>).detail, "Cloud could not record this generation."))
-    }
-    window.addEventListener(CLOUD_ACTIVITY_CHANGED_EVENT, onActivityChanged)
-    window.addEventListener(CLOUD_ACTIVITY_ERROR_EVENT, onActivityError)
-    return () => {
-      window.removeEventListener(CLOUD_ACTIVITY_CHANGED_EVENT, onActivityChanged)
-      window.removeEventListener(CLOUD_ACTIVITY_ERROR_EVENT, onActivityError)
-    }
-  }, [refreshActivity])
+    const api = window.stemSlicer
+    if (!api) return
+    const unsubscribe = api.onCloudSyncEvent((event) => {
+      if (event.kind === "activity-error") {
+        setActivityError(event.error || "Cloud could not preserve this export yet. It remains queued locally.")
+      } else if (activityVisible) {
+        void refreshActivity()
+      }
+    })
+    return unsubscribe
+  }, [activityVisible, refreshActivity])
 
   useEffect(() => {
-    if (currentSection === "activity" && cloud.authenticated) void refreshActivity()
-  }, [cloud.authenticated, currentSection, refreshActivity])
+    if (!activityVisible || !cloud.authenticated) return
+    let cancelled = false
+    const openActivity = async () => {
+      try {
+        const count = await window.stemSlicer?.markCloudExportActivityRead()
+        if (!cancelled) {
+          onActivityRead(count ?? 0)
+          setCloudActivity((items) => items.map((item) => item.unread ? { ...item, unread: false } : item))
+        }
+      } catch (reason) {
+        if (!cancelled) setActivityError(cloudErrorMessage(reason, "Cloud activity could not be marked as read."))
+      } finally {
+        if (!cancelled) await refreshActivity()
+      }
+    }
+    void openActivity()
+    return () => { cancelled = true }
+  }, [activityVisible, cloud.authenticated, onActivityRead, refreshActivity])
+
+  useEffect(() => () => {
+    prepareActivityRequestRef.current += 1
+  }, [])
+
+  useEffect(() => {
+    if (activityVisible) return
+    prepareActivityRequestRef.current += 1
+    setPreparingActivityId("")
+  }, [activityVisible])
 
   useEffect(() => {
     if (!cloud.profile) return
@@ -6070,9 +6366,6 @@ function CloudView({ library, section, embedded = false, generationHistory = [] 
     const nameOrder = left.name.localeCompare(right.name, undefined, { numeric: true, sensitivity: "base" })
     return sharedLibrarySortDirection === "asc" ? nameOrder : -nameOrder
   })
-  const localCloudHistory = generationHistory.filter((entry) => entry.layers.some((layer) => sourceOriginForLayer(layer) === "cloud"))
-  const recordedCloudRunIds = new Set(cloudActivity.map((entry) => entry.id))
-  const localOnlyCloudHistory = localCloudHistory.filter((entry) => !entry.cloudRunId || !recordedCloudRunIds.has(entry.cloudRunId))
   const connectionToRemove = cloud.connections.find((connection) => connection.id === connectionToRemoveId) ?? null
   const libraryAccessTarget = ownLibraries.find((item) => item.id === libraryAccessTargetId) ?? null
 
@@ -6089,6 +6382,60 @@ function CloudView({ library, section, embedded = false, generationHistory = [] 
       }
       return state ?? cloud
     })
+  }
+
+  const playActivity = async (activity: CloudExportActivity) => {
+    if (loadedActivityId === activity.id) {
+      prepareActivityRequestRef.current += 1
+      setPreparingActivityId("")
+      onPlayActivity(activity)
+      return
+    }
+    const requestToken = prepareActivityRequestRef.current + 1
+    prepareActivityRequestRef.current = requestToken
+    setPreparingActivityId(activity.id)
+    setActivityError("")
+    try {
+      const audio = await window.stemSlicer?.prepareCloudExportAudio(activity.id)
+      if (!audio) throw new Error("The desktop Cloud audio service is unavailable.")
+      if (requestToken !== prepareActivityRequestRef.current) return
+      onPlayActivity(activity, audio)
+    } catch (reason) {
+      if (requestToken === prepareActivityRequestRef.current) {
+        setActivityError(cloudErrorMessage(reason, "This Cloud activity audio is unavailable."))
+      }
+    } finally {
+      if (requestToken === prepareActivityRequestRef.current) setPreparingActivityId("")
+    }
+  }
+
+  const signOut = () => {
+    void perform(async () => {
+      const state = await window.stemSlicer?.cloudSignOut()
+      if (state) {
+        prepareActivityRequestRef.current += 1
+        setPreparingActivityId("")
+        setCloudActivity([])
+        setActivityHasMore(false)
+        activityLoadedPastFirstPageRef.current = false
+        cloudActivityRevisionRef.current = cloudActivityRevision([])
+        onActivityRead(0)
+      }
+      return state
+    })
+  }
+
+  const downloadActivity = async (activity: CloudExportActivity) => {
+    setDownloadingActivityId(activity.id)
+    setActivityError("")
+    try {
+      const result = await window.stemSlicer?.downloadCloudExportAudio(activity.id)
+      if (result && !result.canceled) setNotice("Activity audio saved locally.")
+    } catch (reason) {
+      setActivityError(cloudErrorMessage(reason, "This Cloud activity audio could not be saved."))
+    } finally {
+      setDownloadingActivityId("")
+    }
   }
 
   return (
@@ -6170,16 +6517,16 @@ function CloudView({ library, section, embedded = false, generationHistory = [] 
           {currentSection === "profile" ? (
             <section className="cloud-account-bar cloud-profile-account-bar glass-panel">
               <div className="cloud-account-identity"><strong>{cloud.profile?.displayName}</strong><span>@{cloud.profile?.handle} · {cloud.userEmail}</span></div>
-              <Button variant="outline" size="sm" disabled={busy} onClick={() => void perform(() => window.stemSlicer?.cloudSignOut() ?? Promise.resolve(undefined))}><LogOut aria-hidden="true" /> Sign out</Button>
+              <Button variant="outline" size="sm" disabled={busy} onClick={signOut}><LogOut aria-hidden="true" /> Sign out</Button>
             </section>
           ) : (
             <div className="workspace-filter-bar cloud-account-nav" role="group" aria-label="Cloud sections">
               {([
                 { id: "producers" as const, label: "Producers", icon: UsersRound, count: acceptedConnections.length },
                 { id: "libraries" as const, label: "Libraries", icon: LibraryIcon, count: cloud.libraries.length },
-                { id: "activity" as const, label: "Activity", icon: History, count: cloudActivity.length + localOnlyCloudHistory.length },
+                { id: "activity" as const, label: "Activity", icon: History, count: cloudActivity.length },
               ]).map(({ id, label, icon: Icon, count }) => (
-                <button key={id} type="button" className="workspace-filter-chip" aria-pressed={activeCloudSection === id} onClick={() => setActiveCloudSection(id)}>
+                <button key={id} type="button" className="workspace-filter-chip" aria-pressed={currentSection === id} onClick={() => onSectionChange(id)}>
                   <Icon aria-hidden="true" />
                   <span>{label}</span>
                   <b className="tabular">{count}</b>
@@ -6323,54 +6670,33 @@ function CloudView({ library, section, embedded = false, generationHistory = [] 
               </Card>
 
               <Card className="cloud-panel cloud-activity-panel" hidden={currentSection !== "activity"}>
-                <CardHeader><div><CardTitle>Cloud activity</CardTitle><CardDescription>See who generated with shared layers. Local exports are marked when audio leaves Slicer.</CardDescription></div><Badge>{cloudActivity.length + localOnlyCloudHistory.length} events</Badge></CardHeader>
+                <CardHeader><div><CardTitle>Cloud activity</CardTitle><CardDescription>Track exports triggered from Slicer, inspect the exact source layer and preview the generated master.</CardDescription></div><Badge>{cloudActivity.length} events</Badge></CardHeader>
                 <CardContent>
                   {activityError ? <p className="cloud-activity-error" role="status"><CircleAlert aria-hidden="true" />{activityError}</p> : null}
                   <div className="cloud-activity-list">
-                    {cloudActivity.map((activity) => {
-                      const createdHere = activity.createdBy.id === cloud.profile?.id
-                      const outsideContributors = activity.contributors.filter((producer) => producer.id !== activity.createdBy.id)
-                      const ownedSourceCount = activity.sources.filter((source) => source.sourceOwner.id === cloud.profile?.id).length
-                      const localHistoryEntry = generationHistory.find((entry) => entry.cloudRunId === activity.id)
-                      const activityTitle = createdHere
-                        ? `You generated with ${outsideContributors.map((producer) => producer.displayName).join(", ") || "your Cloud library"}`
-                        : ownedSourceCount > 0
-                          ? `${activity.createdBy.displayName} used your shared layers`
-                          : `${activity.createdBy.displayName} generated with ${outsideContributors.map((producer) => producer.displayName).join(", ") || "Cloud layers"}`
-                      return (
-                        <article className="cloud-activity-row" key={activity.id}>
-                          <CloudProfileAvatar profile={activity.createdBy} />
-                          <div>
-                            <strong>{activityTitle}</strong>
-                            <small>{formatCloudActivityDate(activity.createdAt)} · {activity.sources.length} Cloud layers · {activity.targetBpm} BPM · {activity.targetKey}</small>
-                            {!createdHere ? <span>{ownedSourceCount} of your layers contributed</span> : null}
-                          </div>
-                          <Badge variant={localHistoryEntry?.exportedAt ? "success" : "secondary"}>{localHistoryEntry?.exportedAt ? "Exported" : "Generated"}</Badge>
-                        </article>
-                      )
-                    })}
-                    {localOnlyCloudHistory.map((entry) => {
-                      const cloudLayers = entry.layers.filter((layer) => sourceOriginForLayer(layer) === "cloud")
-                      const signedInProducer = cloud.profile?.displayName.trim() || PRIMARY_PRODUCER
-                      const contributors = uniqueProducerNames(cloudLayers.flatMap((layer) => provenanceForLayer(layer, signedInProducer).producers), signedInProducer)
-                        .filter((producer) => producer.toLocaleLowerCase() !== signedInProducer.toLocaleLowerCase())
-                      const contributorName = contributors.join(", ") || "a connected producer"
-                      const contributorProfile: CloudProfile = {
-                        id: `local-${contributorName}`,
-                        handle: contributorName.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "-") || "cloud",
-                        displayName: contributorName,
-                        aliases: [],
-                      }
-                      const savedDate = entry.createdAtIso ? formatCloudActivityDate(entry.createdAtIso) : `Saved at ${entry.createdAt}`
-                      return (
-                        <article className="cloud-activity-row" key={`local-${entry.id}`}>
-                          <CloudProfileAvatar profile={contributorProfile} />
-                          <div><strong>This PC used Cloud layers from {contributorName}</strong><small>{savedDate} · {cloudLayers.length} Cloud layers · {entry.bpm} BPM · {entry.keyName}</small></div>
-                          <Badge variant={entry.exportedAt ? "success" : "secondary"}>{entry.exportedAt ? "Exported" : "Generated"}</Badge>
-                        </article>
-                      )
-                    })}
-                    {cloudActivity.length === 0 && localOnlyCloudHistory.length === 0 ? <p className="cloud-empty-copy">Cloud generation activity will appear here after a shared layer is selected.</p> : null}
+                    {cloudActivity.map((activity) => <CloudActivityRow
+                      key={activity.id}
+                      activity={activity}
+                      currentProfileId={cloud.profile?.id ?? ""}
+                      preparingAudio={preparingActivityId === activity.id}
+                      downloadingAudio={downloadingActivityId === activity.id}
+                      playing={playingActivityId === activity.id}
+                      onPlay={(item) => void playActivity(item)}
+                      onDownload={(item) => void downloadActivity(item)}
+                    />)}
+                    {cloudActivity.length === 0 ? <p className="cloud-empty-copy">A Cloud activity appears when a collaborator triggers Drag all, Audio or MIDI on a generation that contains one of your layers.</p> : null}
+                    {activityHasMore ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="cloud-activity-load-earlier"
+                        disabled={loadingEarlierActivity}
+                        onClick={() => void loadEarlierActivity()}
+                      >
+                        <History aria-hidden="true" />
+                        {loadingEarlierActivity ? "Loading…" : "Load earlier activity"}
+                      </Button>
+                    ) : null}
                   </div>
                 </CardContent>
               </Card>
@@ -6697,7 +7023,7 @@ function ScrollingPlayerTitle({ title }: { title: string }) {
   )
 }
 
-function GlobalPlayer({ layers, playback, contextLabel, displayName }: { layers: GeneratedLayer[]; playback: PlaybackClock; contextLabel: string; displayName?: string }) {
+function GlobalPlayer({ layers, playback, contextLabel, displayName, detailOverride }: { layers: GeneratedLayer[]; playback: PlaybackClock; contextLabel: string; displayName?: string; detailOverride?: string }) {
   const soloLayer = layers.find((layer) => layer.id === playback.soloId)
   const audibleMixLayers = layers.filter((layer) => !playback.mutedIds.has(layer.id))
   const activeLayers = playback.playing
@@ -6722,11 +7048,11 @@ function GlobalPlayer({ layers, playback, contextLabel, displayName }: { layers:
   const playerTitle = generatedName
     || (activeLayers.length === 1 ? stripAudioExtension(activeLayers[0].file) : "No generation loaded")
   const referenceLayer = activeLayers[0] ?? layers[0]
-  const playerDetails = generatedName && referenceLayer
+  const playerDetails = detailOverride || (generatedName && referenceLayer
     ? `${layers.length} layer${layers.length === 1 ? "" : "s"} · ${referenceLayer.bpm} BPM · ${referenceLayer.keyName}`
     : activeLayers.length === 1
       ? `${activeLayers[0].category} · ${activeLayers[0].bpm} BPM · ${activeLayers[0].keyName}`
-      : "Generate a loop to start the synchronized preview"
+      : "Generate a loop to start the synchronized preview")
   const seekTimelineFromPointer = (event: React.PointerEvent<HTMLDivElement>) => {
     if (!timelineLayer) return
     const bounds = event.currentTarget.getBoundingClientRect()
@@ -6806,6 +7132,8 @@ const StableGlobalPlayer = memo(GlobalPlayer)
 
 export function App() {
   const [activeView, setActiveView] = useState<ViewId>("generate")
+  const [cloudSection, setCloudSection] = useState<Exclude<CloudSection, "profile">>("producers")
+  const [unreadCloudActivityCount, setUnreadCloudActivityCount] = useState(0)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [library, setLibrary] = useState<LibraryOverview>(FALLBACK_LIBRARY)
   const [layers, setLayers] = useState(INITIAL_LAYERS)
@@ -6823,6 +7151,8 @@ export function App() {
   const [playbackContext, setPlaybackContext] = useState<PlaybackContext>("generate")
   const [historyPlaybackLayerId, setHistoryPlaybackLayerId] = useState<string | null>(null)
   const [pendingHistoryPlaybackId, setPendingHistoryPlaybackId] = useState<string | null>(null)
+  const [cloudActivityPlayback, setCloudActivityPlayback] = useState<{ activity: CloudExportActivity; audio: CloudActivityAudio; layer: GeneratedLayer } | null>(null)
+  const [pendingCloudActivityPlaybackId, setPendingCloudActivityPlaybackId] = useState<string | null>(null)
   const studioActive = activeView === "library" && studioSource !== null
   const historyPlayerLayers = useMemo(() => {
     if (!historyPlaybackLayerId) return []
@@ -6833,9 +7163,10 @@ export function App() {
     if (playbackContext === "history") return historyPlayerLayers
     if (playbackContext === "quick-extract") return quickPreviewLayers
     if (playbackContext === "quick-convert") return quickConvertLayer ? [quickConvertLayer] : []
+    if (playbackContext === "cloud-activity") return cloudActivityPlayback ? [cloudActivityPlayback.layer] : []
     return layers
-  }, [historyPlayerLayers, layers, playbackContext, quickConvertLayer, quickPreviewLayers])
-  const stackPlayback = playbackContext !== "history" && playbackContext !== "quick-convert"
+  }, [cloudActivityPlayback, historyPlayerLayers, layers, playbackContext, quickConvertLayer, quickPreviewLayers])
+  const stackPlayback = playbackContext !== "history" && playbackContext !== "quick-convert" && playbackContext !== "cloud-activity"
   const playback = usePlaybackClock(playerLayers, stackPlayback)
   const resetPlayback = playback.reset
   const mainRef = useRef<HTMLElement>(null)
@@ -6848,6 +7179,9 @@ export function App() {
   const historyPlaybackName = playbackContext === "history"
     ? history.find((entry) => historyLayerId(entry.id) === historyPlaybackLayerId)?.displayName
     : undefined
+  const cloudActivityPlayerDetail = cloudActivityPlayback
+    ? `${cloudActivityPlayback.activity.layerCount} layers · ${cloudActivityPlayback.activity.targetBpm} BPM · ${cloudActivityPlayback.activity.targetKey}`
+    : undefined
   const updateQuickConvertLayer = useCallback((nextLayer: GeneratedLayer | null) => {
     setQuickConvertLayer(nextLayer)
     if (nextLayer) setPlaybackContext("quick-convert")
@@ -6856,34 +7190,6 @@ export function App() {
   const addHistory = useCallback((entry: HistoryEntry) => {
     setHistory((items) => [entry, ...items.filter((item) => item.generation.outputDirectory !== entry.generation.outputDirectory)])
     setGenerationSequence((current) => Math.max(current, entry.generationNumber))
-    const sources = entry.layers.flatMap((layer, slotIndex) => (
-      layer.cloudLayerId && layer.cloudOwnerId && layer.sourceSha256 && layer.sourceLoopId
-        ? [{
-            slotIndex,
-            cloudLayerId: layer.cloudLayerId,
-            cloudOwnerId: layer.cloudOwnerId,
-            sourceSha256: layer.sourceSha256,
-            sourceLoopId: layer.sourceLoopId,
-            category: layer.category,
-          }]
-        : []
-    ))
-    if (sources.length > 0) {
-      void window.stemSlicer?.cloudRecordGeneration({
-        seed: entry.generation.seed,
-        targetBpm: entry.bpm,
-        targetKey: entry.keyName,
-        layerCount: entry.layerCount,
-        sources,
-      }).then((cloudRunId) => {
-        if (cloudRunId) {
-          setHistory((items) => items.map((item) => item.generation.outputDirectory === entry.generation.outputDirectory ? { ...item, cloudRunId } : item))
-        }
-        window.dispatchEvent(new Event(CLOUD_ACTIVITY_CHANGED_EVENT))
-      }).catch((reason) => {
-        window.dispatchEvent(new CustomEvent(CLOUD_ACTIVITY_ERROR_EVENT, { detail: reason }))
-      })
-    }
   }, [])
 
   const updateHistory = useCallback((generation: GenerateResult, updatedLayers: GeneratedLayer[]) => {
@@ -7025,6 +7331,32 @@ export function App() {
   }, [pendingHistoryPlaybackId, playback, playbackContext])
 
   useEffect(() => {
+    if (!pendingCloudActivityPlaybackId || playbackContext !== "cloud-activity") return
+    const targetId = pendingCloudActivityPlaybackId
+    setPendingCloudActivityPlaybackId(null)
+    void playback.toggleLayer(targetId)
+  }, [pendingCloudActivityPlaybackId, playback, playbackContext])
+
+  useEffect(() => {
+    const api = window.stemSlicer
+    if (!api) return
+    let active = true
+    const refreshUnread = () => {
+      void api.getCloudUnreadActivityCount()
+        .then((count) => { if (active) setUnreadCloudActivityCount(count) })
+        .catch(() => undefined)
+    }
+    refreshUnread()
+    const unsubscribe = api.onCloudSyncEvent((event) => {
+      if (event.kind === "activity" || event.kind === "activity-audio") refreshUnread()
+    })
+    return () => {
+      active = false
+      unsubscribe()
+    }
+  }, [])
+
+  useEffect(() => {
     const nextPath = currentGenerationResult?.outputDirectory ?? ""
     if (!nextPath || nextPath === activeGenerationPathRef.current) return
     activeGenerationPathRef.current = nextPath
@@ -7058,10 +7390,16 @@ export function App() {
   }, [studioActive])
 
   const navigateToView = useCallback((view: ViewId) => {
+    if (view === "cloud") setCloudSection("producers")
     if (view === activeView) return
     if (view !== "library") setStudioSource(null)
     setActiveView(view)
   }, [activeView])
+
+  const openCloudActivity = useCallback(() => {
+    setCloudSection("activity")
+    setActiveView("cloud")
+  }, [])
 
   const openSourceLoopStudio = useCallback((request: SourceLoopStudioRequest) => {
     resetPlayback()
@@ -7083,6 +7421,20 @@ export function App() {
     setPendingHistoryPlaybackId(targetId)
     setPlaybackContext("history")
   }, [historyPlaybackLayerId, playback, playbackContext])
+
+  const toggleCloudActivityPlayback = useCallback((activity: CloudExportActivity, audio?: CloudActivityAudio) => {
+    const targetId = `cloud-activity-${activity.id}`
+    if (playbackContext === "cloud-activity" && cloudActivityPlayback?.activity.id === activity.id) {
+      void playback.toggleLayer(targetId)
+      return
+    }
+    if (!audio) return
+    playback.reset()
+    const layer = cloudActivityAudioToLayer(activity, audio)
+    setCloudActivityPlayback({ activity, audio, layer })
+    setPendingCloudActivityPlaybackId(layer.id)
+    setPlaybackContext("cloud-activity")
+  }, [cloudActivityPlayback?.activity.id, playback, playbackContext])
 
   const reopenHistory = useCallback((entry: HistoryEntry) => {
     playback.reset()
@@ -7152,7 +7504,7 @@ export function App() {
   return (
     <div className="app-frame">
       <a className="skip-link" href="#main-content">Aller au contenu principal</a>
-      <AppSidebar activeView={activeView} collapsed={sidebarCollapsed} onNavigate={navigateToView} onToggle={() => setSidebarCollapsed((value) => !value)} />
+      <AppSidebar activeView={activeView} collapsed={sidebarCollapsed} unreadCloudActivityCount={unreadCloudActivityCount} onNavigate={navigateToView} onOpenCloudActivity={openCloudActivity} onToggle={() => setSidebarCollapsed((value) => !value)} />
       <div className="app-workspace">
         <main id="main-content" tabIndex={-1} ref={mainRef} className={cn(activeView === "generate" && "generate-main", activeView === "stem-slicer" && "quick-tools-main", activeView === "history" && "history-main", activeView === "library" && !studioActive && "library-main", activeView === "cloud" && "cloud-main", activeView === "profile" && "profile-main", studioActive && "studio-main")}>
           <div className={cn("workspace-view-slicer", activeView === "stem-slicer" && "is-active")} aria-hidden={activeView !== "stem-slicer"}><StableQuickToolsView activeTool={activeSlicerTool} previewLayers={quickPreviewLayers} setPreviewLayers={setQuickPreviewLayers} convertLayer={quickConvertLayer} setConvertLayer={updateQuickConvertLayer} playback={playback} onActiveToolChange={setActiveSlicerTool} onExtractionCompleted={addExtractionHistory} onConvertCompleted={addConvertHistory} /></div>
@@ -7163,10 +7515,25 @@ export function App() {
             {studioSource ? <SourceLoopStudio active={studioActive} {...studioSource} onSetKeyIssueActive={updateKeyIssueState} onSaved={async () => { await refreshLibrary(); await refreshCategoryCorrections() }} onClose={closeSourceLoopStudio} /> : null}
           </div>
           <div hidden={activeView !== "cloud" && activeView !== "profile"}>
-            <StableCloudView library={library} section={activeView === "profile" ? "profile" : "producers"} generationHistory={history} />
+            <StableCloudView
+              library={library}
+              section={activeView === "profile" ? "profile" : cloudSection}
+              visible={activeView === "cloud" || activeView === "profile"}
+              loadedActivityId={playbackContext === "cloud-activity" ? cloudActivityPlayback?.activity.id : undefined}
+              playingActivityId={playbackContext === "cloud-activity" && playback.playing ? cloudActivityPlayback?.activity.id : undefined}
+              onSectionChange={setCloudSection}
+              onPlayActivity={toggleCloudActivityPlayback}
+              onActivityRead={setUnreadCloudActivityCount}
+            />
           </div>
         </main>
-        {!studioActive ? <StableGlobalPlayer layers={playerLayers} playback={playback} contextLabel={playbackContext === "history" ? "History generation" : playbackContext === "quick-extract" ? "Extracted stack" : playbackContext === "quick-convert" ? "Converted loop" : "Generated stack"} displayName={playbackContext === "generate" ? currentGenerationDisplayName : playbackContext === "quick-convert" ? stripAudioExtension(quickConvertLayer?.file ?? "") : historyPlaybackName} /> : null}
+        {!studioActive ? <StableGlobalPlayer
+          layers={playerLayers}
+          playback={playback}
+          contextLabel={playbackContext === "history" ? "History generation" : playbackContext === "quick-extract" ? "Extracted stack" : playbackContext === "quick-convert" ? "Converted loop" : playbackContext === "cloud-activity" ? "Cloud activity master" : "Generated stack"}
+          displayName={playbackContext === "generate" ? currentGenerationDisplayName : playbackContext === "quick-convert" ? stripAudioExtension(quickConvertLayer?.file ?? "") : playbackContext === "cloud-activity" ? cloudActivityPlayback?.activity.generatedLoopName : historyPlaybackName}
+          detailOverride={playbackContext === "cloud-activity" ? cloudActivityPlayerDetail : undefined}
+        /> : null}
       </div>
     </div>
   )

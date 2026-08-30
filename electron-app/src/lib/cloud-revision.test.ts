@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import type { CloudGenerationActivity, CloudState } from "@/shared/contracts"
+import type { CloudExportActivity, CloudState } from "@/shared/contracts"
 import { cloudActivityRevision, cloudStateRevision } from "./cloud-revision"
 
 const state: CloudState = {
@@ -39,17 +39,23 @@ describe("silent Cloud synchronization", () => {
   })
 
   it("keeps identical activity lists stable and detects a new event", () => {
-    const activity: CloudGenerationActivity[] = []
+    const activity: CloudExportActivity[] = []
     expect(cloudActivityRevision([...activity])).toBe(cloudActivityRevision(activity))
     expect(cloudActivityRevision([{
-      id: "generation",
+      id: "export",
+      clientEventId: "client-export",
       createdBy: state.profile!,
-      contributors: [],
-      seed: 42,
+      exportKind: "drag-all",
+      generatedLoopName: "L Gen001_140_Fm Producer",
+      generationSeed: 42,
       targetBpm: 140,
       targetKey: "F# minor",
       layerCount: 5,
+      recipientLayerCount: 1,
       createdAt: "2026-08-30T04:30:00Z",
+      unread: true,
+      audioStatus: "available",
+      durationSeconds: 7.4,
       sources: [],
     }])).not.toBe(cloudActivityRevision(activity))
   })

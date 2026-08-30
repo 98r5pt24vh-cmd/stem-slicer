@@ -81,38 +81,87 @@ export interface CloudState {
   message?: string
 }
 
-export interface CloudGenerationSource {
+export type CloudExportKind = "drag-all" | "layer-audio" | "layer-midi"
+export type CloudActivityAudioStatus = "preparing" | "uploading" | "available" | "failed" | "expired"
+
+export interface CloudExportLayerSnapshot {
   slotIndex: number
-  sourceOwner: CloudProfile
-  sourceLoopId: string
   category: string
+  sourceLayerName: string
+  sourceLoopId: string
+  sourceLoopName: string
+  sourceOrigin: "local" | "cloud"
+  cloudLayerId?: string
+  cloudOwnerId?: string
+  sourceSha256?: string
+  triggered: boolean
 }
 
-export interface CloudGenerationActivity {
+export interface CloudTrackedDragRequest {
+  exportPath: string
+  masterPath: string
+  exportKind: CloudExportKind
+  generatedLoopName: string
+  generationSeed: number
+  targetBpm: number
+  targetKey: string
+  durationSeconds: number
+  layers: CloudExportLayerSnapshot[]
+}
+
+export interface CloudExportActivitySource {
+  slotIndex: number
+  category: string
+  sourceLayerName: string
+  sourceLoopId: string
+  sourceLoopName: string
+  sourceOrigin: "local" | "cloud"
+  sourceOwner?: CloudProfile
+  sourceSha256?: string
+  triggered: boolean
+}
+
+export interface CloudExportActivity {
   id: string
+  clientEventId: string
   createdBy: CloudProfile
-  contributors: CloudProfile[]
-  seed: number
+  exportKind: CloudExportKind
+  generatedLoopName: string
+  generationSeed: number
   targetBpm: number
   targetKey: string
   layerCount: number
+  recipientLayerCount: number
   createdAt: string
-  sources: CloudGenerationSource[]
+  unread: boolean
+  audioStatus: CloudActivityAudioStatus
+  audioExpiresAt?: string
+  audioError?: string
+  masterSha256?: string
+  durationSeconds: number
+  sources: CloudExportActivitySource[]
 }
 
-export interface CloudGenerationRecordRequest {
-  seed: number
+export interface CloudActivityAudio {
+  activityId: string
+  path: string
+  fileName: string
+  durationSeconds: number
   targetBpm: number
   targetKey: string
   layerCount: number
-  sources: Array<{
-    slotIndex: number
-    cloudLayerId: string
-    cloudOwnerId: string
-    sourceSha256: string
-    sourceLoopId: string
-    category: string
-  }>
+  expiresAt?: string
+}
+
+export interface CloudSyncEvent {
+  kind: "activity" | "activity-audio" | "activity-error"
+  activityId?: string
+  error?: string
+}
+
+export interface CloudActivityDownloadResult {
+  canceled: boolean
+  path?: string
 }
 
 export interface ConfigureCloudRequest {
@@ -630,8 +679,12 @@ export interface StemSlicerDesktopApi {
   cloudSetLibrarySharing: (libraryId: string, sharing: boolean) => Promise<CloudState>
   cloudSetLibraryProducerAccess: (libraryId: string, producerId: string, allowed: boolean) => Promise<CloudState>
   cloudRemoveLibrary: (libraryId: string) => Promise<CloudState>
-  cloudRecordGeneration: (request: CloudGenerationRecordRequest) => Promise<string | undefined>
-  getCloudGenerationActivity: () => Promise<CloudGenerationActivity[]>
+  getCloudExportActivity: (offset?: number) => Promise<CloudExportActivity[]>
+  getCloudUnreadActivityCount: () => Promise<number>
+  markCloudExportActivityRead: (activityIds?: string[]) => Promise<number>
+  prepareCloudExportAudio: (activityId: string) => Promise<CloudActivityAudio>
+  downloadCloudExportAudio: (activityId: string) => Promise<CloudActivityDownloadResult>
+  onCloudSyncEvent: (listener: (event: CloudSyncEvent) => void) => () => void
   onCloudPublishEvent: (listener: (event: CloudPublishEvent) => void) => () => void
   pickLibraryFolder: () => Promise<AudioSelection>
   pickAudioFiles: () => Promise<AudioSelection>
@@ -645,5 +698,6 @@ export interface StemSlicerDesktopApi {
   trashPath: (path: string) => Promise<void>
   startFileDrag: (path: string) => void
   startFilesDrag: (paths: string[]) => void
+  startTrackedFileDrag: (request: CloudTrackedDragRequest) => void
   mediaUrl: (path: string) => string
 }

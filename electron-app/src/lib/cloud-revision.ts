@@ -1,4 +1,4 @@
-import type { CloudGenerationActivity, CloudState } from "@/shared/contracts"
+import type { CloudExportActivity, CloudState } from "@/shared/contracts"
 
 export function cloudStateRevision(state: CloudState): string {
   return JSON.stringify({
@@ -13,6 +13,6 @@ export function cloudStateRevision(state: CloudState): string {
   })
 }
 
-export function cloudActivityRevision(activity: CloudGenerationActivity[]): string {
+export function cloudActivityRevision(activity: CloudExportActivity[]): string {
   return JSON.stringify(activity)
 }

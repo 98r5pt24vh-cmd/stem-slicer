@@ -1,15 +1,16 @@
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
+import { createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs"
 import { readFile } from "node:fs/promises"
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
-import { nativeImage, safeStorage } from "electron"
-import { createClient, type Session, type SupabaseClient } from "@supabase/supabase-js"
+import { nativeImage, safeStorage, shell } from "electron"
+import { createClient, type RealtimeChannel, type Session, type SupabaseClient } from "@supabase/supabase-js"
 
 import type {
+  CloudActivityAudio,
   CloudConnection,
   CloudCredentialsRequest,
-  CloudGenerationActivity,
-  CloudGenerationRecordRequest,
+  CloudExportActivity,
+  CloudExportActivitySource,
   CloudLibrarySummary,
   CloudProfile,
   CloudProfileUpdateRequest,
@@ -17,10 +18,13 @@ import type {
   CloudPublishStart,
   CloudSignUpRequest,
   CloudState,
+  CloudSyncEvent,
   CloudTestAccount,
+  CloudTrackedDragRequest,
   ConfigureCloudRequest,
   GenerateJobRequest,
 } from "../shared/contracts"
+import { CloudExportOutbox, type CloudExportOutboxBinding } from "./cloud-export-outbox"
 import {
   audioMimeType,
   cloudCachePath,
@@ -41,6 +45,25 @@ const STORAGE_DELETE_BATCH_SIZE = 1_000
 const PROFILE_AVATAR_SOURCE_LIMIT = 25_000_000
 const PROFILE_AVATAR_UPLOAD_LIMIT = 5_000_000
 const PROFILE_AVATAR_EDGE = 512
+const CLOUD_EXPORT_BUCKET = "cloud-export-masters"
+const CLOUD_EXPORT_ACTIVITY_LIMIT = 100
+const CLOUD_EXPORT_RETRY_BASE_MS = 5_000
+const CLOUD_EXPORT_RETRY_MAX_MS = 5 * 60_000
+const CLOUD_ACTIVITY_CACHE_SIDECAR_SUFFIX = ".expiry.json"
+
+interface ActivityAudioCacheSidecar {
+  version: 1
+  audioFileName: string
+  sha256: string
+  expiresAt: string
+}
+
+interface ExpiredActivityAudioCacheEntry {
+  audioPath: string
+  sidecarPath: string
+}
+
+class ExportBindingChangedError extends Error {}
 
 interface CloudLocalSettings {
   projectUrl?: string
@@ -108,23 +131,58 @@ interface RemoteLayerRow {
   metadata: Record<string, unknown>
 }
 
-interface GenerationRunRow {
+interface CloudExportEventRow {
   id: string
+  client_event_id: string
   created_by: string
-  contributor_ids: string[]
-  seed: number
+  creator_handle_snapshot: string
+  creator_display_name_snapshot: string
+  export_kind: "drag-all" | "layer-audio" | "layer-midi"
+  generated_loop_name: string
+  generation_seed: number
   target_bpm: number
   target_key: string
   layer_count: number
+  duration_seconds: number
+  asset_id: string | null
+  audio_status: "preparing" | "uploading" | "available" | "failed" | "expired"
+  audio_expires_at: string | null
+  audio_error: string | null
   created_at: string
 }
 
-interface GenerationSourceRow {
-  generation_id: string
+interface CloudExportSourceRow {
+  event_id: string
   slot_index: number
-  source_owner_id: string
+  source_origin: "local" | "cloud"
+  source_owner_id: string | null
+  source_owner_handle_snapshot: string | null
+  source_owner_display_name_snapshot: string | null
+  source_sha256: string | null
+  source_layer_name: string
   source_loop_id: string
+  source_loop_name: string
   category: string
+  triggered: boolean
+}
+
+interface CloudExportRecipientRow {
+  event_id: string
+  recipient_id: string
+  read_at: string | null
+}
+
+interface CloudExportAssetRow {
+  id: string
+  owner_id: string
+  sha256: string
+  object_path: string
+  mime_type: string | null
+  byte_size: number | null
+  duration_seconds: number
+  status: "uploading" | "available" | "failed" | "expiring" | "expired"
+  retain_until: string
+  error_message: string | null
 }
 
 interface CloudGenerateJobRequest extends GenerateJobRequest {
@@ -133,6 +191,17 @@ interface CloudGenerateJobRequest extends GenerateJobRequest {
 }
 
 type PublishListener = (event: CloudPublishEvent) => void
+type SyncListener = (event: CloudSyncEvent) => void
+
+async function sha256File(filePath: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const digest = createHash("sha256")
+    const stream = createReadStream(filePath)
+    stream.on("data", (chunk) => digest.update(chunk))
+    stream.once("error", reject)
+    stream.once("end", () => resolve(digest.digest("hex")))
+  })
+}
 
 export function normalizeCloudHandle(value: string): string {
   const normalized = value.trim().toLocaleLowerCase().normalize("NFKD").replace(/\p{M}+/gu, "")
@@ -170,6 +239,16 @@ function fallbackProfile(id: string): CloudProfile {
     id,
     handle: "producer",
     displayName: "Producer",
+    aliases: [],
+  }
+}
+
+function snapshotProfile(id: string, handle: string | null, displayName: string | null): CloudProfile {
+  const normalizedHandle = handle?.trim() || "producer"
+  return {
+    id,
+    handle: normalizedHandle,
+    displayName: displayName?.trim() || `@${normalizedHandle}`,
     aliases: [],
   }
 }
@@ -361,14 +440,91 @@ export function cloudUploadConcurrency(byteSizes: number[]): number {
   return allLayersUseStandardUploadFastPath ? SMALL_LAYER_UPLOAD_CONCURRENCY : DEFAULT_UPLOAD_CONCURRENCY
 }
 
+function activityAudioCacheSidecarPath(audioPath: string): string {
+  return `${audioPath}${CLOUD_ACTIVITY_CACHE_SIDECAR_SUFFIX}`
+}
+
+function readActivityAudioCacheSidecar(sidecarPath: string): ActivityAudioCacheSidecar | null {
+  try {
+    const parsed = JSON.parse(readFileSync(sidecarPath, "utf8")) as Partial<ActivityAudioCacheSidecar>
+    if (
+      parsed.version !== 1
+      || typeof parsed.audioFileName !== "string"
+      || !parsed.audioFileName
+      || path.basename(parsed.audioFileName) !== parsed.audioFileName
+      || typeof parsed.sha256 !== "string"
+      || !/^[0-9a-f]{64}$/.test(parsed.sha256)
+      || typeof parsed.expiresAt !== "string"
+      || !Number.isFinite(new Date(parsed.expiresAt).getTime())
+    ) return null
+    return parsed as ActivityAudioCacheSidecar
+  } catch {
+    return null
+  }
+}
+
+function writeActivityAudioCacheSidecar(audioPath: string, sha256: string, expiresAt: string): void {
+  const sidecarPath = activityAudioCacheSidecarPath(audioPath)
+  const existing = existsSync(sidecarPath) ? readActivityAudioCacheSidecar(sidecarPath) : null
+  const requestedExpiry = new Date(expiresAt).getTime()
+  if (!Number.isFinite(requestedExpiry)) return
+  const existingExpiry = existing ? new Date(existing.expiresAt).getTime() : 0
+  const retainedExpiry = Math.max(requestedExpiry, existingExpiry)
+  const sidecar: ActivityAudioCacheSidecar = {
+    version: 1,
+    audioFileName: path.basename(audioPath),
+    sha256,
+    expiresAt: new Date(retainedExpiry).toISOString(),
+  }
+  writeFileSync(sidecarPath, JSON.stringify(sidecar), { mode: 0o600 })
+}
+
+export function expiredActivityAudioCacheEntries(
+  cacheRoot: string,
+  now = Date.now(),
+): ExpiredActivityAudioCacheEntry[] {
+  if (!existsSync(cacheRoot) || !statSync(cacheRoot).isDirectory()) return []
+  const resolvedRoot = path.resolve(cacheRoot)
+  return readdirSync(resolvedRoot, { withFileTypes: true }).flatMap((entry) => {
+    if (!entry.isFile() || !entry.name.endsWith(CLOUD_ACTIVITY_CACHE_SIDECAR_SUFFIX)) return []
+    const sidecarPath = path.join(resolvedRoot, entry.name)
+    const sidecar = readActivityAudioCacheSidecar(sidecarPath)
+    if (!sidecar || new Date(sidecar.expiresAt).getTime() > now) return []
+    const audioPath = path.resolve(resolvedRoot, sidecar.audioFileName)
+    if (path.dirname(audioPath) !== resolvedRoot) return []
+    return [{ audioPath, sidecarPath }]
+  })
+}
+
+function sameExportBinding(
+  left: CloudExportOutboxBinding | null,
+  right: CloudExportOutboxBinding | null,
+): boolean {
+  return Boolean(left && right && left.projectUrl === right.projectUrl && left.userId === right.userId)
+}
+
 export class CloudService {
   private readonly settingsPath: string
   private readonly sessionPath: string
   private readonly alphaCredentialsPath: string
   private readonly audioCacheRoot: string
+  private readonly exportAudioCacheRoot: string
   private readonly authStorage: EncryptedAuthStorage
+  private readonly exportOutbox: CloudExportOutbox
   private settings: CloudLocalSettings
   private client: SupabaseClient | null = null
+  private realtimeChannel: RealtimeChannel | null = null
+  private realtimeClient: SupabaseClient | null = null
+  private realtimeUserId = ""
+  private realtimeReconnectTimer: ReturnType<typeof setTimeout> | null = null
+  private realtimeOperation: Promise<void> = Promise.resolve()
+  private activeExportBinding: CloudExportOutboxBinding | null = null
+  private exportFlushPromise: Promise<void> | null = null
+  private exportFlushTimer: ReturnType<typeof setTimeout> | null = null
+  private exportFlushAt = 0
+  private exportSnapshotCleanupPromise: Promise<void> | null = null
+  private activityAudioCachePurgePromise: Promise<void> | null = null
+  private readonly syncListeners = new Set<SyncListener>()
   private readonly libraryCategoryCache = new Map<string, { signature: string; categories: Array<{ name: string; count: number }> }>()
   private readonly remoteLayerCache = new Map<string, { signature: string; rows: RemoteLayerRow[] }>()
 
@@ -382,8 +538,99 @@ export class CloudService {
     this.sessionPath = path.join(root, "session.enc")
     this.alphaCredentialsPath = path.join(root, "alpha-test-credentials.json")
     this.audioCacheRoot = path.join(root, "audio")
+    this.exportAudioCacheRoot = path.join(root, "activity-audio")
     this.authStorage = new EncryptedAuthStorage(this.sessionPath)
+    this.exportOutbox = new CloudExportOutbox(path.join(root, "export-outbox.sqlite3"))
+    this.exportOutbox.resetInterrupted()
     this.settings = this.loadSettings()
+  }
+
+  onSync(listener: SyncListener): () => void {
+    this.syncListeners.add(listener)
+    return () => this.syncListeners.delete(listener)
+  }
+
+  private emitSync(event: CloudSyncEvent): void {
+    for (const listener of this.syncListeners) listener(event)
+  }
+
+  private bindingForSession(session: Session): CloudExportOutboxBinding {
+    const projectUrl = this.settings.projectUrl?.trim().replace(/\/+$/, "") ?? ""
+    if (!projectUrl) throw new Error("Connect a Supabase project before using Cloud.")
+    return { projectUrl, userId: session.user.id }
+  }
+
+  private activateExportBinding(session: Session): CloudExportOutboxBinding {
+    const binding = this.bindingForSession(session)
+    if (sameExportBinding(this.activeExportBinding, binding)) return binding
+    if (this.exportFlushTimer) clearTimeout(this.exportFlushTimer)
+    this.exportFlushTimer = null
+    this.exportFlushAt = 0
+    this.activeExportBinding = binding
+    this.scheduleExportFlush(0)
+    void this.cleanupCompletedExportSnapshots(binding)
+    return binding
+  }
+
+  private deactivateExportBinding(): void {
+    if (this.exportFlushTimer) clearTimeout(this.exportFlushTimer)
+    this.exportFlushTimer = null
+    this.exportFlushAt = 0
+    this.activeExportBinding = null
+  }
+
+  private requireActiveExportBinding(binding: CloudExportOutboxBinding): void {
+    if (!sameExportBinding(this.activeExportBinding, binding)) {
+      throw new ExportBindingChangedError("The Cloud account changed before this export could be synchronized.")
+    }
+  }
+
+  private cleanupCompletedExportSnapshots(binding: CloudExportOutboxBinding): Promise<void> {
+    const previous = this.exportSnapshotCleanupPromise ?? Promise.resolve()
+    const cleanup = previous.catch(() => undefined).then(async () => {
+      for (const entry of this.exportOutbox.completed(binding, 100)) {
+        const snapshotPath = entry.request.masterPath
+        if (this.exportOutbox.isManagedSnapshot(snapshotPath) && existsSync(snapshotPath)) {
+          try {
+            await shell.trashItem(snapshotPath)
+          } catch {
+            continue
+          }
+        }
+        this.exportOutbox.removeCompleted(binding, entry.clientEventId)
+      }
+    })
+    this.exportSnapshotCleanupPromise = cleanup
+    return cleanup.finally(() => {
+      if (this.exportSnapshotCleanupPromise === cleanup) this.exportSnapshotCleanupPromise = null
+    })
+  }
+
+  private purgeExpiredActivityAudioCache(now = Date.now()): Promise<void> {
+    const previous = this.activityAudioCachePurgePromise ?? Promise.resolve()
+    const purge = previous.catch(() => undefined).then(async () => {
+      for (const entry of expiredActivityAudioCacheEntries(this.exportAudioCacheRoot, now)) {
+        try {
+          if (existsSync(entry.audioPath)) await shell.trashItem(entry.audioPath)
+          if (existsSync(entry.sidecarPath)) await shell.trashItem(entry.sidecarPath)
+        } catch {
+          // Cache cleanup must never make a playable Cloud activity unavailable.
+        }
+      }
+    })
+    this.activityAudioCachePurgePromise = purge
+    return purge.finally(() => {
+      if (this.activityAudioCachePurgePromise === purge) this.activityAudioCachePurgePromise = null
+    })
+  }
+
+  async dispose(): Promise<void> {
+    this.deactivateExportBinding()
+    await this.stopRealtime()
+    await this.exportFlushPromise?.catch(() => undefined)
+    await this.exportSnapshotCleanupPromise?.catch(() => undefined)
+    await this.activityAudioCachePurgePromise?.catch(() => undefined)
+    this.exportOutbox.close()
   }
 
   private loadSettings(): CloudLocalSettings {
@@ -425,6 +672,88 @@ export class CloudService {
     return this.client
   }
 
+  private clearRealtimeReconnect(): void {
+    if (!this.realtimeReconnectTimer) return
+    clearTimeout(this.realtimeReconnectTimer)
+    this.realtimeReconnectTimer = null
+  }
+
+  private serializeRealtime(operation: () => Promise<void>): Promise<void> {
+    const pending = this.realtimeOperation.then(operation, operation)
+    this.realtimeOperation = pending.catch(() => undefined)
+    return pending
+  }
+
+  private async removeRealtimeChannel(): Promise<void> {
+    const client = this.realtimeClient
+    const channel = this.realtimeChannel
+    this.realtimeClient = null
+    this.realtimeChannel = null
+    this.realtimeUserId = ""
+    if (channel && client) await client.removeChannel(channel)
+  }
+
+  private stopRealtime(): Promise<void> {
+    this.clearRealtimeReconnect()
+    return this.serializeRealtime(() => this.removeRealtimeChannel())
+  }
+
+  private scheduleRealtimeReconnect(binding: CloudExportOutboxBinding): void {
+    if (this.realtimeReconnectTimer || !binding.userId) return
+    this.realtimeReconnectTimer = setTimeout(() => {
+      this.realtimeReconnectTimer = null
+      if (!sameExportBinding(this.activeExportBinding, binding) || this.realtimeUserId !== binding.userId) return
+      void this.ensureRealtime(binding.userId, true).catch((error) => this.emitSync({
+        kind: "activity-error",
+        error: cloudErrorMessage(error, "Cloud live updates could not reconnect."),
+      }))
+    }, 5_000)
+  }
+
+  private ensureRealtime(userId: string, replace = false): Promise<void> {
+    if (!userId) return Promise.resolve()
+    return this.serializeRealtime(async () => {
+      const binding = this.activeExportBinding
+      if (!binding || binding.userId !== userId) return
+      if (!replace && this.realtimeChannel && this.realtimeUserId === userId) return
+      this.clearRealtimeReconnect()
+      await this.removeRealtimeChannel()
+      if (!sameExportBinding(this.activeExportBinding, binding)) return
+
+      const client = this.supabase()
+      const channel = client
+        .channel(`slicer-cloud-${userId}`)
+        .on(
+          "postgres_changes",
+          { event: "INSERT", schema: "public", table: "cloud_export_recipients", filter: `recipient_id=eq.${userId}` },
+          (payload) => this.emitSync({ kind: "activity", activityId: String((payload.new as { event_id?: unknown }).event_id ?? "") || undefined }),
+        )
+        .on(
+          "postgres_changes",
+          { event: "UPDATE", schema: "public", table: "cloud_export_events" },
+          (payload) => this.emitSync({ kind: "activity-audio", activityId: String((payload.new as { id?: unknown }).id ?? "") || undefined }),
+        )
+
+      this.realtimeClient = client
+      this.realtimeUserId = userId
+      this.realtimeChannel = channel
+      channel.subscribe((status) => {
+        if (
+          this.realtimeChannel !== channel
+          || this.realtimeUserId !== userId
+          || !sameExportBinding(this.activeExportBinding, binding)
+        ) return
+        if (status === "SUBSCRIBED") {
+          this.clearRealtimeReconnect()
+          this.emitSync({ kind: "activity" })
+          void this.flushExportOutbox()
+        } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+          this.scheduleRealtimeReconnect(binding)
+        }
+      })
+    })
+  }
+
   private alphaCredentials(): AlphaCredentialsFile | null {
     if (!this.settings.projectUrl || !existsSync(this.alphaCredentialsPath)) return null
     try {
@@ -460,6 +789,8 @@ export class CloudService {
 
   async configure(request: ConfigureCloudRequest): Promise<CloudState> {
     const configuration = validateConfiguration(request)
+    this.deactivateExportBinding()
+    await this.stopRealtime()
     this.settings = { ...this.settings, ...configuration }
     this.saveSettings()
     this.client = null
@@ -470,6 +801,7 @@ export class CloudService {
     const { data, error } = await this.supabase().auth.getSession()
     if (error) throw error
     if (!data.session) throw new Error("Sign in to Cloud first.")
+    this.activateExportBinding(data.session)
     return data.session
   }
 
@@ -529,6 +861,8 @@ export class CloudService {
   }
 
   async signIn(request: CloudCredentialsRequest): Promise<CloudState> {
+    this.deactivateExportBinding()
+    await this.stopRealtime()
     const { data, error } = await this.supabase().auth.signInWithPassword({
       email: request.email.trim().toLowerCase(),
       password: request.password,
@@ -547,6 +881,8 @@ export class CloudService {
   }
 
   async signOut(): Promise<CloudState> {
+    this.deactivateExportBinding()
+    await this.stopRealtime()
     if (this.client) {
       const { error } = await this.client.auth.signOut({ scope: "local" })
       if (error) throw error
@@ -876,88 +1212,325 @@ export class CloudService {
     return new Map((response.data as ProfileRow[]).map((row) => [row.id, this.cloudProfile(row)]))
   }
 
-  async recordGeneration(request: CloudGenerationRecordRequest): Promise<string | undefined> {
-    if (!Array.isArray(request.sources) || request.sources.length === 0) return undefined
-    const session = await this.currentSession()
-    const contributors = [...new Set(request.sources.map((source) => source.cloudOwnerId).filter(Boolean))]
-    const insertedRun = await this.supabase()
-      .from("generation_runs")
-      .insert({
-        created_by: session.user.id,
-        contributor_ids: contributors,
-        seed: Math.trunc(request.seed),
-        target_bpm: Math.round(request.targetBpm),
-        target_key: String(request.targetKey || "Unknown"),
-        layer_count: Math.max(1, Math.round(request.layerCount)),
-      })
-      .select("id")
-      .single<{ id: string }>()
-    if (insertedRun.error) throw insertedRun.error
-
-    const sourceRows = request.sources.map((source) => ({
-      generation_id: insertedRun.data.id,
-      slot_index: Math.max(0, Math.round(source.slotIndex)),
-      cloud_layer_id: source.cloudLayerId,
-      source_owner_id: source.cloudOwnerId,
-      source_sha256: source.sourceSha256,
-      source_loop_id: source.sourceLoopId,
-      category: source.category,
-    }))
-    const insertedSources = await this.supabase().from("generation_sources").insert(sourceRows)
-    if (insertedSources.error) throw insertedSources.error
-    return insertedRun.data.id
+  queueTrackedExport(request: CloudTrackedDragRequest): string | undefined {
+    const hasRecipient = request.layers.some((layer) => layer.triggered && layer.sourceOrigin === "cloud" && layer.cloudLayerId)
+    if (!hasRecipient) return undefined
+    const binding = this.activeExportBinding
+    if (!binding) throw new Error("Sign in to Cloud before tracking this export.")
+    if (!existsSync(request.masterPath) || !statSync(request.masterPath).isFile()) {
+      throw new Error("The rendered master for this Cloud activity is unavailable.")
+    }
+    const clientEventId = this.exportOutbox.enqueue(binding, request)
+    this.scheduleExportFlush(0)
+    return clientEventId
   }
 
-  async generationActivity(): Promise<CloudGenerationActivity[]> {
-    await this.currentSession()
-    const runsResponse = await this.supabase()
-      .from("generation_runs")
-      .select("id,created_by,contributor_ids,seed,target_bpm,target_key,layer_count,created_at")
+  private scheduleExportFlush(delayMs: number): void {
+    if (!this.activeExportBinding) return
+    const scheduledAt = Date.now() + Math.max(0, delayMs)
+    if (this.exportFlushTimer && this.exportFlushAt <= scheduledAt) return
+    if (this.exportFlushTimer) clearTimeout(this.exportFlushTimer)
+    this.exportFlushAt = scheduledAt
+    this.exportFlushTimer = setTimeout(() => {
+      this.exportFlushTimer = null
+      this.exportFlushAt = 0
+      void this.flushExportOutbox()
+    }, Math.max(0, scheduledAt - Date.now()))
+  }
+
+  async flushExportOutbox(): Promise<void> {
+    if (this.exportFlushPromise) return this.exportFlushPromise
+    const binding = this.activeExportBinding
+    if (!binding) return
+    const pending = (async () => {
+      const items = this.exportOutbox.pending(binding, Date.now(), 8)
+      for (const item of items) {
+        if (!sameExportBinding(this.activeExportBinding, binding)) break
+        this.exportOutbox.markSending(binding, item.clientEventId)
+        try {
+          await this.sendTrackedExport(binding, item.clientEventId, item.request)
+          this.exportOutbox.markComplete(binding, item.clientEventId)
+        } catch (error) {
+          const message = cloudErrorMessage(error, "Cloud could not preserve this export yet.")
+          const attempt = item.attempts + 1
+          const retryDelay = Math.min(CLOUD_EXPORT_RETRY_MAX_MS, CLOUD_EXPORT_RETRY_BASE_MS * (2 ** Math.min(attempt, 6)))
+          this.exportOutbox.markRetry(binding, item.clientEventId, message, Date.now() + retryDelay)
+          if (!sameExportBinding(this.activeExportBinding, binding)) break
+          this.emitSync({ kind: "activity-error", activityId: item.clientEventId, error: message })
+          this.scheduleExportFlush(retryDelay)
+          if (/Sign in to Cloud first/i.test(message)) break
+        }
+      }
+    })()
+    this.exportFlushPromise = pending
+    try {
+      await pending
+    } finally {
+      if (this.exportFlushPromise === pending) this.exportFlushPromise = null
+      await this.cleanupCompletedExportSnapshots(binding)
+      const activeBinding = this.activeExportBinding
+      if (activeBinding) {
+        const nextPendingAt = this.exportOutbox.nextPendingAt(activeBinding)
+        if (nextPendingAt !== undefined) this.scheduleExportFlush(Math.max(0, nextPendingAt - Date.now()))
+      }
+    }
+  }
+
+  private async sendTrackedExport(
+    binding: CloudExportOutboxBinding,
+    clientEventId: string,
+    request: CloudTrackedDragRequest,
+  ): Promise<void> {
+    this.requireActiveExportBinding(binding)
+    const client = this.supabase()
+    const sessionResponse = await client.auth.getSession()
+    if (sessionResponse.error) throw sessionResponse.error
+    const session = sessionResponse.data.session
+    if (!session || session.user.id !== binding.userId || this.settings.projectUrl !== binding.projectUrl) {
+      throw new Error("The queued Cloud export belongs to a different account or project.")
+    }
+    await this.ensureRealtime(session.user.id)
+    this.requireActiveExportBinding(binding)
+    const masterSha256 = await sha256File(request.masterPath)
+    const fileStats = statSync(request.masterPath)
+    const extension = path.extname(request.masterPath).toLocaleLowerCase()
+    const mimeType = audioMimeType(request.masterPath)
+    if (extension !== ".wav" || !(["audio/wav", "audio/x-wav"] as const).includes(mimeType as "audio/wav" | "audio/x-wav")) {
+      throw new Error("Cloud activity requires the generated WAV master.")
+    }
+    const proposedAssetId = randomUUID()
+    const preparedAsset = await client.rpc("prepare_cloud_export_asset", {
+      payload: {
+        assetId: proposedAssetId,
+        sha256: masterSha256,
+        fileName: path.basename(request.masterPath),
+        durationSeconds: Math.max(0, request.durationSeconds),
+      },
+    })
+    if (preparedAsset.error) throw preparedAsset.error
+    const assetResponse = await client
+      .from("cloud_export_assets")
+      .select("id,owner_id,sha256,object_path,mime_type,byte_size,duration_seconds,status,retain_until,error_message")
+      .eq("id", String(preparedAsset.data))
+      .single<CloudExportAssetRow>()
+    if (assetResponse.error) throw assetResponse.error
+    const asset = assetResponse.data
+
+    const recorded = await client.rpc("record_cloud_export_event", {
+      payload: {
+        clientEventId,
+        exportKind: request.exportKind,
+        generatedLoopName: request.generatedLoopName,
+        generationSeed: Math.trunc(request.generationSeed),
+        targetBpm: Math.round(request.targetBpm),
+        targetKey: request.targetKey,
+        durationSeconds: Math.max(0, request.durationSeconds),
+        layerCount: request.layers.length,
+        assetId: asset.id,
+        layers: request.layers.map((layer) => ({
+          slotIndex: layer.slotIndex,
+          sourceOrigin: layer.sourceOrigin,
+          cloudLayerId: layer.cloudLayerId,
+          sourceSha256: layer.sourceSha256,
+          sourceLayerName: layer.sourceLayerName,
+          sourceLoopId: layer.sourceLoopId,
+          sourceLoopName: layer.sourceLoopName,
+          category: layer.category,
+          triggered: layer.triggered,
+        })),
+      },
+    })
+    if (recorded.error) throw recorded.error
+    if (!recorded.data) return
+    const activityId = String(recorded.data)
+    this.emitSync({ kind: "activity", activityId })
+
+    if (asset.status !== "available" || new Date(asset.retain_until).getTime() <= Date.now()) {
+      try {
+        this.requireActiveExportBinding(binding)
+        const audio = await readFile(request.masterPath)
+        this.requireActiveExportBinding(binding)
+        const uploaded = await client.storage.from(CLOUD_EXPORT_BUCKET).upload(asset.object_path, audio, {
+          contentType: mimeType,
+          cacheControl: "3600",
+          upsert: true,
+        })
+        if (uploaded.error) throw uploaded.error
+        const completed = await client.rpc("complete_cloud_export_asset", {
+          p_asset_id: asset.id,
+          p_byte_size: fileStats.size,
+          p_mime_type: mimeType,
+        })
+        if (completed.error) throw completed.error
+      } catch (error) {
+        if (error instanceof ExportBindingChangedError) throw error
+        const message = cloudErrorMessage(error, "The generated master could not be uploaded.")
+        const failed = await client.rpc("fail_cloud_export_asset", { p_asset_id: asset.id, p_error: message })
+        if (failed.error) throw failed.error
+        throw new Error(message, { cause: error })
+      }
+    }
+    this.emitSync({ kind: "activity-audio", activityId })
+  }
+
+  async exportActivity(offset = 0): Promise<CloudExportActivity[]> {
+    if (!Number.isSafeInteger(offset) || offset < 0) throw new Error("The Cloud activity page is invalid.")
+    const session = await this.currentSession()
+    await this.ensureRealtime(session.user.id)
+    const recipientsResponse = await this.supabase()
+      .from("cloud_export_recipients")
+      .select("event_id,recipient_id,read_at")
+      .eq("recipient_id", session.user.id)
       .order("created_at", { ascending: false })
-      .limit(60)
-    if (runsResponse.error) throw runsResponse.error
-    const runs = runsResponse.data as GenerationRunRow[]
-    if (runs.length === 0) return []
-
-    const sourcesResponse = await this.supabase()
-      .from("generation_sources")
-      .select("generation_id,slot_index,source_owner_id,source_loop_id,category")
-      .in("generation_id", runs.map((run) => run.id))
-      .order("slot_index", { ascending: true })
-    if (sourcesResponse.error) throw sourcesResponse.error
-    const sources = sourcesResponse.data as GenerationSourceRow[]
-    const profiles = await this.profileRows([
-      ...runs.flatMap((run) => [run.created_by, ...(run.contributor_ids ?? [])]),
-      ...sources.map((source) => source.source_owner_id),
+      .range(offset, offset + CLOUD_EXPORT_ACTIVITY_LIMIT - 1)
+    if (recipientsResponse.error) throw recipientsResponse.error
+    const recipients = recipientsResponse.data as CloudExportRecipientRow[]
+    if (recipients.length === 0) return []
+    const recipientEventIds = recipients.map((recipient) => recipient.event_id)
+    const eventsResponse = await this.supabase()
+      .from("cloud_export_events")
+      .select("id,client_event_id,created_by,creator_handle_snapshot,creator_display_name_snapshot,export_kind,generated_loop_name,generation_seed,target_bpm,target_key,layer_count,duration_seconds,asset_id,audio_status,audio_expires_at,audio_error,created_at")
+      .in("id", recipientEventIds)
+      .order("created_at", { ascending: false })
+    if (eventsResponse.error) throw eventsResponse.error
+    const events = eventsResponse.data as CloudExportEventRow[]
+    if (events.length === 0) return []
+    const eventIds = events.map((event) => event.id)
+    const [sourcesResponse, assetsResponse] = await Promise.all([
+      this.supabase().from("cloud_export_sources").select("event_id,slot_index,source_origin,source_owner_id,source_owner_handle_snapshot,source_owner_display_name_snapshot,source_sha256,source_layer_name,source_loop_id,source_loop_name,category,triggered").in("event_id", eventIds).order("slot_index", { ascending: true }),
+      this.supabase().from("cloud_export_assets").select("id,owner_id,sha256,object_path,mime_type,byte_size,duration_seconds,status,retain_until,error_message").in("id", events.flatMap((event) => event.asset_id ? [event.asset_id] : [])),
     ])
-
-    return runs.map((run) => ({
-      id: run.id,
-      createdBy: profiles.get(run.created_by) ?? fallbackProfile(run.created_by),
-      contributors: (run.contributor_ids ?? []).map((id) => profiles.get(id) ?? fallbackProfile(id)),
-      seed: Number(run.seed),
-      targetBpm: Number(run.target_bpm),
-      targetKey: run.target_key,
-      layerCount: Number(run.layer_count),
-      createdAt: run.created_at,
-      sources: sources.filter((source) => source.generation_id === run.id).map((source) => ({
+    if (sourcesResponse.error) throw sourcesResponse.error
+    if (assetsResponse.error) throw assetsResponse.error
+    const sources = sourcesResponse.data as CloudExportSourceRow[]
+    const assets = new Map((assetsResponse.data as CloudExportAssetRow[]).map((asset) => [asset.id, asset]))
+    const profiles = await this.profileRows([
+      ...events.map((event) => event.created_by),
+      ...sources.flatMap((source) => source.source_owner_id ? [source.source_owner_id] : []),
+    ])
+    return events.map((event) => {
+      const asset = event.asset_id ? assets.get(event.asset_id) : undefined
+      const expired = Boolean(event.audio_expires_at && new Date(event.audio_expires_at).getTime() <= Date.now())
+      const eventSources: CloudExportActivitySource[] = sources.filter((source) => source.event_id === event.id).map((source) => ({
         slotIndex: Number(source.slot_index),
-        sourceOwner: profiles.get(source.source_owner_id) ?? fallbackProfile(source.source_owner_id),
-        sourceLoopId: source.source_loop_id,
         category: source.category,
-      })),
-    }))
+        sourceLayerName: source.source_layer_name,
+        sourceLoopId: source.source_loop_id,
+        sourceLoopName: source.source_loop_name,
+        sourceOrigin: source.source_origin,
+        sourceOwner: source.source_owner_id
+          ? profiles.get(source.source_owner_id)
+            ?? snapshotProfile(source.source_owner_id, source.source_owner_handle_snapshot, source.source_owner_display_name_snapshot)
+          : undefined,
+        sourceSha256: source.source_sha256 || undefined,
+        triggered: Boolean(source.triggered),
+      }))
+      const ownReceipt = recipients.find((recipient) => recipient.event_id === event.id && recipient.recipient_id === session.user.id)
+      return {
+        id: event.id,
+        clientEventId: event.client_event_id,
+        createdBy: profiles.get(event.created_by)
+          ?? snapshotProfile(event.created_by, event.creator_handle_snapshot, event.creator_display_name_snapshot),
+        exportKind: event.export_kind,
+        generatedLoopName: event.generated_loop_name,
+        generationSeed: Number(event.generation_seed),
+        targetBpm: Number(event.target_bpm),
+        targetKey: event.target_key,
+        layerCount: Number(event.layer_count),
+        recipientLayerCount: eventSources.filter((source) => source.triggered && source.sourceOwner?.id === session.user.id).length,
+        createdAt: event.created_at,
+        unread: Boolean(ownReceipt && !ownReceipt.read_at),
+        audioStatus: expired ? "expired" : event.audio_status,
+        audioExpiresAt: event.audio_expires_at || undefined,
+        audioError: event.audio_error || asset?.error_message || undefined,
+        masterSha256: asset?.sha256,
+        durationSeconds: Number(event.duration_seconds || asset?.duration_seconds || 0),
+        sources: eventSources,
+      }
+    })
+  }
+
+  async unreadExportActivityCount(): Promise<number> {
+    const session = await this.currentSession()
+    const response = await this.supabase().from("cloud_export_recipients").select("event_id", { count: "exact", head: true }).eq("recipient_id", session.user.id).is("read_at", null)
+    if (response.error) throw response.error
+    return response.count ?? 0
+  }
+
+  async markExportActivityRead(activityIds?: string[]): Promise<number> {
+    const session = await this.currentSession()
+    let request = this.supabase()
+      .from("cloud_export_recipients")
+      .update({ read_at: new Date().toISOString() })
+      .eq("recipient_id", session.user.id)
+      .is("read_at", null)
+    if (activityIds && activityIds.length > 0) request = request.in("event_id", activityIds)
+    const response = await request.select("event_id")
+    if (response.error) throw response.error
+    this.emitSync({ kind: "activity" })
+    return this.unreadExportActivityCount()
+  }
+
+  async prepareExportActivityAudio(activityId: string): Promise<CloudActivityAudio> {
+    await this.purgeExpiredActivityAudioCache()
+    await this.currentSession()
+    const eventResponse = await this.supabase()
+      .from("cloud_export_events")
+      .select("id,generated_loop_name,target_bpm,target_key,layer_count,duration_seconds,asset_id,audio_status,audio_expires_at")
+      .eq("id", activityId)
+      .single<Pick<CloudExportEventRow, "id" | "generated_loop_name" | "target_bpm" | "target_key" | "layer_count" | "duration_seconds" | "asset_id" | "audio_status" | "audio_expires_at">>()
+    if (eventResponse.error) throw eventResponse.error
+    const event = eventResponse.data
+    if (!event.asset_id || event.audio_status !== "available") throw new Error("This activity audio is not available yet.")
+    if (event.audio_expires_at && new Date(event.audio_expires_at).getTime() <= Date.now()) throw new Error("This activity audio has expired.")
+    const assetResponse = await this.supabase()
+      .from("cloud_export_assets")
+      .select("id,owner_id,sha256,object_path,mime_type,byte_size,duration_seconds,status,retain_until,error_message")
+      .eq("id", event.asset_id)
+      .single<CloudExportAssetRow>()
+    if (assetResponse.error) throw assetResponse.error
+    const asset = assetResponse.data
+    const extension = path.extname(asset.object_path) || ".wav"
+    const cachedPath = path.join(this.exportAudioCacheRoot, `${asset.sha256}${extension}`)
+    let cacheValid = false
+    if (existsSync(cachedPath) && statSync(cachedPath).isFile() && statSync(cachedPath).size === Number(asset.byte_size)) {
+      cacheValid = await sha256File(cachedPath) === asset.sha256
+    }
+    if (!cacheValid) {
+      const downloaded = await this.supabase().storage.from(CLOUD_EXPORT_BUCKET).download(asset.object_path)
+      if (downloaded.error) throw downloaded.error
+      const bytes = Buffer.from(await downloaded.data.arrayBuffer())
+      if (bytes.byteLength !== Number(asset.byte_size) || createHash("sha256").update(bytes).digest("hex") !== asset.sha256) {
+        throw new Error("The Cloud activity audio failed its integrity check.")
+      }
+      mkdirSync(this.exportAudioCacheRoot, { recursive: true })
+      writeFileSync(cachedPath, bytes, { mode: 0o600 })
+    }
+    writeActivityAudioCacheSidecar(cachedPath, asset.sha256, event.audio_expires_at || asset.retain_until)
+    return {
+      activityId: event.id,
+      path: cachedPath,
+      fileName: safeObjectFileName(`${event.generated_loop_name}${extension}`),
+      durationSeconds: Number(event.duration_seconds || asset.duration_seconds || 0),
+      targetBpm: Number(event.target_bpm),
+      targetKey: event.target_key,
+      layerCount: Number(event.layer_count),
+      expiresAt: event.audio_expires_at || undefined,
+    }
   }
 
   async getState(): Promise<CloudState> {
     const configured = Boolean(this.settings.projectUrl && this.settings.publishableKey)
     const testAccounts = this.testAccounts()
     if (!configured) {
+      this.deactivateExportBinding()
       return { configured: false, projectUrl: "", authenticated: false, connections: [], libraries: [], testAccounts }
     }
     const sessionResponse = await this.supabase().auth.getSession()
     if (sessionResponse.error) {
       if (!isInvalidRefreshSession(sessionResponse.error)) throw sessionResponse.error
+      this.deactivateExportBinding()
+      await this.stopRealtime()
       await this.authStorage.clear()
       this.client = null
       return {
@@ -972,6 +1545,8 @@ export class CloudService {
     }
     const session = sessionResponse.data.session
     if (!session) {
+      this.deactivateExportBinding()
+      await this.stopRealtime()
       return {
         configured: true,
         projectUrl: this.settings.projectUrl ?? "",
@@ -981,6 +1556,10 @@ export class CloudService {
         testAccounts,
       }
     }
+    this.activateExportBinding(session)
+    await this.ensureRealtime(session.user.id)
+    void this.flushExportOutbox()
+    void this.purgeExpiredActivityAudioCache()
     const profile = await this.ensureProfile(session)
     const [connectionsResponse, librariesResponse, accessBlocksResponse] = await Promise.all([
       this.supabase().from("connections").select("id,requester_id,addressee_id,status,created_at").order("created_at", { ascending: false }),
