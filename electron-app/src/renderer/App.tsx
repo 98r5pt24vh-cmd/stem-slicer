@@ -83,6 +83,7 @@ import {
   type ExtractionHistoryEntry,
 } from "@/lib/activity-history"
 import { compactKeyFamilyLabel, keyFamilyForKey, keyFromFamily, normalizeKeyName, randomKeyOutsidePreviousFamily, TARGET_KEY_FAMILIES } from "@/lib/random-key"
+import { cloudActivityRevision, cloudStateRevision } from "@/lib/cloud-revision"
 import { studioLayerName } from "@/lib/source-loop-name"
 import { createProducerIdentityResolver, generationDisplayName, PRIMARY_PRODUCER, producerMonogram, producersForLayers, provenanceForLayer, stripAudioExtension, uniqueProducerCredits, uniqueProducerNames } from "@/lib/source-provenance"
 import { AUDIO_START_AHEAD_SECONDS, SharedWebAudioEngine, transportProgress } from "@/renderer/shared-web-audio-engine"
@@ -5712,6 +5713,8 @@ function CloudView({ library, section, embedded = false, generationHistory = [] 
   const [libraryAccessError, setLibraryAccessError] = useState("")
   const sharedSelectAllRef = useRef<HTMLInputElement>(null)
   const cloudRefreshInFlightRef = useRef<Promise<void> | null>(null)
+  const cloudStateRevisionRef = useRef(cloudStateRevision(EMPTY_CLOUD_STATE))
+  const cloudActivityRevisionRef = useRef(cloudActivityRevision([]))
   const cloudProfileId = cloud.profile?.id ?? ""
   const currentSection: CloudSection = section === "profile" ? "profile" : activeCloudSection
 
@@ -5722,11 +5725,25 @@ function CloudView({ library, section, embedded = false, generationHistory = [] 
   const refreshActivity = useCallback(async () => {
     try {
       const activity = await window.stemSlicer?.getCloudGenerationActivity()
-      setCloudActivity(activity ?? [])
+      const nextActivity = activity ?? []
+      const nextRevision = cloudActivityRevision(nextActivity)
+      if (nextRevision !== cloudActivityRevisionRef.current) {
+        cloudActivityRevisionRef.current = nextRevision
+        setCloudActivity(nextActivity)
+      }
       setActivityError("")
     } catch (reason) {
       setActivityError(cloudErrorMessage(reason, "Cloud activity is temporarily unavailable."))
     }
+  }, [])
+
+  const applyCloudState = useCallback((state: CloudState): boolean => {
+    const nextRevision = cloudStateRevision(state)
+    if (nextRevision === cloudStateRevisionRef.current) return false
+    cloudStateRevisionRef.current = nextRevision
+    setCloud(state)
+    window.dispatchEvent(new CustomEvent(CLOUD_STATE_CHANGED_EVENT, { detail: state }))
+    return true
   }, [])
 
   const refresh = useCallback(async (): Promise<void> => {
@@ -5734,8 +5751,7 @@ function CloudView({ library, section, embedded = false, generationHistory = [] 
     const pending = (async () => {
       const state = await window.stemSlicer?.getCloudState()
       if (!state) return
-      setCloud(state)
-      window.dispatchEvent(new CustomEvent(CLOUD_STATE_CHANGED_EVENT, { detail: state }))
+      applyCloudState(state)
       if (state.authenticated) await refreshActivity()
       else {
         setCloudActivity([])
@@ -5748,7 +5764,7 @@ function CloudView({ library, section, embedded = false, generationHistory = [] 
     } finally {
       if (cloudRefreshInFlightRef.current === pending) cloudRefreshInFlightRef.current = null
     }
-  }, [refreshActivity])
+  }, [applyCloudState, refreshActivity])
 
   useEffect(() => {
     let cancelled = false
@@ -5776,6 +5792,7 @@ function CloudView({ library, section, embedded = false, generationHistory = [] 
 
   useEffect(() => {
     const synchronize = () => {
+      if (document.visibilityState !== "visible") return
       void refresh().catch((reason) => setError(cloudErrorMessage(reason, "Cloud synchronization is unavailable.")))
     }
     const onVisibilityChange = () => {
@@ -5851,8 +5868,7 @@ function CloudView({ library, section, embedded = false, generationHistory = [] 
     try {
       const state = await action()
       if (state) {
-        setCloud(state)
-        window.dispatchEvent(new CustomEvent(CLOUD_STATE_CHANGED_EVENT, { detail: state }))
+        applyCloudState(state)
         if (state.message) setNotice(state.message)
       }
     } catch (reason) {
@@ -5961,8 +5977,7 @@ function CloudView({ library, section, embedded = false, generationHistory = [] 
     try {
       const state = await window.stemSlicer?.cloudRemoveLibrary(removedLibraryId)
       if (state) {
-        setCloud(state)
-        window.dispatchEvent(new CustomEvent(CLOUD_STATE_CHANGED_EVENT, { detail: state }))
+        applyCloudState(state)
         if (state.message) setNotice(state.message)
       }
       setPublishEvent((current) => (
@@ -5993,8 +6008,7 @@ function CloudView({ library, section, embedded = false, generationHistory = [] 
     try {
       const state = await window.stemSlicer?.cloudRemoveConnection(connection.id)
       if (state) {
-        setCloud(state)
-        window.dispatchEvent(new CustomEvent(CLOUD_STATE_CHANGED_EVENT, { detail: state }))
+        applyCloudState(state)
         if (state.message) setNotice(state.message)
       }
       setPinnedProducerIds((currentIds) => {
@@ -6021,8 +6035,7 @@ function CloudView({ library, section, embedded = false, generationHistory = [] 
     try {
       const state = await window.stemSlicer?.cloudSetLibraryProducerAccess(libraryId, producerId, allowed)
       if (state) {
-        setCloud(state)
-        window.dispatchEvent(new CustomEvent(CLOUD_STATE_CHANGED_EVENT, { detail: state }))
+        applyCloudState(state)
         if (state.message) setNotice(state.message)
       }
     } catch (reason) {
